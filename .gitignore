@@ -1,0 +1,39 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyInstaller / Build artifacts
+build/
+dist/
+*.spec.bak
+
+# Testing cache
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local settings and user config
+settings_*.json
+setting_*.json
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Editor / IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary and archive files
+*.rar
+*.zip
+*.7z
+*.tar.gz
+*.downloading
+*.log
