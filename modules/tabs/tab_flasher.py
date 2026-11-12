@@ -5,8 +5,8 @@ ESP Tool & Hardware Inspector v2.0 - Tab 3: Firmware Flasher & Erase Tools Mixin
 import os
 import re
 import threading
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from modules import qt_toolkit as tk
+from modules.qt_toolkit import ttk, messagebox, filedialog
 
 from modules.dialogs.layout_util import fit_dialog
 from modules.win32_util import set_window_icon_native

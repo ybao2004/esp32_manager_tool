@@ -5,9 +5,8 @@ ESP Tool & Hardware Inspector v2.0 - Tab 1: Chip Inspector & Hardware Report Mix
 import re
 import threading
 from datetime import datetime
-import tkinter as tk
-import tkinter.font as tkfont
-from tkinter import ttk, messagebox, filedialog
+from modules import qt_toolkit as tk
+from modules.qt_toolkit import ttk, messagebox, filedialog, font as tkfont
 
 try:
     import serial

@@ -10,8 +10,8 @@ import re
 import sys
 import tempfile
 import threading
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog, simpledialog
+from modules import qt_toolkit as tk
+from modules.qt_toolkit import ttk, messagebox, filedialog, simpledialog
 
 from modules.config import (
     DARK_PALETTE, LIGHT_PALETTE, FLASH_BAUDS, FLASH_CHIP_TARGETS
@@ -263,12 +263,12 @@ class DiskMapCanvas(tk.Canvas):
             lines.append(f"• Dung lượng trống: {format_bytes_human(entry.size)} ({entry.size:,} Bytes)")
             lines.append(f"• Số Sector vật lý: {sector_count(entry.size)} sectors (mỗi sector 4KB)")
             lines.append("-" * 52)
-            lines.append("📌 MỤC ĐÍCH SỬ DỤNG:")
+            lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
             lines.append("Vùng nhớ Flash vật lý còn trống, chưa được cấp phát cho phân vùng nào.")
             lines.append("Có thể tận dụng để mở rộng phân vùng hoặc tạo phân vùng mới (LittleFS, SPIFFS, OTA).")
             lines.append("-" * 52)
-            lines.append("💡 GỢI Ý THAO TÁC:")
-            lines.append("👉 Bấm chuột trái vào khối này để tạo phân vùng mới vừa vặn.")
+            lines.append("[GỢI Ý THAO TÁC]:")
+            lines.append("-> Bấm chuột trái vào khối này để tạo phân vùng mới vừa vặn.")
             return "\n".join(lines)
 
         if entry.is_system:
@@ -276,26 +276,26 @@ class DiskMapCanvas(tk.Canvas):
             if entry.type_str == "bootloader":
                 lines.append(f"【 PHÂN VÙNG HỆ THỐNG: {entry.name.upper()} 】")
                 lines.append("=" * 52)
-                lines.append(f"• Vị trí Offset: {format_hex(entry.offset)} | Kích thước: {format_bytes_human(entry.size)} ({entry.size:,} B)")
+                lines.append(f"- Vị trí Offset: {format_hex(entry.offset)} | Kích thước: {format_bytes_human(entry.size)} ({entry.size:,} B)")
                 lines.append("-" * 52)
-                lines.append("📌 MỤC ĐÍCH SỬ DỤNG:")
+                lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
                 lines.append("Chương trình Second-Stage Bootloader do Espressif quản lý.")
                 lines.append("Khởi tạo phần cứng (GPIO/PLL/Flash), đọc bảng phân vùng tại 0x8000 và nạp App.")
                 lines.append("-" * 52)
-                lines.append("💡 KHUYẾN NGHỊ DUNG LƯỢNG:")
-                lines.append("• Mặc định: 28 KB - 32 KB (đặt tại 0x1000 trên ESP32 hoặc 0x0 trên S3/C3).")
-                lines.append("• Phân vùng cố định, không được chỉnh sửa hoặc xóa.")
+                lines.append("[KHUYẾN NGHỊ DUNG LƯỢNG]:")
+                lines.append("- Mặc định: 28 KB - 32 KB (đặt tại 0x1000 trên ESP32 hoặc 0x0 trên S3/C3).")
+                lines.append("- Phân vùng cố định, không được chỉnh sửa hoặc xóa.")
             else:
                 lines.append(f"【 BẢNG PHÂN VÙNG HỆ THỐNG (PARTITION TABLE) 】")
                 lines.append("=" * 52)
-                lines.append(f"• Vị trí Offset: {format_hex(entry.offset)} | Kích thước: {format_bytes_human(entry.size)} ({entry.size:,} B)")
+                lines.append(f"- Vị trí Offset: {format_hex(entry.offset)} | Kích thước: {format_bytes_human(entry.size)} ({entry.size:,} B)")
                 lines.append("-" * 52)
-                lines.append("📌 MỤC ĐÍCH SỬ DỤNG:")
+                lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
                 lines.append("Bản đồ lưu trữ toàn bộ các phân vùng của chip Flash.")
                 lines.append("Chứa cấu trúc 32-byte định nghĩa Type, SubType, Offset, Size và MD5 Checksum.")
                 lines.append("-" * 52)
-                lines.append("💡 KHUYẾN NGHỊ DUNG LƯỢNG:")
-                lines.append("• Chuẩn ESP-IDF: Cố định đúng 1 sector 4 KB (0x1000) tại offset 0x8000.")
+                lines.append("[KHUYẾN NGHỊ DUNG LƯỢNG]:")
+                lines.append("- Chuẩn ESP-IDF: Cố định đúng 1 sector 4 KB (0x1000) tại offset 0x8000.")
             return "\n".join(lines)
 
         # Phân vùng người dùng
@@ -402,15 +402,15 @@ class DiskMapCanvas(tk.Canvas):
             rec_typical = "Tùy nhu cầu sử dụng"
             rec_max = "Tùy dung lượng Flash còn lại"
 
-        lines.append("📌 MỤC ĐÍCH SỬ DỤNG:")
+        lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
         lines.append(purpose)
         lines.append("-" * 52)
-        lines.append("💡 KHUYẾN NGHỊ DUNG LƯỢNG:")
-        lines.append(f"• Tối thiểu: {rec_min}")
-        lines.append(f"• Thông thường: {rec_typical}")
-        lines.append(f"• Tối đa: {rec_max}")
+        lines.append("[KHUYẾN NGHỊ DUNG LƯỢNG]:")
+        lines.append(f"- Tối thiểu: {rec_min}")
+        lines.append(f"- Thông thường: {rec_typical}")
+        lines.append(f"- Tối đa: {rec_max}")
         lines.append("-" * 52)
-        lines.append("👉 Click chuột trái để chọn dòng | Chuột phải để chỉnh sửa nhanh")
+        lines.append("-> Click chuột trái để chọn dòng | Chuột phải để chỉnh sửa nhanh")
 
         return "\n".join(lines)
 
@@ -1004,7 +1004,7 @@ class PartitionTabMixin:
         unalloc_human = format_bytes_human(unallocated_size, compact=True)
 
         errors = self.table.validate()
-        err_msg = f" | ⚠️ {len(errors)} cảnh báo/lỗi ESP-IDF" if errors else " | ✅ Chuẩn ESP-IDF"
+        err_msg = f" | [CẢNH BÁO] {len(errors)} lỗi ESP-IDF" if errors else " | [HỢP LỆ] Chuẩn ESP-IDF"
         self.lbl_flash_stats.configure(
             text=f"Dung lượng Flash: {flash_human} | Đã phân bổ: {alloc_human} ({len(self.table.entries)} phân vùng) | Chưa cấp phát: {unalloc_human}{err_msg}"
         )
@@ -1013,11 +1013,11 @@ class PartitionTabMixin:
             self.txt_partition_val.configure(state="normal")
             self.txt_partition_val.delete("1.0", "end")
             if not errors:
-                self.txt_partition_val.insert("1.0", "✅ BẢNG PHÂN VÙNG HOÀN TOÀN HỢP LỆ THEO CHUẨN ESP-IDF!\n\n")
+                self.txt_partition_val.insert("1.0", "[HỢP LỆ] BẢNG PHÂN VÙNG HOÀN TOÀN HỢP LỆ THEO CHUẨN ESP-IDF!\n\n")
             else:
-                self.txt_partition_val.insert("1.0", f"⚠️ PHÁT HIỆN {len(errors)} CẢNH BÁO / LỖI BẢNG PHÂN VÙNG:\n\n")
+                self.txt_partition_val.insert("1.0", f"[CẢNH BÁO] PHÁT HIỆN {len(errors)} CẢNH BÁO / LỖI BẢNG PHÂN VÙNG:\n\n")
                 for err in errors:
-                    self.txt_partition_val.insert("end", f"  ❌ {err}\n")
+                    self.txt_partition_val.insert("end", f"  [LỖI] {err}\n")
             self.txt_partition_val.configure(state="disabled")
 
         # Cập nhật vị trí các nút bấm [+] và [-] trên Treeview

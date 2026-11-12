@@ -2,8 +2,8 @@ import gc
 import os
 import shutil
 import tempfile
-import tkinter as tk
-from tkinter import ttk
+from modules import qt_toolkit as tk
+from modules.qt_toolkit import ttk
 import unittest
 from unittest.mock import Mock, patch
 
@@ -129,7 +129,7 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
             self.assertTrue(new_name.startswith("part_"))
 
             # Kiểm tra xóa dòng vừa chèn (mock messagebox.askyesno -> True)
-            with patch('tkinter.messagebox.askyesno', return_value=True):
+            with patch('modules.qt_toolkit.messagebox.askyesno', return_value=True):
                 app._action_delete_by_row(new_child)
             self.assertEqual(len(app.table.entries), initial_count)
 
@@ -148,7 +148,7 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
                     real_init(menu_inst, *args, **kwargs)
                     created_menus.append(menu_inst)
 
-                with patch.object(tk.Menu, '__init__', capture_init), patch('tkinter.Menu.tk_popup'):
+                with patch.object(tk.Menu, '__init__', capture_init), patch('modules.qt_toolkit.Menu.tk_popup'):
                     app._show_column_context_menu(event, entry, col, row_id)
                     self.assertGreater(len(created_menus), 0)
                     menu = created_menus[-1]
@@ -435,6 +435,34 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
             self.assertIn("E8:F6:0A:EB:89:94", report)
             self.assertIn(hashes["sha256"], report)
             self.assertIn(hashes["md5"], report)
+
+    def test_pyqt6_sidebar_toggle_and_zero_emoji_verification(self):
+        import pathlib
+        with patch('modules.app_core.set_window_icon_native'):
+            app = InspectorApp(self.root)
+            self.assertTrue(hasattr(app.notebook, "sidebar_frame"))
+            self.assertTrue(hasattr(app.notebook, "btn_toggle_sidebar"))
+            self.assertTrue(hasattr(app.notebook, "stack"))
+            self.assertFalse(app.notebook.is_sidebar_collapsed)
+            self.assertEqual(app.notebook.sidebar_frame.width(), 242)
+
+            # Thu gọn Sidebar về dạng chỉ hiển thị icon vector (52px)
+            app.notebook.toggle_sidebar()
+            self.assertTrue(app.notebook.is_sidebar_collapsed)
+            self.assertEqual(app.notebook.sidebar_frame.width(), 52)
+
+            # Mở rộng lại Sidebar (242px)
+            app.notebook.toggle_sidebar()
+            self.assertFalse(app.notebook.is_sidebar_collapsed)
+            self.assertEqual(app.notebook.sidebar_frame.width(), 242)
+
+            # Đảm bảo không có bất kỳ emoji Unicode nào trong toàn bộ thư mục modules/
+            allowed_punct = set('•–—…“”‘’─│┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▪▫►◄▲▼◆◇○●★☆✓✗✕✖➔➜➡⬅⬆⬇↔↕≤≥≠≈±×÷°µΩΩ【】')
+            for py_file in pathlib.Path("modules").rglob("*.py"):
+                content = py_file.read_text(encoding="utf-8")
+                for ch in content:
+                    if ord(ch) > 0x2000 and ch not in allowed_punct:
+                        self.fail(f"Phát hiện ký tự emoji bị cấm '{ch}' ({hex(ord(ch))}) trong {py_file}")
 
 
 if __name__ == '__main__':

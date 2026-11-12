@@ -8,7 +8,7 @@ import re
 import sys
 import time
 import threading
-import tkinter as tk
+from modules import qt_toolkit as tk
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -183,7 +183,7 @@ def test_f04_on_closing_blocks_when_busy(headless_app):
 
     app._is_partition_hw_running = True
 
-    with patch('tkinter.messagebox.showwarning') as mock_warn:
+    with patch('modules.qt_toolkit.messagebox.showwarning') as mock_warn:
         app.on_closing()
         mock_warn.assert_called_once()
         # Window still exists!

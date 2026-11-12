@@ -9,8 +9,8 @@ import re
 import time
 import threading
 import codecs
-import tkinter as tk
-from tkinter import ttk, messagebox
+from modules import qt_toolkit as tk
+from modules.qt_toolkit import ttk, messagebox, draw_vector_pixmap
 
 from modules.config import (
     CONFIG_FILE, DEFAULT_GEOMETRY, CONTROL_CONFIG,
@@ -523,7 +523,8 @@ class InspectorApp(
         self.status_bar_frame.grid(row=2, column=0, sticky="ew", padx=2, pady=(2, 0))
         self.status_bar_frame.columnconfigure(1, weight=1)
 
-        self.global_status_icon_lbl = ttk.Label(self.status_bar_frame, text="ℹ️", font=("Segoe UI", 9))
+        self.global_status_icon_lbl = ttk.Label(self.status_bar_frame, text="", font=("Segoe UI", 9, "bold"))
+        self.global_status_icon_lbl.setPixmap(draw_vector_pixmap("status_info", 16))
         self.global_status_icon_lbl.grid(row=0, column=0, sticky="w", padx=(0, 4))
 
         self.global_status_lbl = ttk.Label(self.status_bar_frame, text="Sẵn sàng.", font=("Segoe UI", 9))
@@ -614,6 +615,8 @@ class InspectorApp(
         if hasattr(self, 'serial_input') and isinstance(self.serial_input, tk.Text):
             self.serial_input.configure(bg=p["text_bg"], fg=p["text_fg"], insertbackground=p["text_fg"], selectbackground=select_bg, selectforeground=select_fg)
 
+        if hasattr(self, 'notebook') and hasattr(self.notebook, 'set_theme_mode'):
+            self.notebook.set_theme_mode(self.is_dark_mode)
         if hasattr(self, 'disk_map'):
             self.disk_map.set_theme_mode(self.is_dark_mode)
         if hasattr(self, 'backup_disk_map'):
@@ -916,13 +919,13 @@ class InspectorApp(
             "error": p["error"], "warning": p["warning"]
         }
         icon_map = {
-            "info": "ℹ️",
-            "success": "✅",
-            "warning": "⚠️",
-            "error": "❌"
+            "info": "status_info",
+            "success": "status_success",
+            "warning": "status_warning",
+            "error": "status_error"
         }
         color = color_map.get(level, p["disabled_fg"])
-        icon = icon_map.get(level, "ℹ️")
+        icon_kind = icon_map.get(level, "status_info")
 
         def _apply():
             if hasattr(self, 'req_status_lbl') and self.req_status_lbl.winfo_exists():
@@ -937,7 +940,7 @@ class InspectorApp(
                     pass
             if hasattr(self, 'global_status_icon_lbl') and self.global_status_icon_lbl.winfo_exists():
                 try:
-                    self.global_status_icon_lbl.config(text=icon)
+                    self.global_status_icon_lbl.setPixmap(draw_vector_pixmap(icon_kind, 16))
                 except Exception:
                     pass
             if progress is not None:

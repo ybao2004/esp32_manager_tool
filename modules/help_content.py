@@ -3,7 +3,7 @@ from modules.config import CONTROL_CONFIG, APP_NAME, APP_VERSION, APP_AUTHOR, AP
 
 
 def quick_start_text():
-    commands = '\n'.join(f"  F{key}: {label} → {command}" for key, (label, command) in sorted(CONTROL_CONFIG.items()))
+    commands = '\n'.join(f"  F{key}: {label} -> {command}" for key, (label, command) in sorted(CONTROL_CONFIG.items()))
     return f"""HƯỚNG DẪN SỬ DỤNG {APP_NAME.upper()} (v{APP_VERSION})
 Tác giả: {APP_AUTHOR} | Bản quyền: {APP_LICENSE} License
 
@@ -15,7 +15,7 @@ Chọn COM và baudrate, bấm KIỂM TRA TOÀN DIỆN. Đọc báo cáo, xem Ou
 
 2. SERIAL MONITOR & ĐIỀU KHIỂN
 Bấm Kết nối, nhập chuỗi rồi Gửi. Enter gửi, Shift+Enter xuống dòng. Tùy chọn thêm \\r\\n áp dụng cho lệnh gửi đi. Xóa màn hình ở thanh trên xóa log Serial.
-Bảng điều khiển có {len(CONTROL_CONFIG)} nút, lấy nhãn/lệnh từ cấu hình. Có thể sửa trong Cài đặt → Nút chức năng; cài đặt đã lưu được ưu tiên hơn mặc định.
+Bảng điều khiển có {len(CONTROL_CONFIG)} nút, lấy nhãn/lệnh từ cấu hình. Có thể sửa trong Cài đặt -> Nút chức năng; cài đặt đã lưu được ưu tiên hơn mặc định.
 Các lệnh mặc định hiện tại:
 {commands}
 Reset ESP gửi RESET và tạo xung DTR/RTS; khác với lệnh CMD_RESET mặc định của F3.
@@ -47,11 +47,11 @@ def about_features_text():
     return f"""Công cụ toàn diện dành cho họ chip Espressif: kiểm tra phần cứng chuyên sâu, theo dõi Serial, nạp Flash Firmware, quản lý phân vùng bộ nhớ (Partition Wizard), sao lưu & nhân bản trực tiếp nhiều board (Backup & Direct Clone).
 Tác giả: {APP_AUTHOR}  |  Bản quyền: GNU General Public License v3.0 ({APP_LICENSE})
 
-• Kiểm tra & chẩn đoán chi tiết chip, Silicon Revision, Crystal, MAC (Station/AP/Bluetooth), dung lượng Flash & PSRAM, vùng nhớ RAM nội cấp phát (Heap), đối soát OUI Espressif.
-• Serial Monitor thời gian thực, tự động cuộn, thêm timestamp, {len(CONTROL_CONFIG)} phím điều khiển IoT tùy biến nhãn/lệnh và điều khiển Wi-Fi/TCP.
-• Nạp Flash đồng thời tối đa 4 file .bin với offset tùy chọn, thanh tiến trình phần trăm thời gian thực (0% -> 100%), kiểm tra chồng lấn địa chỉ.
-• Quản lý Phân vùng Bộ nhớ (ESP32 Partition Wizard): sơ đồ trực quan MiniTool, tự động dồn biên 4K/64K, xuất/nhập CSV và nhị phân MD5, đọc/nạp/dump/erase qua chip.
-• Sao lưu & Nhân bản Trực tiếp (Backup & Direct Multi-Board Clone): đọc sơ đồ phân vùng từ board gốc, sao lưu từng vùng hoặc toàn bộ kèm hồ sơ băm SHA-256 / MD5 / MAC gốc, và nhân bản trực tiếp từ 1 board gốc sang nhiều board đích cùng lúc.
-• Tự động Kiểm tra & Tải Cập nhật: Tích hợp kết nối GitHub Releases API, tải trực tiếp file cập nhật kèm thanh tiến trình download thời gian thực.
-• Hỗ trợ giao diện Sáng / Tối, icon chuẩn High-DPI và chạy độc lập không phụ thuộc môi trường cài đặt ngoài.
-• Nền tảng: Python, Tkinter, esptool, PySerial."""
+- Kiểm tra & chẩn đoán chi tiết chip, Silicon Revision, Crystal, MAC (Station/AP/Bluetooth), dung lượng Flash & PSRAM, vùng nhớ RAM nội cấp phát (Heap), đối soát OUI Espressif.
+- Serial Monitor thời gian thực, tự động cuộn, thêm timestamp, {len(CONTROL_CONFIG)} phím điều khiển IoT tùy biến nhãn/lệnh và điều khiển Wi-Fi/TCP.
+- Nạp Flash đồng thời tối đa 4 file .bin với offset tùy chọn, thanh tiến trình phần trăm thời gian thực (0% -> 100%), kiểm tra chồng lấn địa chỉ.
+- Quản lý Phân vùng Bộ nhớ (ESP32 Partition Wizard): sơ đồ trực quan MiniTool, tự động dồn biên 4K/64K, xuất/nhập CSV và nhị phân MD5, đọc/nạp/dump/erase qua chip.
+- Sao lưu & Nhân bản Trực tiếp (Backup & Direct Multi-Board Clone): đọc sơ đồ phân vùng từ board gốc, sao lưu từng vùng hoặc toàn bộ kèm hồ sơ băm SHA-256 / MD5 / MAC gốc, và nhân bản trực tiếp từ 1 board gốc sang nhiều board đích cùng lúc.
+- Tự động Kiểm tra & Tải Cập nhật: Tích hợp kết nối GitHub Releases API, tải trực tiếp file cập nhật kèm thanh tiến trình download thời gian thực.
+- Giao diện PyQt6 hiện đại với thanh điều hướng dọc (Sidebar) có thể thu gọn/mở rộng, biểu tượng Vector QPainter sắc nét, hỗ trợ Sáng / Tối đồng bộ qua QSS.
+- Nền tảng: Python, PyQt6, esptool, PySerial."""

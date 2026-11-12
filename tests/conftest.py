@@ -131,10 +131,10 @@ def mock_dialogs(monkeypatch):
         calls["asksaveasfilename"].append(kwargs)
         return calls.get("return_save_filename", "")
 
-    monkeypatch.setattr("tkinter.messagebox.showinfo", _info)
-    monkeypatch.setattr("tkinter.messagebox.showwarning", _warn)
-    monkeypatch.setattr("tkinter.messagebox.showerror", _error)
-    monkeypatch.setattr("tkinter.messagebox.askyesno", _askyesno)
+    monkeypatch.setattr("modules.qt_toolkit.messagebox.showinfo", _info)
+    monkeypatch.setattr("modules.qt_toolkit.messagebox.showwarning", _warn)
+    monkeypatch.setattr("modules.qt_toolkit.messagebox.showerror", _error)
+    monkeypatch.setattr("modules.qt_toolkit.messagebox.askyesno", _askyesno)
 
     dlg_map = {
         "showinfo": _info,
@@ -142,15 +142,38 @@ def mock_dialogs(monkeypatch):
         "showerror": _error,
         "askyesno": _askyesno,
     }
-    for mod in ("modules.app_core", "modules.tabs.tab_partition", "modules.tabs.tab_backup_clone", "modules.tabs.tab_flasher", "modules.tabs.tab_inspector", "modules.tabs.tab_monitor"):
+    for mod in (
+        "modules.app_core",
+        "modules.tabs.tab_partition",
+        "modules.tabs.tab_backup_clone",
+        "modules.tabs.tab_flasher",
+        "modules.tabs.tab_inspector",
+        "modules.tabs.tab_monitor",
+        "modules.dialogs.partition_dialogs",
+        "modules.dialogs.settings_dialog",
+    ):
         for dlg_name, dlg_fn in dlg_map.items():
             monkeypatch.setattr(f"{mod}.messagebox.{dlg_name}", dlg_fn, raising=False)
 
-    monkeypatch.setattr("tkinter.filedialog.askopenfilename", _askopenfilename)
-    monkeypatch.setattr("tkinter.filedialog.asksaveasfilename", _asksaveasfilename)
+    monkeypatch.setattr("modules.qt_toolkit.filedialog.askopenfilename", _askopenfilename)
+    monkeypatch.setattr("modules.qt_toolkit.filedialog.asksaveasfilename", _asksaveasfilename)
     monkeypatch.setattr("modules.tabs.tab_partition.filedialog.askopenfilename", _askopenfilename, raising=False)
     monkeypatch.setattr("modules.tabs.tab_partition.filedialog.asksaveasfilename", _asksaveasfilename, raising=False)
     monkeypatch.setattr("modules.tabs.tab_flasher.filedialog.askopenfilename", _askopenfilename, raising=False)
     monkeypatch.setattr("modules.tabs.tab_flasher.filedialog.asksaveasfilename", _asksaveasfilename, raising=False)
+    monkeypatch.setattr("modules.tabs.tab_backup_clone.filedialog.askopenfilename", _askopenfilename, raising=False)
+    monkeypatch.setattr("modules.tabs.tab_backup_clone.filedialog.asksaveasfilename", _asksaveasfilename, raising=False)
 
     return calls
+
+
+def pytest_sessionfinish(session, exitstatus):
+    """Dừng bộ định thời QTimer của cửa sổ ẩn khi kết thúc phiên kiểm thử."""
+    try:
+        root = HeadlessAppHarness._shared_root
+        if root is not None:
+            if hasattr(root, "_pump_timer") and root._pump_timer is not None:
+                root._pump_timer.stop()
+            root.destroy()
+    except Exception:
+        pass

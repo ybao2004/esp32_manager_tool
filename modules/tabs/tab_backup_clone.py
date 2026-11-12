@@ -13,8 +13,8 @@ import re
 import tempfile
 import threading
 from datetime import datetime
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from modules import qt_toolkit as tk
+from modules.qt_toolkit import ttk, messagebox, filedialog
 
 from modules.config import (
     DARK_PALETTE, LIGHT_PALETTE, FLASH_BAUDS, REPORT_FONT_SIZE,
@@ -318,7 +318,7 @@ class BackupCloneTabMixin:
     def _build_backup_regions_panel(self, parent: ttk.Frame):
         left_group = ttk.LabelFrame(
             parent,
-            text=" Danh Sách Phân Vùng & Dữ Liệu Cần Sao Lưu (Click dòng để Tích chọn ☑ / ☐) ",
+            text=" Danh Sách Phân Vùng & Dữ Liệu Cần Sao Lưu (Click dòng để Chọn [x] / Bỏ chọn [ ]) ",
             padding=6
         )
         left_group.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
@@ -631,7 +631,7 @@ class BackupCloneTabMixin:
                 selected_count += 1
                 selected_bytes += reg["size"]
 
-            chk_symbol = "☑" if is_checked else "☐"
+            chk_symbol = "[x]" if is_checked else "[ ]"
             hash_info = self.backup_region_hashes.get(key, "Sẵn sàng sao lưu" if is_checked else "Bỏ qua")
             self.backup_tree.insert(
                 "",

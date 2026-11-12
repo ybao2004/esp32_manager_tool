@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Esp32 manager tool v1.3 - Main Entry Point
+Esp32 manager tool v1.4 - Main Entry Point (PyQt6 Edition)
 Ứng dụng GUI toàn diện: Kiểm tra phần cứng, Serial Monitor, Nạp Flash Firmware, Quản lý Phân vùng (Partition Wizard), Sao lưu & Nhân bản (Backup / Clone).
 """
 import sys
@@ -21,7 +21,7 @@ if __name__ == '__main__':
         import ctypes
         # Đặt AppUserModelID riêng để Windows gán đúng icon trên Taskbar thay vì gom nhóm icon Python
         try:
-            myappid = 'mytool.esp32managertool.1.3'
+            myappid = 'mytool.esp32managertool.1.4'
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception:
             pass

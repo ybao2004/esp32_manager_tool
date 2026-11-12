@@ -4,7 +4,6 @@ ESP Tool & Hardware Inspector v2.0 - Win32 High-DPI Icon Utility
 """
 import sys
 import os
-import tkinter as tk
 
 def set_window_icon_native(window, base_dir=None):
     """

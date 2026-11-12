@@ -6,8 +6,8 @@ import time
 import threading
 import codecs
 from datetime import datetime
-import tkinter as tk
-from tkinter import ttk, messagebox
+from modules import qt_toolkit as tk
+from modules.qt_toolkit import ttk, messagebox
 
 try:
     import serial

@@ -1,12 +1,18 @@
-# Esp32 manager tool (v1.3)
+# Esp32 manager tool (v1.4 - PyQt6 Edition)
 
-Ứng dụng GUI tất-cả-trong-một (All-in-One GUI Toolkit) chuyên nghiệp và gọn nhẹ dành cho kỹ sư nhúng và nhà phát triển làm việc với ESP8266 và toàn bộ các dòng chip ESP32: S2, S3, S31, C2, C3, C5, C6, C61, H2, H21, H4 và P4.
+Ứng dụng GUI tất-cả-trong-một (All-in-One PyQt6 GUI Toolkit) chuyên nghiệp, hiện đại và gọn nhẹ dành cho kỹ sư nhúng và nhà phát triển làm việc với ESP8266 và toàn bộ các dòng chip ESP32: S2, S3, S31, C2, C3, C5, C6, C61, H2, H21, H4 và P4.
 
-👤 **Tác giả:** `@ybao04`  |  📜 **Bản quyền:** `GPL-3.0 License`  |  🔗 **Kho mã nguồn GitHub:** [https://github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
+**Tác giả:** `@ybao04`  |  **Bản quyền:** `GPL-3.0 License`  |  **Kho mã nguồn GitHub:** [https://github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
 
 ---
 
 ## CÁC TÍNH NĂNG CHÍNH
+
+### 0. Giao Diện PyQt6 Hiện Đại Với Sidebar Thu Gọn & Icon Vector Thuần
+- Xây dựng hoàn toàn trên nền tảng **PyQt6** (`QMainWindow`, `QStackedWidget`, `QPainter` anti-aliased).
+- **Thanh điều hướng dọc bên trái (Sidebar Navigation)** phong cách STM32CubeProgrammer / VS Code với nút bấm **Thu gọn / Mở rộng (Collapse / Expand)** linh hoạt.
+- Toàn bộ biểu tượng điều hướng, trạng thái và hộp kiểm được vẽ bằng đồ họa **Vector hình học (`QPainter`)** sắc nét ở mọi mức DPI, hoàn toàn không phụ thuộc vào ký tự emoji hệ thống.
+- Đồng bộ mượt mà hai chế độ giao diện **Dark Mode (VS Code Dark)** và **Light Mode** qua bảng định kiểu QSS.
 
 ### 1. Kiểm Tra & Chẩn Đoán Phần Cứng Toàn Diện (Tab 1)
 - Đọc Silicon Revision, tần số thạch anh ngoại vi (Crystal), ID nhà sản xuất Flash (Winbond, GigaDevice, Puya, Macronix,...), dung lượng Flash & PSRAM.
@@ -29,7 +35,7 @@
 
 ### 4. Quản Lý Phân Vùng Bộ Nhớ Flash - Partition Wizard (Tab 4)
 - Sơ đồ thanh ổ đĩa trực quan phong cách **MiniTool Partition Wizard** vẽ theo tỷ lệ dung lượng thực tế, hỗ trợ hover tooltip, chọn khối, menu ngữ cảnh chuột phải và click tạo phân vùng vào khoảng trống chưa phân bổ (*Unallocated Gaps*).
-- Tự động dồn biên và căn chỉnh lề chuẩn 4KB / 64KB (`⚡ Dồn & Căn 4K/64K`) chỉ với 1 click.
+- Tự động dồn biên và căn chỉnh lề chuẩn 4KB / 64KB (`Dồn & Căn 4K/64K`) chỉ với 1 click.
 - Kiểm tra tính hợp lệ thời gian thực (Real-Time Rule Validator) theo tiêu chuẩn ESP-IDF.
 - Đọc và xuất file `partitions.csv` chuẩn ESP-IDF.
 - Biên dịch trực tiếp sang file nhị phân `partition-table.bin` 32-byte struct kèm MD5 Checksum.
@@ -63,7 +69,7 @@ esp32_manager_tool/
 ├── main.py                     # Điểm khởi chạy chính của ứng dụng
 ├── build_exe.bat               # Công cụ tự động đóng gói ra file thực thi .exe độc lập
 ├── esp32_manager_tool.spec     # Cấu hình đóng gói PyInstaller .exe
-├── requirements.txt            # Danh sách thư viện phụ thuộc (esptool, pyserial)
+├── requirements.txt            # Danh sách thư viện phụ thuộc (PyQt6, esptool, pyserial)
 ├── .gitignore                  # Cấu hình bỏ qua file tạm cho Git
 ├── tests/                      # Bộ kiểm thử đơn vị & kiểm thử hồi quy
 ├── docs/                       # Tài liệu hướng dẫn sử dụng và báo cáo kỹ thuật
@@ -71,6 +77,7 @@ esp32_manager_tool/
 ├── icons/                      # Thư mục icon ứng dụng (.ico đa kích thước, .png)
 └── modules/                    # Mã nguồn các module nghiệp vụ
     ├── app_core.py             # Bộ điều khiển trung tâm & Quản lý vòng đời ứng dụng
+    ├── qt_toolkit.py           # Engine giao diện PyQt6, Sidebar thu gọn, QPainter Vector Icon & QSS Theme
     ├── config.py               # Cấu hình hằng số, bảng màu & CSDL thông số chip
     ├── update_util.py          # Kiểm tra và tải cập nhật tự động từ GitHub Releases
     ├── binary_scanner.py       # Bộ kiểm tra tính hợp lệ và quét phân đoạn file .bin

@@ -203,15 +203,10 @@ class ProjectScannerTests(unittest.TestCase):
 class PartitionDetailedTooltipTests(unittest.TestCase):
     def test_tooltip_detailed_explanations(self):
         from modules.tabs.tab_partition import DiskMapCanvas
-        import tkinter as tk
+        from tests.mock_hardware.app_harness import HeadlessAppHarness
+        root = HeadlessAppHarness.get_shared_root()
+        canvas = DiskMapCanvas(root)
         try:
-            root = tk.Tk()
-            root.withdraw()
-        except tk.TclError as exc:
-            raise unittest.SkipTest(f"Tcl/Tk unavailable: {exc}")
-
-        try:
-            canvas = DiskMapCanvas(root)
             nvs = PartitionEntry(name="nvs", type_str="data", subtype_str="nvs", offset=0x9000, size=0x6000)
             tip_nvs = canvas._build_detailed_tooltip_text(nvs)
             self.assertIn("MỤC ĐÍCH SỬ DỤNG", tip_nvs)
@@ -227,7 +222,7 @@ class PartitionDetailedTooltipTests(unittest.TestCase):
             tip_unalloc = canvas._build_detailed_tooltip_text(unalloc)
             self.assertIn("KHOẢNG TRỐNG CHƯA PHÂN BỔ", tip_unalloc)
         finally:
-            root.destroy()
+            canvas.destroy()
 
 
 if __name__ == '__main__':

@@ -6,8 +6,8 @@ tách riêng Hộp thoại Giới thiệu (AboutDialog) và Kiểm tra Cập nh�
 """
 import os
 import threading
-import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from modules import qt_toolkit as tk
+from modules.qt_toolkit import ttk, messagebox, filedialog
 
 try:
     from serial.tools import list_ports

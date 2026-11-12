@@ -4,6 +4,11 @@ from PyInstaller.utils.hooks import collect_all
 datas = [('icons', 'icons')]
 binaries = []
 hiddenimports = [
+    'PyQt6',
+    'PyQt6.QtCore',
+    'PyQt6.QtGui',
+    'PyQt6.QtWidgets',
+    'modules.qt_toolkit',
     'modules.update_util',
     'modules.partition',
     'modules.partition.partition_model',
@@ -37,7 +42,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['pytest', '_pytest', 'unittest'],
+    excludes=['pytest', '_pytest', 'unittest', 'tkinter', '_tkinter'],
     noarchive=False,
     optimize=0,
 )

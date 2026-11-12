@@ -5,8 +5,8 @@ Hộp thoại thêm/sửa phân vùng và chọn mẫu bảng phân vùng chuẩ
 """
 from __future__ import annotations
 
-import tkinter as tk
-from tkinter import ttk, messagebox
+from modules import qt_toolkit as tk
+from modules.qt_toolkit import ttk, messagebox
 from typing import Optional, Tuple, Dict, Any, List
 
 from modules.config import DARK_PALETTE, LIGHT_PALETTE
@@ -220,12 +220,12 @@ class SizeInputDialog:
         try:
             b = self._get_bytes()
             if b <= 0:
-                self.lbl_info.configure(text="⚠️ Dung lượng phải lớn hơn 0.")
+                self.lbl_info.configure(text="[CẢNH BÁO] Dung lượng phải lớn hơn 0.")
                 return
-            status = "✅ Bội số 4KB" if b % 0x1000 == 0 else "⚠️ Chưa chia hết cho sector 4KB"
-            self.lbl_info.configure(text=f"• {format_bytes_human(b)} ({format_hex(b)}) | {sector_count(b)} sectors | {status}")
+            status = "[HỢP LỆ] Bội số 4KB" if b % 0x1000 == 0 else "[CẢNH BÁO] Chưa chia hết cho sector 4KB"
+            self.lbl_info.configure(text=f"- {format_bytes_human(b)} ({format_hex(b)}) | {sector_count(b)} sectors | {status}")
         except Exception:
-            self.lbl_info.configure(text="⚠️ Vui lòng nhập số hợp lệ.")
+            self.lbl_info.configure(text="[CẢNH BÁO] Vui lòng nhập số hợp lệ.")
 
     def _on_ok(self):
         try:
@@ -452,27 +452,27 @@ class PartitionEditDialog:
             # Kiểm tra quy tắc
             warnings = []
             if len(name.encode('utf-8')) > 16:
-                warnings.append("⚠️ Tên phân vùng dài hơn 16 bytes!")
+                warnings.append("[CẢNH BÁO] Tên phân vùng dài hơn 16 bytes!")
             if size_val % 0x1000 != 0:
-                warnings.append("❌ Dung lượng bắt buộc phải là bội số của 4KB (0x1000)!")
+                warnings.append("[LỖI] Dung lượng bắt buộc phải là bội số của 4KB (0x1000)!")
 
             if type_str == "app":
                 if offset_val % 0x10000 != 0:
-                    warnings.append(f"❌ Phân vùng App bắt buộc Offset phải chia hết cho 64KB (0x10000). Hiện tại: {format_hex(offset_val)}")
+                    warnings.append(f"[LỖI] Phân vùng App bắt buộc Offset phải chia hết cho 64KB (0x10000). Hiện tại: {format_hex(offset_val)}")
                 if offset_val < 0x10000:
-                    warnings.append("❌ Phân vùng App không được đặt trong vùng cấm < 0x10000!")
+                    warnings.append("[LỖI] Phân vùng App không được đặt trong vùng cấm < 0x10000!")
             else:
                 if offset_val % 0x1000 != 0:
-                    warnings.append(f"❌ Phân vùng Data bắt buộc Offset phải chia hết cho 4KB (0x1000). Hiện tại: {format_hex(offset_val)}")
+                    warnings.append(f"[LỖI] Phân vùng Data bắt buộc Offset phải chia hết cho 4KB (0x1000). Hiện tại: {format_hex(offset_val)}")
 
             if not warnings:
-                lines.append("✅ Căn biên và thông số hoàn toàn hợp lệ theo chuẩn ESP-IDF.")
+                lines.append("[HỢP LỆ] Căn biên và thông số hoàn toàn hợp lệ theo chuẩn ESP-IDF.")
             else:
                 lines.extend(warnings)
 
             self.lbl_preview.config(text="\n".join(lines))
         except Exception as e:
-            self.lbl_preview.config(text=f"⚠️ Thông số chưa hoàn chỉnh: {e}")
+            self.lbl_preview.config(text=f"[CẢNH BÁO] Thông số chưa hoàn chỉnh: {e}")
 
     def _on_save(self):
         name = self.var_name.get().strip()
