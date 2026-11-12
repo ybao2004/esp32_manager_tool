@@ -200,5 +200,35 @@ class ProjectScannerTests(unittest.TestCase):
             self.assertEqual(len(res.partition_table.entries), 2)
 
 
+class PartitionDetailedTooltipTests(unittest.TestCase):
+    def test_tooltip_detailed_explanations(self):
+        from modules.tabs.tab_partition import DiskMapCanvas
+        import tkinter as tk
+        try:
+            root = tk.Tk()
+            root.withdraw()
+        except tk.TclError as exc:
+            raise unittest.SkipTest(f"Tcl/Tk unavailable: {exc}")
+
+        try:
+            canvas = DiskMapCanvas(root)
+            nvs = PartitionEntry(name="nvs", type_str="data", subtype_str="nvs", offset=0x9000, size=0x6000)
+            tip_nvs = canvas._build_detailed_tooltip_text(nvs)
+            self.assertIn("MỤC ĐÍCH SỬ DỤNG", tip_nvs)
+            self.assertIn("KHUYẾN NGHỊ DUNG LƯỢNG", tip_nvs)
+            self.assertIn("Non-Volatile Storage", tip_nvs)
+
+            factory = PartitionEntry(name="factory", type_str="app", subtype_str="factory", offset=0x10000, size=0x100000)
+            tip_factory = canvas._build_detailed_tooltip_text(factory)
+            self.assertIn("Default Factory App", tip_factory)
+            self.assertIn("Căn biên 64 KB", tip_factory)
+
+            unalloc = PartitionEntry(name="Unallocated", type_str="gap", subtype_str="gap", offset=0x200000, size=0x200000, is_unallocated=True)
+            tip_unalloc = canvas._build_detailed_tooltip_text(unalloc)
+            self.assertIn("KHOẢNG TRỐNG CHƯA PHÂN BỔ", tip_unalloc)
+        finally:
+            root.destroy()
+
+
 if __name__ == '__main__':
     unittest.main()

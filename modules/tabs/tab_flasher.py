@@ -16,26 +16,33 @@ from modules.esptool_util import run_esptool_command, esptool_command_succeeded
 
 class FlasherTabMixin:
     """Mixin cung cấp giao diện và logic Nạp Firmware & Công cụ Xóa Flash (Thẻ 3)."""
+    flash_thread = None
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.flash_thread = None
 
     def create_flasher_tab(self):
         """Khởi tạo giao diện Nạp Flash Firmware (.bin) đa file."""
+        self.flash_thread = None
         self.flasher_tab.columnconfigure(0, weight=1)
         self.flasher_tab.rowconfigure(0, weight=0)
         self.flasher_tab.rowconfigure(1, weight=0)
         self.flasher_tab.rowconfigure(2, weight=1)
 
-        # 1. Khung cấu hình Nạp & Công cụ Xóa bộ nhớ
+        # 1. Khung cấu hình Nạp & Công cụ Xóa bộ nhớ (Bố cục 2 hàng tương thích High-DPI)
         cfg_frame = ttk.LabelFrame(self.flasher_tab, text=" Cấu hình Nạp Flash & Công cụ Xóa ", padding=(10, 6))
         cfg_frame.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 2))
         cfg_frame.columnconfigure(4, weight=1)
 
+        # Hàng 0: Cấu hình nạp firmware
         ttk.Label(cfg_frame, text="Mục tiêu Chip:").grid(row=0, column=0, sticky="w", padx=(0, 4), pady=2)
-        self.flash_chip_cb = ttk.Combobox(cfg_frame, values=FLASH_CHIP_TARGETS, width=11, state="readonly")
+        self.flash_chip_cb = ttk.Combobox(cfg_frame, values=FLASH_CHIP_TARGETS, width=12, state="readonly")
         self.flash_chip_cb.set(self.saved_flash_chip if self.saved_flash_chip in FLASH_CHIP_TARGETS else "auto")
         self.flash_chip_cb.grid(row=0, column=1, sticky="w", padx=(0, 12), pady=2)
 
         ttk.Label(cfg_frame, text="Tốc độ Nạp (Baud):").grid(row=0, column=2, sticky="w", padx=(0, 4), pady=2)
-        self.flash_baud_cb = ttk.Combobox(cfg_frame, values=FLASH_BAUDS, width=11, state="readonly")
+        self.flash_baud_cb = ttk.Combobox(cfg_frame, values=FLASH_BAUDS, width=12, state="readonly")
         self.flash_baud_cb.set(self.saved_flash_baud if self.saved_flash_baud in FLASH_BAUDS else "460800")
         self.flash_baud_cb.grid(row=0, column=3, sticky="w", padx=(0, 12), pady=2)
 
@@ -43,15 +50,15 @@ class FlasherTabMixin:
         self.cb_flash_erase = ttk.Checkbutton(cfg_frame, text="Xóa sạch Flash trước khi nạp (--erase-all)", variable=self.var_flash_erase)
         self.cb_flash_erase.grid(row=0, column=4, sticky="w", padx=(0, 10), pady=2)
 
-        sep = ttk.Separator(cfg_frame, orient="vertical")
-        sep.grid(row=0, column=5, sticky="ns", padx=8, pady=2)
+        # Hàng 1: Công cụ xóa an toàn
+        ttk.Label(cfg_frame, text="Công cụ xóa bộ nhớ:", font=("Segoe UI", 9, "bold")).grid(row=1, column=0, columnspan=2, sticky="w", padx=(0, 4), pady=(6, 2))
 
         self.btn_erase_flash = ttk.Button(cfg_frame, text="Xóa Toàn Bộ Flash", command=self.on_erase_flash_click)
-        self.btn_erase_flash.grid(row=0, column=6, sticky="e", padx=(0, 6), pady=2)
+        self.btn_erase_flash.grid(row=1, column=2, columnspan=2, sticky="w", padx=(0, 10), pady=(6, 2))
         self.btn_erase_only = self.btn_erase_flash
 
         self.btn_erase_nvs = ttk.Button(cfg_frame, text="Xóa vùng Flash", command=self.on_erase_nvs_click)
-        self.btn_erase_nvs.grid(row=0, column=7, sticky="e", padx=(0, 6), pady=2)
+        self.btn_erase_nvs.grid(row=1, column=4, sticky="w", padx=(0, 10), pady=(6, 2))
 
 
         # 2. Khung Danh sách File .bin cần nạp
@@ -184,11 +191,14 @@ class FlasherTabMixin:
 
     def log_flash(self, s, tag=None):
         """Ghi log vào màn hình của tab Nạp Flash."""
-        if hasattr(self, 'flasher_txt') and self.flasher_txt.winfo_exists():
-            self.flasher_txt.config(state="normal")
-            self.flasher_txt.insert("end", s + "\n", tag)
-            self.flasher_txt.see("end")
-            self.flasher_txt.config(state="disabled")
+        try:
+            if hasattr(self, 'flasher_txt') and self.flasher_txt.winfo_exists():
+                self.flasher_txt.config(state="normal")
+                self.flasher_txt.insert("end", s + "\n", tag)
+                self.flasher_txt.see("end")
+                self.flasher_txt.config(state="disabled")
+        except Exception:
+            pass
 
     def on_erase_flash_click(self):
         """Xử lý sự kiện bấm nút Xóa Toàn Bộ Flash."""
@@ -210,55 +220,81 @@ class FlasherTabMixin:
         ):
             return
 
-        if self.serial_connection and self.serial_connection.is_open:
+        was_connected = bool(self.serial_connection and getattr(self.serial_connection, 'is_open', True))
+        if was_connected:
             self.on_serial_disconnect()
             self.is_flashing.set()
             self._set_flash_ui_state("disabled")
-            self.root.after(400, lambda: self._start_erase_thread(port))
+            self.root.after(400, lambda: self._start_erase_thread(port, was_connected=True))
         else:
-            self._start_erase_thread(port)
+            self._start_erase_thread(port, was_connected=False)
 
-    def _start_erase_thread(self, port):
+    def _start_erase_thread(self, port, was_connected=False):
         self.is_flashing.set()
         self.on_clear(self.flasher_txt, clear_status=False)
         self.set_status(f"Đang xóa sạch Flash trên {port}...", "warning")
         self.flash_prog.config(value=0)
         self.flash_pct_lbl.config(text="0%")
-        self._set_flash_ui_state("disabled")
+        if hasattr(self, 'set_global_busy_state'):
+            self.set_global_busy_state(True, "xóa toàn bộ flash")
+        else:
+            self._set_flash_ui_state("disabled")
 
         chip_target = self.flash_chip_cb.get().strip()
         baud = self.flash_baud_cb.get().strip()
 
         self.log_flash("=== BẮT ĐẦU XÓA SẠCH FLASH (ERASE FLASH) ===", 'header')
-        self.log_flash(f"Cổng COM: {port} | Baudrate: {baud} | Chip: {chip_target}\n")
-        threading.Thread(target=self._erase_worker, args=(port, baud, chip_target), daemon=True).start()
+        self.flash_thread = threading.Thread(target=self._erase_worker, args=(port, baud, chip_target, was_connected), daemon=True)
+        self.flash_thread.start()
 
-    def _erase_worker(self, port, baud, chip_target):
+    def _erase_worker(self, port, baud, chip_target, was_connected=False):
         args = ['--port', port, '--baud', str(baud)]
         if chip_target and chip_target != "auto":
             args.extend(['--chip', chip_target])
         args.append('erase-flash')
 
+        def safe_after(fn, delay=0):
+            try:
+                if getattr(self, "root", None) and self.root.winfo_exists():
+                    self.root.after(delay, fn)
+            except Exception:
+                pass
+
         def on_stream(line):
-            self.root.after(0, self.log_flash, f"  {line}")
+            safe_after(lambda: self.log_flash(f"  {line}"))
+            l_str = str(line)
+            if "Connecting" in l_str:
+                safe_after(lambda: self._update_flash_progress(15))
+            elif "Stub flasher running" in l_str or "Running stub" in l_str:
+                safe_after(lambda: self._update_flash_progress(35))
+            elif "Erasing flash" in l_str:
+                safe_after(lambda: self._update_flash_progress(65))
+            elif "Chip erase completed" in l_str:
+                safe_after(lambda: self._update_flash_progress(95))
 
         try:
             res = run_esptool_command(args, progress_callback=on_stream)
             if esptool_command_succeeded(res):
-                self.root.after(0, lambda: self.set_status("Đã xóa sạch Flash thành công!", "success"))
-                self.root.after(0, self.log_flash, "\n>>> XÓA SẠCH FLASH THÀNH CÔNG!", 'green')
-                self.root.after(0, lambda: self.flash_prog.config(value=100))
-                self.root.after(0, lambda: self.flash_pct_lbl.config(text="100%"))
+                safe_after(lambda: self.set_status("Đã xóa sạch Flash thành công!", "success", progress=100))
+                safe_after(lambda: self.log_flash("\n>>> XÓA SẠCH FLASH THÀNH CÔNG!", 'green'))
+                safe_after(lambda: self._update_flash_progress(100))
             else:
-                self.root.after(0, lambda: self.set_status("Xóa Flash thất bại!", "error"))
-                self.root.after(0, self.log_flash, "\n>>> LỖI KHI XÓA FLASH!", 'red')
+                safe_after(lambda: self.set_status("Xóa Flash thất bại!", "error", progress=0))
+                safe_after(lambda: self.log_flash("\n>>> LỖI KHI XÓA FLASH!", 'red'))
+                safe_after(lambda: self._update_flash_progress(0))
         except Exception as e:
             error_message = f"Lỗi: {e}"
-            self.root.after(0, lambda msg=error_message: self.set_status(msg, "error"))
-            self.root.after(0, self.log_flash, f"\n>>> NGOẠI LỆ: {e}", 'red')
+            safe_after(lambda msg=error_message: self.set_status(msg, "error", progress=0))
+            safe_after(lambda: self.log_flash(f"\n>>> NGOẠI LỆ: {e}", 'red'))
+            safe_after(lambda: self._update_flash_progress(0))
         finally:
             self.is_flashing.clear()
-            self.root.after(0, lambda: self._set_flash_ui_state("normal"))
+            if hasattr(self, 'set_global_busy_state'):
+                safe_after(lambda: self.set_global_busy_state(False))
+            else:
+                safe_after(lambda: self._set_flash_ui_state("normal"))
+            if was_connected and hasattr(self, 'on_serial_connect'):
+                safe_after(self.on_serial_connect, 500)
 
     def on_erase_nvs_click(self):
         """Xử lý sự kiện bấm nút Xóa vùng Flash."""
@@ -370,13 +406,14 @@ class FlasherTabMixin:
             ):
                 return
             dialog.destroy()
-            if self.serial_connection and self.serial_connection.is_open:
+            was_connected = bool(self.serial_connection and getattr(self.serial_connection, 'is_open', True))
+            if was_connected:
                 self.on_serial_disconnect()
                 self.is_flashing.set()
                 self._set_flash_ui_state("disabled")
-                self.root.after(400, lambda: self._start_erase_nvs_thread(port, hex(off_val), hex(sz_val)))
+                self.root.after(400, lambda: self._start_erase_nvs_thread(port, hex(off_val), hex(sz_val), was_connected=True))
             else:
-                self._start_erase_nvs_thread(port, hex(off_val), hex(sz_val))
+                self._start_erase_nvs_thread(port, hex(off_val), hex(sz_val), was_connected=False)
 
         btn_confirm = ttk.Button(btn_bar, text="Xác nhận Xóa vùng Flash", command=on_confirm)
         btn_confirm.pack(side="right", padx=(6, 0))
@@ -385,13 +422,16 @@ class FlasherTabMixin:
         btn_cancel.pack(side="right")
         fit_dialog(dialog, self.root, 480, 320)
 
-    def _start_erase_nvs_thread(self, port, offset_hex, size_hex):
+    def _start_erase_nvs_thread(self, port, offset_hex, size_hex, was_connected=False):
         self.is_flashing.set()
         self.on_clear(self.flasher_txt, clear_status=False)
         self.set_status(f"Đang xóa vùng Flash ({offset_hex}, {size_hex}) trên {port}...", "warning")
         self.flash_prog.config(value=0)
         self.flash_pct_lbl.config(text="0%")
-        self._set_flash_ui_state("disabled")
+        if hasattr(self, 'set_global_busy_state'):
+            self.set_global_busy_state(True, "xóa vùng flash")
+        else:
+            self._set_flash_ui_state("disabled")
 
         chip_target = self.flash_chip_cb.get().strip()
         baud = self.flash_baud_cb.get().strip()
@@ -400,35 +440,57 @@ class FlasherTabMixin:
         self.log_flash("=== BẮT ĐẦU XÓA VÙNG FLASH THEO ĐỊA CHỈ ===", 'header')
         self.log_flash(f"Cổng COM: {port} | Baudrate: {baud} | Chip: {chip_target}")
         self.log_flash(f"Địa chỉ Offset: {offset_hex} | Kích thước: {size_hex} ({sz_kb:.1f} KB)")
-        self.log_flash("-" * 65 + "\n")
-        threading.Thread(target=self._erase_nvs_worker, args=(port, baud, chip_target, offset_hex, size_hex), daemon=True).start()
+        self.flash_thread = threading.Thread(target=self._erase_nvs_worker, args=(port, baud, chip_target, offset_hex, size_hex, was_connected), daemon=True)
+        self.flash_thread.start()
 
-    def _erase_nvs_worker(self, port, baud, chip_target, offset_hex, size_hex):
+    def _erase_nvs_worker(self, port, baud, chip_target, offset_hex, size_hex, was_connected=False):
         args = ['--port', port, '--baud', str(baud)]
         if chip_target and chip_target != "auto":
             args.extend(['--chip', chip_target])
         args.extend(['erase-region', offset_hex, size_hex])
 
+        def safe_after(fn, delay=0):
+            try:
+                if getattr(self, "root", None) and self.root.winfo_exists():
+                    self.root.after(delay, fn)
+            except Exception:
+                pass
+
         def on_stream(line):
-            self.root.after(0, self.log_flash, f"  {line}")
+            safe_after(lambda: self.log_flash(f"  {line}"))
+            l_str = str(line)
+            if "Connecting" in l_str:
+                safe_after(lambda: self._update_flash_progress(15))
+            elif "Stub flasher running" in l_str or "Running stub" in l_str:
+                safe_after(lambda: self._update_flash_progress(40))
+            elif "Erasing region" in l_str:
+                safe_after(lambda: self._update_flash_progress(70))
+            elif "Erase completed" in l_str:
+                safe_after(lambda: self._update_flash_progress(95))
 
         try:
             res = run_esptool_command(args, progress_callback=on_stream)
             if esptool_command_succeeded(res):
-                self.root.after(0, lambda: self.set_status("Đã xóa vùng Flash thành công!", "success"))
-                self.root.after(0, self.log_flash, "\n>>> XÓA VÙNG FLASH THÀNH CÔNG!", 'green')
-                self.root.after(0, lambda: self.flash_prog.config(value=100))
-                self.root.after(0, lambda: self.flash_pct_lbl.config(text="100%"))
+                safe_after(lambda: self.set_status("Đã xóa vùng Flash thành công!", "success", progress=100))
+                safe_after(lambda: self.log_flash("\n>>> XÓA VÙNG FLASH THÀNH CÔNG!", 'green'))
+                safe_after(lambda: self._update_flash_progress(100))
             else:
-                self.root.after(0, lambda: self.set_status("Xóa vùng Flash thất bại!", "error"))
-                self.root.after(0, self.log_flash, "\n>>> LỖI KHI XÓA VÙNG FLASH!", 'red')
+                safe_after(lambda: self.set_status("Xóa vùng Flash thất bại!", "error", progress=0))
+                safe_after(lambda: self.log_flash("\n>>> LỖI KHI XÓA VÙNG FLASH!", 'red'))
+                safe_after(lambda: self._update_flash_progress(0))
         except Exception as e:
             error_message = f"Lỗi: {e}"
-            self.root.after(0, lambda msg=error_message: self.set_status(msg, "error"))
-            self.root.after(0, self.log_flash, f"\n>>> NGOẠI LỆ: {e}", 'red')
+            safe_after(lambda msg=error_message: self.set_status(msg, "error", progress=0))
+            safe_after(lambda: self.log_flash(f"\n>>> NGOẠI LỆ: {e}", 'red'))
+            safe_after(lambda: self._update_flash_progress(0))
         finally:
             self.is_flashing.clear()
-            self.root.after(0, lambda: self._set_flash_ui_state("normal"))
+            if hasattr(self, 'set_global_busy_state'):
+                safe_after(lambda: self.set_global_busy_state(False))
+            else:
+                safe_after(lambda: self._set_flash_ui_state("normal"))
+            if was_connected and hasattr(self, 'on_serial_connect'):
+                safe_after(self.on_serial_connect, 500)
 
     def on_flash_write_click(self):
         """Xử lý bắt đầu nạp firmware .bin."""
@@ -462,28 +524,43 @@ class FlasherTabMixin:
                     return
                 write_pairs.append((offset, path))
 
-        is_valid, validation_message, write_pairs, _max_end = validate_binary_segments(write_pairs)
+        is_valid, validation_message, write_pairs, max_end = validate_binary_segments(write_pairs)
         if not is_valid:
             messagebox.showerror("Dữ liệu Nạp Flash không hợp lệ", validation_message)
             return
 
+        flash_limit = getattr(getattr(self, 'table', None), 'flash_size', None)
+        if flash_limit is None and hasattr(self, 'flash_size') and isinstance(self.flash_size, (int, float)):
+            flash_limit = int(self.flash_size)
+        if flash_limit is not None and max_end > flash_limit:
+            messagebox.showerror(
+                "Vượt quá dung lượng Flash",
+                f"Vùng nhớ nạp ghi tới 0x{max_end:X} ({max_end / (1024*1024):.2f} MB), "
+                f"vượt quá dung lượng Flash của chip ({flash_limit / (1024*1024):.1f} MB)!"
+            )
+            return
+
         self.save_config()
 
-        if self.serial_connection and self.serial_connection.is_open:
+        was_connected = bool(self.serial_connection and getattr(self.serial_connection, 'is_open', True))
+        if was_connected:
             self.on_serial_disconnect()
             self.is_flashing.set()
             self._set_flash_ui_state("disabled")
-            self.root.after(400, lambda: self._start_flash_write_thread(port, write_pairs))
+            self.root.after(400, lambda: self._start_flash_write_thread(port, write_pairs, was_connected=True))
         else:
-            self._start_flash_write_thread(port, write_pairs)
+            self._start_flash_write_thread(port, write_pairs, was_connected=False)
 
-    def _start_flash_write_thread(self, port, write_pairs):
+    def _start_flash_write_thread(self, port, write_pairs, was_connected=False):
         self.is_flashing.set()
         self.on_clear(self.flasher_txt, clear_status=False)
         self.set_status(f"Đang nạp Flash vào {port}...", "warning")
         self.flash_prog.config(value=0)
         self.flash_pct_lbl.config(text="0%")
-        self._set_flash_ui_state("disabled")
+        if hasattr(self, 'set_global_busy_state'):
+            self.set_global_busy_state(True, "nạp firmware")
+        else:
+            self._set_flash_ui_state("disabled")
 
         chip_target = self.flash_chip_cb.get().strip()
         baud = self.flash_baud_cb.get().strip()
@@ -496,51 +573,111 @@ class FlasherTabMixin:
         for off, fpath in write_pairs:
             sz_kb = os.path.getsize(fpath) / 1024.0
             self.log_flash(f"  + Offset: {off:<10} | Kích thước: {sz_kb:8.1f} KB | File: {fpath}")
-        self.log_flash("-" * 65 + "\n")
-        threading.Thread(target=self._flash_write_worker, args=(port, baud, chip_target, erase_all, write_pairs), daemon=True).start()
+        self.flash_thread = threading.Thread(target=self._flash_write_worker, args=(port, baud, chip_target, erase_all, write_pairs, was_connected), daemon=True)
+        self.flash_thread.start()
 
-    def _flash_write_worker(self, port, baud, chip_target, erase_all, write_pairs):
-        args = ['--port', port, '--baud', str(baud)]
-        if chip_target and chip_target != "auto":
-            args.extend(['--chip', chip_target])
-        args.extend(['write-flash', '-z'])
-        if erase_all:
-            args.append('--erase-all')
-
-        for off, fpath in write_pairs:
-            args.extend([off, fpath])
-
-        def on_stream(line):
-            self.root.after(0, self.log_flash, f"  {line}")
-            m = re.search(r"\((\d+)\s*%\)", line)
-            if m:
-                pct = int(m.group(1))
-                self.root.after(0, lambda p=pct: self._update_flash_progress(p))
+    def _flash_write_worker(self, port, baud, chip_target, erase_all, write_pairs, was_connected=False):
+        def safe_after(fn, delay=0):
+            try:
+                if getattr(self, "root", None) and self.root.winfo_exists():
+                    self.root.after(delay, fn)
+            except Exception:
+                pass
 
         try:
+            args = ['--port', port, '--baud', str(baud)]
+            if chip_target and chip_target != "auto":
+                args.extend(['--chip', chip_target])
+            args.extend(['write-flash', '-z'])
+            if erase_all:
+                args.append('--erase-all')
+
+            for off, fpath in write_pairs:
+                args.extend([off, fpath])
+
+            current_file_idx = 0
+            last_file_pct = 0
+            file_finished = False
+            file_sizes = []
+            for _, fpath in write_pairs:
+                try:
+                    sz = os.path.getsize(fpath) if os.path.isfile(fpath) else 0
+                except OSError:
+                    sz = 0
+                file_sizes.append(max(1, sz))
+            total_bytes = max(1, sum(file_sizes))
+
+            def on_stream(line):
+                nonlocal current_file_idx, last_file_pct, file_finished
+                safe_after(lambda: self.log_flash(f"  {line}"))
+
+                if "Hash of data verified" in line or re.search(r"Wrote\s+\d+\s+bytes", line):
+                    if not file_finished and current_file_idx < len(write_pairs) - 1:
+                        current_file_idx += 1
+                        last_file_pct = 0
+                        file_finished = True
+
+                if "Writing at" in line:
+                    file_finished = False
+
+                m = re.search(r"\((\d+)\s*%\)", line)
+                if m:
+                    pct = int(m.group(1))
+                    if pct < last_file_pct and current_file_idx < len(write_pairs) - 1:
+                        if not file_finished:
+                            current_file_idx += 1
+                            last_file_pct = 0
+                    last_file_pct = pct
+                    file_finished = False
+
+                    completed_bytes = sum(file_sizes[:current_file_idx])
+                    current_bytes = (pct / 100.0) * file_sizes[current_file_idx]
+                    agg_pct = min(100, max(0, int(((completed_bytes + current_bytes) / total_bytes) * 100)))
+                    safe_after(lambda p=agg_pct: self._update_flash_progress(p))
+
             res = run_esptool_command(args, progress_callback=on_stream)
             if esptool_command_succeeded(res):
-                self.root.after(0, lambda: self._update_flash_progress(100))
-                self.root.after(0, lambda: self.set_status("Nạp Firmware thành công!", "success"))
-                self.root.after(0, self.log_flash, "\n>>> NẠP FLASH THÀNH CÔNG! ESP ĐÃ SẴN SÀNG KHỞI ĐỘNG.", 'green')
+                safe_after(lambda: self._update_flash_progress(100))
+                safe_after(lambda: self.set_status("Nạp Firmware thành công!", "success", progress=100))
+                safe_after(lambda: self.log_flash("\n>>> NẠP FLASH THÀNH CÔNG! ESP ĐÃ SẴN SÀNG KHỞI ĐỘNG.", 'green'))
             else:
-                self.root.after(0, lambda: self.set_status("Nạp Flash thất bại!", "error"))
-                self.root.after(0, self.log_flash, "\n>>> LỖI QUÁ TRÌNH NẠP FLASH!", 'red')
+                safe_after(lambda: self._update_flash_progress(0))
+                safe_after(lambda: self.set_status("Nạp Flash thất bại!", "error", progress=0))
+                safe_after(lambda: self.log_flash("\n>>> LỖI QUÁ TRÌNH NẠP FLASH!", 'red'))
         except Exception as e:
             error_message = f"Lỗi: {e}"
-            self.root.after(0, lambda msg=error_message: self.set_status(msg, "error"))
-            self.root.after(0, self.log_flash, f"\n>>> NGOẠI LỆ: {e}", 'red')
+            safe_after(lambda: self._update_flash_progress(0))
+            safe_after(lambda msg=error_message: self.set_status(msg, "error", progress=0))
+            safe_after(lambda: self.log_flash(f"\n>>> NGOẠI LỆ: {e}", 'red'))
         finally:
             self.is_flashing.clear()
-            self.root.after(0, lambda: self._set_flash_ui_state("normal"))
+            if hasattr(self, 'set_global_busy_state'):
+                safe_after(lambda: self.set_global_busy_state(False))
+            else:
+                safe_after(lambda: self._set_flash_ui_state("normal"))
+            if was_connected and hasattr(self, 'on_serial_connect'):
+                safe_after(self.on_serial_connect, 500)
 
     def _update_flash_progress(self, percent):
         """Cập nhật thanh tiến trình nạp Flash."""
-        self.flash_prog.config(value=percent)
-        self.flash_pct_lbl.config(text=f"{percent}%")
+        try:
+            pct_int = int(round(max(0, min(100, float(percent)))))
+            if hasattr(self, 'flash_prog') and self.flash_prog.winfo_exists():
+                self.flash_prog.config(value=pct_int)
+            if hasattr(self, 'flash_pct_lbl') and self.flash_pct_lbl.winfo_exists():
+                self.flash_pct_lbl.config(text=f"{pct_int}%")
+            if hasattr(self, 'global_progress_bar') and self.global_progress_bar.winfo_exists():
+                self.global_progress_bar.stop()
+                self.global_progress_bar.config(mode="determinate", value=pct_int)
+            if hasattr(self, 'global_progress_pct_lbl') and self.global_progress_pct_lbl.winfo_exists():
+                self.global_progress_pct_lbl.config(text=f"{pct_int}%")
+        except Exception:
+            pass
 
     def _set_flash_ui_state(self, state):
         """Bật/tắt các nút khi đang nạp Flash để chống bấm trùng."""
+        if isinstance(state, bool):
+            state = "normal" if state else "disabled"
         self.btn_flash_write.config(state=state)
         if hasattr(self, 'btn_erase_flash'):
             self.btn_erase_flash.config(state=state)

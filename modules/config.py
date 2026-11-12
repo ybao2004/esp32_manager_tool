@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Esp32 manager tool v1.0 - Configuration & Constants
+Esp32 manager tool v1.1 - Configuration & Constants
 """
 import os
 import sys
@@ -23,7 +23,7 @@ CONFIG_FILENAME = "settings_esp32_manager_tool.json"
 CONFIG_FILE = os.path.join(CONFIG_DIR, CONFIG_FILENAME)
 
 APP_NAME = "Esp32 manager tool"
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 GITHUB_REPO = "ybao2004/esp32_manager_tool"
 
 REPORT_FONT_SIZE = 10
@@ -90,9 +90,28 @@ FLASH_CHIP_TARGETS = [
 
 # --- CSDL Chip và Flash ---
 FLASH_MANUFACTURERS = {
-    "20": "XMC", "68": "XMC", "c8": "GigaDevice", "ef": "Winbond", "1c": "EON",
-    "0b": "Puya", "85": "Puya", "d8": "Puya", "a1": "Fudan", "c2": "Macronix (MX)",
-    "e0": "Fremont", "5e": "Zbit", "eb": "TH (Tongxin)", "31": "Wwcache"
+    "01": "Spansion / Cypress (Infineon)",
+    "0b": "XTX / Puya",
+    "1c": "EON (cFeon)",
+    "1f": "Adesto / Renesas",
+    "20": "XMC / Micron",
+    "31": "Wwcache",
+    "46": "BoyaMicro / NOR Flash",
+    "5e": "Zbit (ZB)",
+    "68": "BoyaMicro / XMC",
+    "85": "Puya (PY)",
+    "9d": "ISSI",
+    "a1": "Fudan Micro (FM)",
+    "ba": "Zetta",
+    "c2": "Macronix (MX)",
+    "c4": "Giantec (GT)",
+    "c8": "GigaDevice",
+    "d8": "Puya",
+    "e0": "Fremont / BergMicro",
+    "e5": "Fidelix",
+    "eb": "TH (Tongxin)",
+    "ef": "Winbond",
+    "f8": "Dosilicon",
 }
 
 CHIP_DATABASE = { 
@@ -108,7 +127,7 @@ CHIP_DATABASE = {
     "ESP32-H2": { "name": "ESP32-H2", "architecture": "RISC-V 32-bit single-core", "cores": 1, "cpu_freq_mhz": [96], "mips_max": "240 MIPS (DMIPS)", "sram_kb": 320, "rom_kb": 128, "wifi": None, "bluetooth": "Bluetooth 5.3 (LE)", "features": ["802.15.4 (Thread/Zigbee)", "Low Power Consumption"] }, 
     "ESP32-H21": { "name": "ESP32-H21", "architecture": "RISC-V 32-bit single-core", "cores": 1, "cpu_freq_mhz": [96], "mips_max": "Tối đa 96 MHz", "sram_kb": 320, "rom_kb": 128, "wifi": None, "bluetooth": "Bluetooth 5.4 (LE)", "features": ["802.15.4 (Thread/Zigbee)", "Thiết kế công suất thấp"] },
     "ESP32-H4": { "name": "ESP32-H4", "architecture": "RISC-V 32-bit dual-core", "cores": 2, "cpu_freq_mhz": [96], "mips_max": "Tối đa 96 MHz", "sram_kb": 384, "rom_kb": 128, "wifi": None, "bluetooth": "Bluetooth 5.4 (LE)", "features": ["802.15.4 (Thread/Zigbee)", "Bluetooth Channel Sounding"] },
-    "ESP32-P4": { "name": "ESP32-P4", "architecture": "RISC-V dual-core 32-bit + LP core", "cores": 2, "cpu_freq_mhz": [360, 400], "mips_max": "Tối đa 400 MHz", "sram_kb": 800, "rom_kb": 144, "wifi": None, "bluetooth": None, "features": ["HP L2MEM 768 KB + LP SRAM 32 KB", "MIPI-DSI/CSI", "H.264 Encoder", "2D Graphics Acceleration"] }, 
+    "ESP32-P4": { "name": "ESP32-P4", "architecture": "RISC-V dual-core 32-bit + LP core", "cores": 2, "cpu_freq_mhz": [360, 400], "mips_max": "~1800+ MIPS (Dual RISC-V @ 400MHz)", "sram_kb": 800, "rom_kb": 144, "wifi": None, "bluetooth": None, "features": ["HP L2MEM 768 KB + LP SRAM 32 KB", "MIPI-DSI/CSI", "H.264 Encoder", "2D Graphics Acceleration", "USB 2.0 High-Speed OTG + USB-Serial/JTAG"] }, 
     "ESP32-S31": { "name": "ESP32-S31", "architecture": "RISC-V 32-bit dual-core + LP core", "cores": 2, "cpu_freq_mhz": [320], "mips_max": "Tối đa 320 MHz", "sram_kb": 544, "rom_kb": 320, "wifi": "Wi-Fi 6 (2.4 GHz)", "bluetooth": "Bluetooth 5.4 LE + Classic", "features": ["802.15.4", "USB 2.0 High-Speed OTG", "JPEG/PPA", "CAN FD"] },
     "ESP8266": { "name": "ESP8266EX", "architecture": "Xtensa single-core 32-bit L106", "cores": 1, "cpu_freq_mhz": [80, 160], "mips_max": "160 MIPS", "sram_kb": 96, "rom_kb": 64, "wifi": "Wi-Fi 4 (802.11 b/g/n)", "bluetooth": None, "features": ["ADC"] }, 
     "ESP8285": { "name": "ESP8285", "architecture": "Xtensa single-core 32-bit L106", "cores": 1, "cpu_freq_mhz": [80, 160], "mips_max": "160 MIPS", "sram_kb": 96, "rom_kb": 64, "wifi": "Wi-Fi 4 (802.11 b/g/n)", "bluetooth": None, "features": ["Flash 1MB tích hợp", "ADC"] }

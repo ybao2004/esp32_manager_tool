@@ -126,6 +126,122 @@ PRESET_CONFIGS = [
 ]
 
 
+def parse_with_unit(val_str: str, unit: str) -> int:
+    """Chuyển đổi chuỗi số kèm đơn vị (KB, MB, Bytes, HEX) thành số byte nguyên."""
+    val_str = str(val_str).strip()
+    clean = val_str.upper().replace(" ", "")
+    if clean.endswith(("K", "KB", "M", "MB")) or clean.startswith("0X"):
+        return parse_size_or_offset(val_str)
+    if unit == "KB":
+        return int(round(float(val_str) * 1024))
+    elif unit == "MB":
+        return int(round(float(val_str) * 1024 * 1024))
+    elif unit == "HEX":
+        return int(val_str, 16)
+    else:
+        return int(round(float(clean.rstrip("B"))))
+
+
+class SizeInputDialog:
+    """Hộp thoại tự nhập dung lượng phân vùng kèm chọn đơn vị (KB, MB, Bytes, HEX)"""
+
+    def __init__(self, parent, partition_name: str, current_size_bytes: int, is_dark_mode: bool = True):
+        self.parent = parent
+        self.partition_name = partition_name
+        self.is_dark_mode = is_dark_mode
+        self.palette = DARK_PALETTE if is_dark_mode else LIGHT_PALETTE
+        self.result: Optional[int] = None
+
+        self.dialog = tk.Toplevel(parent)
+        self.dialog.title(f"Nhập dung lượng - {partition_name}")
+        self.dialog.transient(parent)
+        self.dialog.grab_set()
+        set_window_icon_native(self.dialog)
+
+        container = ttk.Frame(self.dialog, padding=14)
+        container.pack(fill="both", expand=True)
+
+        ttk.Label(container, text=f"Phân vùng: {partition_name}", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 4))
+        curr_info = f"Dung lượng hiện tại: {format_bytes_human(current_size_bytes)} ({format_hex(current_size_bytes)})"
+        ttk.Label(container, text=curr_info, font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 10))
+
+        input_frame = ttk.Frame(container)
+        input_frame.pack(fill="x", pady=4)
+
+        ttk.Label(input_frame, text="Dung lượng mới:").pack(side="left", padx=(0, 8))
+
+        if current_size_bytes >= 1024 * 1024 and current_size_bytes % (1024 * 1024) == 0:
+            init_val = str(current_size_bytes // (1024 * 1024))
+            init_unit = "MB"
+        elif current_size_bytes % 1024 == 0:
+            init_val = str(current_size_bytes // 1024)
+            init_unit = "KB"
+        else:
+            init_val = str(current_size_bytes)
+            init_unit = "Bytes"
+
+        self.var_val = tk.StringVar(value=init_val)
+        self.entry_val = ttk.Entry(input_frame, textvariable=self.var_val, width=14)
+        self.entry_val.pack(side="left", padx=(0, 6))
+
+        self.var_unit = tk.StringVar(value=init_unit)
+        self.cb_unit = ttk.Combobox(input_frame, textvariable=self.var_unit, values=["KB", "MB", "Bytes", "HEX"], width=7, state="readonly")
+        self.cb_unit.pack(side="left")
+
+        self.lbl_info = ttk.Label(container, text="", font=("Segoe UI", 9), foreground=self.palette["accent"])
+        self.lbl_info.pack(anchor="w", pady=(10, 12))
+
+        btn_box = ttk.Frame(container)
+        btn_box.pack(fill="x", side="bottom")
+
+        btn_cancel = ttk.Button(btn_box, text="Hủy bỏ", command=self.dialog.destroy)
+        btn_cancel.pack(side="right", padx=(6, 0))
+
+        btn_ok = ttk.Button(btn_box, text="Xác nhận", command=self._on_ok)
+        btn_ok.pack(side="right")
+
+        self.var_val.trace_add("write", lambda *_: self._update_info())
+        self.cb_unit.bind("<<ComboboxSelected>>", lambda e: self._update_info())
+
+        self.dialog.bind("<Return>", lambda e: self._on_ok())
+        self.dialog.bind("<Escape>", lambda e: self.dialog.destroy())
+
+        self.entry_val.focus_set()
+        self.entry_val.select_range(0, tk.END)
+        self._update_info()
+
+        fit_dialog(self.dialog, parent, minimum_width=340, minimum_height=190)
+        parent.wait_window(self.dialog)
+
+    def _get_bytes(self) -> int:
+        return parse_with_unit(self.var_val.get(), self.var_unit.get())
+
+    def _update_info(self):
+        try:
+            b = self._get_bytes()
+            if b <= 0:
+                self.lbl_info.configure(text="⚠️ Dung lượng phải lớn hơn 0.")
+                return
+            status = "✅ Bội số 4KB" if b % 0x1000 == 0 else "⚠️ Chưa chia hết cho sector 4KB"
+            self.lbl_info.configure(text=f"• {format_bytes_human(b)} ({format_hex(b)}) | {sector_count(b)} sectors | {status}")
+        except Exception:
+            self.lbl_info.configure(text="⚠️ Vui lòng nhập số hợp lệ.")
+
+    def _on_ok(self):
+        try:
+            b = self._get_bytes()
+            if b <= 0:
+                messagebox.showerror("Lỗi", "Dung lượng phải lớn hơn 0.", parent=self.dialog)
+                return
+            if b % 0x1000 != 0:
+                if not messagebox.askyesno("Cảnh báo", "Dung lượng không chia hết cho 4KB (1 sector SPI Flash). Bạn có muốn tiếp tục?", parent=self.dialog):
+                    return
+            self.result = b
+            self.dialog.destroy()
+        except Exception as ex:
+            messagebox.showerror("Lỗi", f"Dung lượng không hợp lệ: {ex}", parent=self.dialog)
+
+
 class PartitionEditDialog:
     """Hộp thoại Thêm mới hoặc Chỉnh sửa một phân vùng"""
 
@@ -209,7 +325,7 @@ class PartitionEditDialog:
         self.entry_offset = ttk.Entry(off_frame, textvariable=self.var_offset, width=16)
         self.entry_offset.pack(side="left", padx=(0, 6))
 
-        self.btn_align = ttk.Button(off_frame, text="⚡ Căn biên chuẩn", command=self._auto_align_offset)
+        self.btn_align = ttk.Button(off_frame, text="Căn biên chuẩn", command=self._auto_align_offset)
         self.btn_align.pack(side="left")
         row += 1
 
@@ -217,12 +333,30 @@ class PartitionEditDialog:
         ttk.Label(container, text="Dung lượng (Size):", font=("Segoe UI", 9, "bold")).grid(
             row=row, column=0, sticky="w", pady=6
         )
-        self.var_size = tk.StringVar(value=format_hex(self.entry.size))
-        self.entry_size = ttk.Entry(container, textvariable=self.var_size, width=28)
-        self.entry_size.grid(row=row, column=1, sticky="w", pady=6)
-        ttk.Label(container, text="(Ví dụ: 64K, 1M, 0x10000)", foreground=self.palette["disabled_fg"]).grid(
-            row=row, column=2, sticky="w", padx=6
-        )
+        size_frame = ttk.Frame(container)
+        size_frame.grid(row=row, column=1, columnspan=2, sticky="w", pady=6)
+
+        if self.entry.size >= 1024 * 1024 and self.entry.size % (1024 * 1024) == 0:
+            init_val = str(self.entry.size // (1024 * 1024))
+            init_unit = "MB"
+        elif self.entry.size % 1024 == 0:
+            init_val = str(self.entry.size // 1024)
+            init_unit = "KB"
+        else:
+            init_val = str(self.entry.size)
+            init_unit = "Bytes"
+
+        self.var_size_val = tk.StringVar(value=init_val)
+        self.entry_size_val = ttk.Entry(size_frame, textvariable=self.var_size_val, width=16)
+        self.entry_size_val.pack(side="left", padx=(0, 6))
+
+        self.var_size_unit = tk.StringVar(value=init_unit)
+        self.cb_size_unit = ttk.Combobox(size_frame, textvariable=self.var_size_unit, values=["KB", "MB", "Bytes", "HEX"], width=7, state="readonly")
+        self.cb_size_unit.pack(side="left", padx=(0, 6))
+        self.cb_size_unit.bind("<<ComboboxSelected>>", lambda e: self._update_preview())
+
+        self.lbl_size_hint = ttk.Label(size_frame, text="(Tự chọn đơn vị hoặc nhập 64K, 1M...)", foreground=self.palette["disabled_fg"])
+        self.lbl_size_hint.pack(side="left")
         row += 1
 
         # 6. Flags
@@ -264,11 +398,14 @@ class PartitionEditDialog:
         # Gán sự kiện cập nhật preview
         self.var_name.trace_add("write", lambda *_: self._update_preview())
         self.var_offset.trace_add("write", lambda *_: self._update_preview())
-        self.var_size.trace_add("write", lambda *_: self._update_preview())
+        self.var_size_val.trace_add("write", lambda *_: self._update_preview())
         self.var_type.trace_add("write", lambda *_: self._update_preview())
         self.var_subtype.trace_add("write", lambda *_: self._update_preview())
 
         self._update_preview()
+
+    def _get_size_in_bytes(self) -> int:
+        return parse_with_unit(self.var_size_val.get(), self.var_size_unit.get())
 
     def _on_type_changed(self, event=None):
         t = self.var_type.get().lower()
@@ -277,6 +414,7 @@ class PartitionEditDialog:
             self.var_subtype.set("factory")
         else:
             self.var_subtype.set("nvs")
+        self._auto_align_offset()
         self._update_preview()
 
     def _update_subtype_options(self, type_str: str):
@@ -292,6 +430,8 @@ class PartitionEditDialog:
             is_app = (self.var_type.get().lower() == "app")
             pad_to = 0x10000 if is_app else 0x1000
             aligned = align_up(curr_off, pad_to)
+            if is_app and aligned < 0x10000:
+                aligned = 0x10000
             self.var_offset.set(format_hex(aligned))
         except Exception:
             self.var_offset.set("0x10000" if self.var_type.get().lower() == "app" else "0x9000")
@@ -302,7 +442,7 @@ class PartitionEditDialog:
             type_str = self.var_type.get().strip()
             subtype_str = self.var_subtype.get().strip()
             offset_val = parse_size_or_offset(self.var_offset.get())
-            size_val = parse_size_or_offset(self.var_size.get())
+            size_val = self._get_size_in_bytes()
             end_val = offset_val + size_val
 
             lines = []
@@ -346,7 +486,7 @@ class PartitionEditDialog:
 
         try:
             offset_val = parse_size_or_offset(self.var_offset.get())
-            size_val = parse_size_or_offset(self.var_size.get())
+            size_val = self._get_size_in_bytes()
         except Exception as e:
             messagebox.showerror("Sai định dạng", f"Dữ liệu Offset hoặc Size không hợp lệ: {e}", parent=self.dialog)
             return
@@ -357,13 +497,13 @@ class PartitionEditDialog:
 
         type_str = self.var_type.get().lower()
         if type_str == "app":
-            if offset_val % 0x10000 != 0 or offset_val < 0x10000:
-                messagebox.showerror("Lỗi Căn Biên App", "Phân vùng App bắt buộc Offset phải chia hết cho 64KB (0x10000) và >= 0x10000.", parent=self.dialog)
-                return
+            if offset_val < 0x10000 or offset_val % 0x10000 != 0:
+                offset_val = max(0x10000, align_up(offset_val, 0x10000))
+                self.var_offset.set(format_hex(offset_val))
         else:
             if offset_val % 0x1000 != 0:
-                messagebox.showerror("Lỗi Căn Biên Data", "Phân vùng Data bắt buộc Offset phải chia hết cho 4KB (0x1000).", parent=self.dialog)
-                return
+                offset_val = align_up(offset_val, 0x1000)
+                self.var_offset.set(format_hex(offset_val))
 
         flags_list = []
         if self.var_encrypted.get():

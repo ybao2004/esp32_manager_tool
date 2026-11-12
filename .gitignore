@@ -37,3 +37,12 @@ ENV/
 *.tar.gz
 *.downloading
 *.log
+tmp.bin
+test_tmp.bin
+
+# Local AI agent & knowledge graph workspace files
+.agents/
+graphify-out/
+PROJECT.md
+TEST_INFRA.md
+TEST_READY.md

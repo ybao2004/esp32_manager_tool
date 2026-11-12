@@ -18,7 +18,7 @@ from modules.config import (
     Tu_dong_cuon, Them_dau_thoi_gian, APP_NAME, APP_VERSION
 )
 from modules.win32_util import set_window_icon_native
-from modules.serial_util import list_com_ports_local
+from modules.serial_util import list_com_ports_local, get_bluetooth_com_ports
 
 from modules.tabs.tab_inspector import InspectorTabMixin
 from modules.tabs.tab_monitor import MonitorTabMixin
@@ -71,6 +71,7 @@ class InspectorApp(
         self.saved_com_port = ""
         self.saved_baudrate = "Tự động"
         self.ignored_com_ports = []
+        self.saved_hide_bluetooth_ports = True
         self.saved_auto_select_new = True
         self._previous_ports = set()
         
@@ -146,8 +147,14 @@ class InspectorApp(
                     self.saved_is_zoomed = config.get("is_zoomed", False) is True
                     self.saved_com_port = str(config.get("last_com_port", "") or "")
                     self.saved_baudrate = str(config.get("last_baudrate", "Tự động") or "Tự động")
-                    ignored_ports = config.get("ignored_com_ports", [])
-                    self.ignored_com_ports = [str(port) for port in ignored_ports] if isinstance(ignored_ports, list) else []
+                    if "hide_bluetooth_ports" in config:
+                        self.saved_hide_bluetooth_ports = config.get("hide_bluetooth_ports", True) is not False
+                        ignored_ports = config.get("ignored_com_ports", [])
+                        self.ignored_com_ports = [str(port) for port in ignored_ports if str(port).strip()] if isinstance(ignored_ports, list) else []
+                    else:
+                        # Di trú từ bản cũ (v1.0): bật tự động ẩn Bluetooth bằng checkbox và làm sạch ô nhập tay
+                        self.saved_hide_bluetooth_ports = True
+                        self.ignored_com_ports = []
                     self.saved_auto_select_new = config.get("auto_select_new_port", True) is not False
                     
                     self.default_ip = str(config.get("default_ip", "192.168.4.1") or "192.168.4.1")
@@ -201,6 +208,8 @@ class InspectorApp(
         self.saved_com_port = last_port
         self.saved_baudrate = last_baud
         auto_new = self.var_auto_select_new.get() if hasattr(self, 'var_auto_select_new') else self.saved_auto_select_new
+        hide_bt = self.var_hide_bt_ports.get() if hasattr(self, 'var_hide_bt_ports') else self.saved_hide_bluetooth_ports
+        self.saved_hide_bluetooth_ports = hide_bt
 
         flash_rows_data = []
         if hasattr(self, 'flash_file_rows'):
@@ -225,6 +234,7 @@ class InspectorApp(
             "last_com_port": last_port,
             "last_baudrate": last_baud,
             "ignored_com_ports": self.ignored_com_ports,
+            "hide_bluetooth_ports": hide_bt,
             "auto_select_new_port": auto_new,
             "default_ip": self.default_ip,
             "default_port": self.default_port,
@@ -265,9 +275,12 @@ class InspectorApp(
             self.saved_com_port = ""
             self.saved_baudrate = "Tự động"
             self.ignored_com_ports = []
+            self.saved_hide_bluetooth_ports = True
             self.saved_auto_select_new = True
             if hasattr(self, 'var_auto_select_new'):
                 self.var_auto_select_new.set(True)
+            if hasattr(self, 'var_hide_bt_ports'):
+                self.var_hide_bt_ports.set(True)
             
             self.default_ip = "192.168.4.1"
             self.default_port = "100"
@@ -332,16 +345,121 @@ class InspectorApp(
             return True
         return False
 
+    def _set_theme(self, is_dark: bool):
+        """Chuyển đổi giao diện Sáng / Tối trực tiếp từ thanh Menu"""
+        if self.is_dark_mode != is_dark:
+            self.toggle_theme()
+
+    def _tool_inspect_chip(self):
+        """Chuyển sang Tab Thông tin phần cứng và kích hoạt kiểm tra chip."""
+        if hasattr(self, "inspector_tab"):
+            self.notebook.select(self.inspector_tab)
+        if hasattr(self, "on_detect"):
+            self.on_detect()
+
+    def _create_main_menu(self):
+        """Khởi tạo thanh Menu Bar chuẩn của cửa sổ chính: Tệp, Công cụ, Theme, Cài đặt, Giới thiệu"""
+        self.main_menu = tk.Menu(self.root, tearoff=0)
+        self.root.config(menu=self.main_menu)
+
+        p = DARK_PALETTE if self.is_dark_mode else LIGHT_PALETTE
+
+        # 1. Menu Tệp (File): Tạo mới, Mở, Nhập, Separator, Lưu, Lưu như, Separator, Thoát
+        file_menu = tk.Menu(self.main_menu, tearoff=0)
+        self.main_menu.add_cascade(label="Tệp", menu=file_menu)
+
+        file_menu.add_command(
+            label="Tạo mới",
+            command=lambda: (self.notebook.select(self.partition_tab), self._action_new_table() if hasattr(self, '_action_new_table') else None)
+        )
+        file_menu.add_command(
+            label="Mở...",
+            command=lambda: (self.notebook.select(self.partition_tab), self._action_open_file() if hasattr(self, '_action_open_file') else None)
+        )
+        file_menu.add_command(
+            label="Nhập...",
+            command=lambda: (self.notebook.select(self.partition_tab), self._action_presets() if hasattr(self, '_action_presets') else None)
+        )
+        file_menu.add_separator()
+        file_menu.add_command(
+            label="Lưu",
+            command=lambda: (self.notebook.select(self.partition_tab), self._action_save() if hasattr(self, '_action_save') else None)
+        )
+        file_menu.add_command(
+            label="Lưu như...",
+            command=lambda: (self.notebook.select(self.partition_tab), self._action_save_as() if hasattr(self, '_action_save_as') else None)
+        )
+        file_menu.add_separator()
+        file_menu.add_command(
+            label="Thoát",
+            command=self.on_closing
+        )
+
+        # 2. Menu Công cụ (Tools): Kiểm tra chip, Reset, Xóa toàn bộ Flash, Kiểm tra cập nhật
+        tools_menu = tk.Menu(self.main_menu, tearoff=0)
+        self.main_menu.add_cascade(label="Công cụ", menu=tools_menu)
+
+        tools_menu.add_command(
+            label="Kiểm tra chip ESP",
+            command=self._tool_inspect_chip
+        )
+        tools_menu.add_command(
+            label="Reset ESP",
+            command=self.on_reset_esp
+        )
+        tools_menu.add_command(
+            label="Xóa toàn bộ Flash (Erase Chip)",
+            command=self.on_erase_flash_click
+        )
+        tools_menu.add_separator()
+        tools_menu.add_command(
+            label="Kiểm tra cập nhật phần mềm...",
+            command=self.open_update_dialog
+        )
+
+        # 3. Menu Theme (Giao diện): Giao diện Tối, Giao diện Sáng
+        theme_menu = tk.Menu(self.main_menu, tearoff=0)
+        self.main_menu.add_cascade(label="Theme", menu=theme_menu)
+
+        theme_menu.add_command(
+            label="Giao diện Tối (Dark)",
+            command=lambda: self._set_theme(True)
+        )
+        theme_menu.add_command(
+            label="Giao diện Sáng (Light)",
+            command=lambda: self._set_theme(False)
+        )
+
+        # 4. Cài đặt (Mở trực tiếp Hộp thoại Cài đặt tinh gọn)
+        self.main_menu.add_command(
+            label="Cài đặt",
+            command=self.open_settings_dialog
+        )
+
+        # 5. Giới thiệu (Mở trực tiếp Hộp thoại Giới thiệu độc lập)
+        self.main_menu.add_command(
+            label="Giới thiệu",
+            command=self.open_about_dialog
+        )
+
     def create_widgets(self):
+        try:
+            self.root.minsize(1080, 650)
+        except Exception:
+            pass
         self.main_frame = ttk.Frame(self.root, padding=5)
         self.main_frame.grid(sticky="nsew", row=0, column=0)
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
         self.main_frame.columnconfigure(0, weight=1)
         self.main_frame.rowconfigure(1, weight=1)
+        self.main_frame.rowconfigure(2, weight=0)
         
-        self.controls_frame = ttk.LabelFrame(self.main_frame, text=" Cài đặt chung & Điều khiển Serial ", padding=(5, 5))
-        self.controls_frame.grid(row=0, column=0, sticky="ew", padx=2, pady=2)
+        self._create_main_menu()
+
+        # Thanh điều khiển Serial trên cùng (phẳng, không viền LabelFrame)
+        self.controls_frame = ttk.Frame(self.main_frame, padding=(6, 4))
+        self.controls_frame.grid(row=0, column=0, sticky="ew", padx=2, pady=(2, 4))
         
         ttk.Label(self.controls_frame, text="COM Port:").grid(row=0, column=0, sticky="w", pady=2, padx=(0, 5))
         self.port_cb = ttk.Combobox(self.controls_frame, values=[], width=12, state="readonly", postcommand=self.refresh_ports_dropdown)
@@ -349,35 +467,26 @@ class InspectorApp(
         self.port_cb.bind("<<ComboboxSelected>>", self.on_port_selected)
         
         self.var_auto_scan = tk.BooleanVar(value=True)
-        ttk.Checkbutton(self.controls_frame, text="Tự động quét", variable=self.var_auto_scan).grid(row=0, column=2, padx=(5, 5))
-        
         self.var_auto_select_new = tk.BooleanVar(value=self.saved_auto_select_new)
-        ttk.Checkbutton(self.controls_frame, text="Ưu tiên cổng mới", variable=self.var_auto_select_new, command=self.save_config).grid(row=0, column=3, padx=(5, 10))
+        self.var_hide_bt_ports = tk.BooleanVar(value=self.saved_hide_bluetooth_ports)
         
-        ttk.Label(self.controls_frame, text="Baudrate:").grid(row=0, column=4, sticky="w", padx=(0, 5))
+        ttk.Label(self.controls_frame, text="Baudrate:").grid(row=0, column=2, sticky="w", padx=(12, 5))
         self.baud_cb = ttk.Combobox(self.controls_frame, values=COMMON_BAUDS, width=10)
         self.baud_cb.set(self.saved_baudrate if self.saved_baudrate in COMMON_BAUDS else "Tự động") 
-        self.baud_cb.grid(row=0, column=5, sticky="w")
+        self.baud_cb.grid(row=0, column=3, sticky="w")
         self.baud_cb.bind("<<ComboboxSelected>>", self.on_baud_selected)
         
-        separator = ttk.Separator(self.controls_frame, orient='vertical')
-        separator.grid(row=0, column=6, sticky='ns', padx=10, pady=2)
-        
         self.serial_toggle_btn = ttk.Button(self.controls_frame, text="Kết nối", command=self.toggle_serial_connection)
-        self.serial_toggle_btn.grid(row=0, column=7, padx=(0,5))
+        self.serial_toggle_btn.grid(row=0, column=4, padx=(10, 5))
         
-        self.clear_monitor_btn = ttk.Button(self.controls_frame, text="Xóa màn hình", command=lambda: self.on_clear(self.monitor_txt))
-        self.clear_monitor_btn.grid(row=0, column=8, padx=5)
+        separator = ttk.Separator(self.controls_frame, orient='vertical')
+        separator.grid(row=0, column=5, sticky='ns', padx=10, pady=2)
         
         self.var_autoscroll = tk.BooleanVar(value=Tu_dong_cuon)
-        ttk.Checkbutton(self.controls_frame, text="Tự động cuộn", variable=self.var_autoscroll).grid(row=0, column=9, padx=(10,0))
+        ttk.Checkbutton(self.controls_frame, text="Tự động cuộn", variable=self.var_autoscroll).grid(row=0, column=6, padx=(5, 5))
         
         self.var_timestamp = tk.BooleanVar(value=Them_dau_thoi_gian)
-        ttk.Checkbutton(self.controls_frame, text="Thêm Dấu thời gian", variable=self.var_timestamp).grid(row=0, column=10, padx=(5, 15))
-        
-        self.settings_btn = ttk.Button(self.controls_frame, text="Cài đặt", command=self.open_settings_dialog)
-        self.settings_btn.grid(row=0, column=11, sticky="e")
-        self.controls_frame.columnconfigure(11, weight=1) 
+        ttk.Checkbutton(self.controls_frame, text="Thêm Dấu thời gian", variable=self.var_timestamp).grid(row=0, column=7, padx=(5, 10)) 
         
         self.notebook = ttk.Notebook(self.main_frame)
         self.notebook.grid(row=1, column=0, sticky="nsew", pady=5)
@@ -403,6 +512,31 @@ class InspectorApp(
         self.create_monitor_tab()
         self.create_flasher_tab()
         self.create_partition_tab()
+
+        # Thanh trạng thái & tiến trình toàn cục ở đáy cửa sổ chính (Global Status Bar)
+        self.status_bar_frame = ttk.Frame(self.main_frame, padding=(6, 3))
+        self.status_bar_frame.grid(row=2, column=0, sticky="ew", padx=2, pady=(2, 0))
+        self.status_bar_frame.columnconfigure(1, weight=1)
+
+        self.global_status_icon_lbl = ttk.Label(self.status_bar_frame, text="ℹ️", font=("Segoe UI", 9))
+        self.global_status_icon_lbl.grid(row=0, column=0, sticky="w", padx=(0, 4))
+
+        self.global_status_lbl = ttk.Label(self.status_bar_frame, text="Sẵn sàng.", font=("Segoe UI", 9))
+        self.global_status_lbl.grid(row=0, column=1, sticky="w")
+
+        self.global_progress_bar = ttk.Progressbar(
+            self.status_bar_frame, orient="horizontal", mode="determinate", length=180, maximum=100, value=0
+        )
+        self.global_progress_bar.grid(row=0, column=2, sticky="e", padx=(8, 4))
+
+        self.global_progress_pct_lbl = ttk.Label(
+            self.status_bar_frame, text="0%", width=5, anchor="w", font=("Segoe UI", 9, "bold")
+        )
+        self.global_progress_pct_lbl.grid(row=0, column=3, sticky="e", padx=(0, 10))
+
+        self.global_com_lbl = ttk.Label(self.status_bar_frame, text="COM: Chưa kết nối", font=("Segoe UI", 9, "italic"))
+        self.global_com_lbl.grid(row=0, column=4, sticky="e", padx=(0, 4))
+
         self._set_mcu_dependent_ui_state("disabled")
 
     def _set_mcu_dependent_ui_state(self, ui_state):
@@ -498,6 +632,12 @@ class InspectorApp(
             "error": p["error"], "warning": p["warning"]
         }
         self.req_status_lbl.configure(bg=p["bg"], fg=color_map.get(self.current_status_level, p["disabled_fg"]))
+        if hasattr(self, 'global_status_lbl') and self.global_status_lbl.winfo_exists():
+            self.global_status_lbl.configure(foreground=color_map.get(self.current_status_level, p["fg"]))
+        if hasattr(self, 'global_progress_pct_lbl') and self.global_progress_pct_lbl.winfo_exists():
+            self.global_progress_pct_lbl.configure(foreground=p["fg"])
+        if hasattr(self, 'global_com_lbl') and self.global_com_lbl.winfo_exists():
+            self.global_com_lbl.configure(foreground=p["disabled_fg"])
 
         self.style.theme_use('clam') 
         self.style.configure(".", background=p["bg"], foreground=p["fg"], fieldbackground=p["text_bg"])
@@ -552,7 +692,7 @@ class InspectorApp(
     def start_background_tasks(self):
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         threading.Thread(target=self._auto_scan_ports, daemon=True).start()
-        self.set_status("Sẵn sàng.", "info")
+        self.set_status("Sẵn sàng.", "info", progress=0)
 
     def _auto_scan_ports(self):
         while not self.stop_scan.is_set():
@@ -566,15 +706,30 @@ class InspectorApp(
             time.sleep(2)
 
     def filter_ignored_ports(self, raw_ports):
-        if not self.ignored_com_ports:
-            return raw_ports
-        ignored = {x.strip().upper() for x in self.ignored_com_ports if x.strip()}
+        ignored = {x.strip().upper() for x in (self.ignored_com_ports or []) if x and x.strip()}
+        hide_bt = (
+            self.var_hide_bt_ports.get()
+            if hasattr(self, 'var_hide_bt_ports')
+            else getattr(self, 'saved_hide_bluetooth_ports', True)
+        )
+        if hide_bt:
+            try:
+                for bt_port in get_bluetooth_com_ports():
+                    if bt_port and bt_port.strip():
+                        ignored.add(bt_port.strip().upper())
+            except Exception:
+                pass
+        if not ignored:
+            return list(raw_ports)
         return [p for p in raw_ports if p.strip().upper() not in ignored]
 
     def _check_and_update_ports(self, new_ports):
         if not self.root.winfo_exists():
             return
-        if self.var_auto_scan.get() and not self.is_detecting.is_set() and not self.is_flashing.is_set():
+        busy = self.is_device_busy() if callable(getattr(self, 'is_device_busy', None)) else InspectorApp.is_device_busy(self)
+        if busy:
+            return
+        if self.var_auto_scan.get():
             filtered_ports = self.filter_ignored_ports(new_ports)
             current_selection = self.port_cb.get().strip()
             
@@ -629,8 +784,86 @@ class InspectorApp(
             else:
                 self.port_cb.set("")
                 
+    def is_device_busy(self) -> bool:
+        """Kiểm tra xem bất kỳ tác vụ phần cứng nào đang chạy trên bất kỳ Tab nào."""
+        flashing = hasattr(self, 'is_flashing') and (self.is_flashing.is_set() if hasattr(self.is_flashing, 'is_set') else bool(self.is_flashing))
+        detecting = hasattr(self, 'is_detecting') and (self.is_detecting.is_set() if hasattr(self.is_detecting, 'is_set') else bool(self.is_detecting))
+        connecting = bool(getattr(self, "is_connecting", False))
+        partition_hw = bool(getattr(self, "_is_partition_hw_running", False))
+        return bool(flashing or detecting or connecting or partition_hw)
+
+    def set_global_busy_state(self, is_busy: bool, operation_name: str = "") -> None:
+        """Cập nhật trạng thái bận toàn hệ thống, vô hiệu hóa/kích hoạt lại các điều khiển trên tất cả các tab, và cập nhật thanh trạng thái."""
+        state = "disabled" if is_busy else "normal"
+
+        if hasattr(self, 'detect_btn') and hasattr(self.detect_btn, 'config'):
+            try:
+                self.detect_btn.config(state=state)
+            except Exception:
+                pass
+
+        if hasattr(self, 'serial_toggle_btn') and hasattr(self.serial_toggle_btn, 'config'):
+            try:
+                self.serial_toggle_btn.config(state=state)
+            except Exception:
+                pass
+
+        if hasattr(self, '_set_flash_ui_state') and callable(self._set_flash_ui_state):
+            try:
+                self._set_flash_ui_state(state)
+            except Exception:
+                pass
+
+        if hasattr(self, '_set_partition_ui_state') and callable(self._set_partition_ui_state):
+            try:
+                self._set_partition_ui_state(state)
+            except Exception:
+                pass
+
+        if hasattr(self, 'port_cb') and hasattr(self.port_cb, 'config'):
+            try:
+                self.port_cb.config(state="disabled" if is_busy else "readonly")
+            except Exception:
+                pass
+
+        if hasattr(self, 'baud_cb') and hasattr(self.baud_cb, 'config'):
+            try:
+                self.baud_cb.config(state="disabled" if is_busy else "readonly")
+            except Exception:
+                pass
+
+        # Vô hiệu hóa các điều khiển gửi lệnh trên Tab 2 khi bận
+        if is_busy:
+            if hasattr(self, '_set_mcu_dependent_ui_state') and callable(self._set_mcu_dependent_ui_state):
+                try:
+                    self._set_mcu_dependent_ui_state("disabled")
+                except Exception:
+                    pass
+        else:
+            if hasattr(self, 'serial_connection') and self.serial_connection and getattr(self.serial_connection, 'is_open', False):
+                if hasattr(self, '_set_mcu_dependent_ui_state') and callable(self._set_mcu_dependent_ui_state):
+                    try:
+                        self._set_mcu_dependent_ui_state("normal")
+                    except Exception:
+                        pass
+
+        if operation_name and hasattr(self, 'update_global_status'):
+            msg = f"Đang {operation_name}..." if is_busy else f"Đã hoàn tất {operation_name}."
+            self.update_global_status(msg, is_active=is_busy, progress=5.0 if is_busy else 100.0)
+        elif operation_name and hasattr(self, 'set_status'):
+            msg = f"Đang {operation_name}..." if is_busy else f"Đã hoàn tất {operation_name}."
+            self.set_status(msg, "warning" if is_busy else "info", progress=5.0 if is_busy else 100.0)
+        elif not is_busy:
+            if hasattr(self, 'global_progress_bar') and self.global_progress_bar.winfo_exists():
+                try:
+                    self.global_progress_bar.stop()
+                    self.global_progress_bar.config(mode="determinate")
+                except Exception:
+                    pass
+
     def on_closing(self):
-        if self.is_flashing.is_set() or self.is_detecting.is_set() or getattr(self, "is_connecting", False):
+        busy = self.is_device_busy() if callable(getattr(self, 'is_device_busy', None)) else InspectorApp.is_device_busy(self)
+        if busy:
             messagebox.showwarning("Tác vụ chưa hoàn tất", "Hãy đợi tác vụ hiện tại hoàn tất trước khi đóng ứng dụng.")
             return
         self.save_config()
@@ -638,16 +871,93 @@ class InspectorApp(
         self.stop_scan.set()
         self.root.destroy()
 
-    def set_status(self, s, level="info"): 
+    def set_status(self, s, level="info", progress=None): 
         self.current_status_level = level
-        if hasattr(self, 'req_status_lbl') and self.req_status_lbl.winfo_exists():
-            p = DARK_PALETTE if self.is_dark_mode else LIGHT_PALETTE
-            color_map = {
-                "info": p["disabled_fg"], "success": p["success"],
-                "error": p["error"], "warning": p["warning"]
-            }
-            color = color_map.get(level, p["disabled_fg"])
-            self.root.after(0, lambda: self.req_status_lbl.config(text=s, fg=color))
+        try:
+            if not getattr(self, 'root', None) or not self.root.winfo_exists():
+                return
+        except Exception:
+            return
+
+        p = DARK_PALETTE if getattr(self, 'is_dark_mode', False) else LIGHT_PALETTE
+        color_map = {
+            "info": p["disabled_fg"], "success": p["success"],
+            "error": p["error"], "warning": p["warning"]
+        }
+        icon_map = {
+            "info": "ℹ️",
+            "success": "✅",
+            "warning": "⚠️",
+            "error": "❌"
+        }
+        color = color_map.get(level, p["disabled_fg"])
+        icon = icon_map.get(level, "ℹ️")
+
+        def _apply():
+            if hasattr(self, 'req_status_lbl') and self.req_status_lbl.winfo_exists():
+                try:
+                    self.req_status_lbl.config(text=s, fg=color)
+                except Exception:
+                    pass
+            if hasattr(self, 'global_status_lbl') and self.global_status_lbl.winfo_exists():
+                try:
+                    self.global_status_lbl.config(text=s, foreground=color)
+                except Exception:
+                    pass
+            if hasattr(self, 'global_status_icon_lbl') and self.global_status_icon_lbl.winfo_exists():
+                try:
+                    self.global_status_icon_lbl.config(text=icon)
+                except Exception:
+                    pass
+            if progress is not None:
+                try:
+                    prog_val = float(progress)
+                    pct_disp = int(round(max(0.0, min(100.0, prog_val))))
+                    if hasattr(self, 'global_progress_bar') and self.global_progress_bar.winfo_exists():
+                        self.global_progress_bar.stop()
+                        self.global_progress_bar.config(mode="determinate", value=prog_val)
+                    if hasattr(self, 'global_progress_pct_lbl') and self.global_progress_pct_lbl.winfo_exists():
+                        self.global_progress_pct_lbl.config(text=f"{pct_disp}%")
+                except Exception:
+                    pass
+
+        try:
+            self.root.after(0, _apply)
+        except Exception:
+            pass
+
+    def update_global_status(self, text: str, is_active: bool = False, progress: float = None) -> None:
+        """Cập nhật text trạng thái, chỉ báo đang chạy và giá trị thanh tiến trình toàn cục tại đáy cửa sổ chính."""
+        prog_num = None
+        if progress is not None:
+            try:
+                prog_num = float(progress)
+            except (ValueError, TypeError):
+                pass
+        elif is_active:
+            prog_num = 5.0
+        level = "warning" if is_active else ("info" if prog_num is None or prog_num < 100 else "success")
+        self.set_status(text, level=level, progress=prog_num)
+
+        def _apply_bar():
+            if not hasattr(self, 'global_progress_bar') or not self.global_progress_bar.winfo_exists():
+                return
+            try:
+                self.global_progress_bar.stop()
+                if prog_num is not None:
+                    self.global_progress_bar.config(mode="determinate", value=prog_num)
+                    pct_disp = int(round(max(0.0, min(100.0, prog_num))))
+                    if hasattr(self, 'global_progress_pct_lbl') and self.global_progress_pct_lbl.winfo_exists():
+                        self.global_progress_pct_lbl.config(text=f"{pct_disp}%")
+                else:
+                    self.global_progress_bar.config(mode="determinate")
+            except Exception:
+                pass
+
+        try:
+            self.root.after(0, _apply_bar)
+        except Exception:
+            pass
 
 
 def main():

@@ -1,4 +1,4 @@
-# Esp32 manager tool (v1.0)
+# Esp32 manager tool (v1.1)
 
 Ứng dụng GUI tất-cả-trong-một (All-in-One GUI Toolkit) chuyên nghiệp và gọn nhẹ dành cho kỹ sư nhúng và nhà phát triển làm việc với ESP8266 và toàn bộ các dòng chip ESP32: S2, S3, S31, C2, C3, C5, C6, C61, H2, H21, H4 và P4.
 
@@ -55,6 +55,7 @@
 ```
 esp32_manager_tool/
 ├── main.py                     # Điểm khởi chạy chính của ứng dụng
+├── build_exe.bat               # Công cụ tự động đóng gói ra file thực thi .exe độc lập
 ├── esp32_manager_tool.spec     # Cấu hình đóng gói PyInstaller .exe
 ├── requirements.txt            # Danh sách thư viện phụ thuộc (esptool, pyserial)
 ├── .gitignore                  # Cấu hình bỏ qua file tạm cho Git
@@ -107,3 +108,20 @@ esp32_manager_tool/
    ```bash
    pytest
    ```
+
+4. **Đóng gói ra file `.exe` độc lập (Windows):**
+   ```bat
+   build_exe.bat
+   ```
+   File thực thi hoàn chỉnh sẽ được xuất tại `dist\esp32_manager_tool.exe`.
+
+---
+
+## TÀI LIỆU DỰ ÁN
+
+- [Hướng dẫn sử dụng toàn diện](docs/HUONG_DAN_SU_DUNG.md) - Chi tiết tính năng 4 Tab chính và Hộp thoại cài đặt / cập nhật.
+- [Hướng dẫn Quản lý Phân vùng (Partition Wizard)](docs/HUONG_DAN_PHAN_VUNG.md) - Kiến trúc phân vùng ESP32, sơ đồ MiniTool Disk Map, dồn biên tự động và biên dịch BIN/MD5.
+- [Kiến trúc hệ thống & Thiết kế phần mềm](docs/KIEN_TRUC_HE_THONG.md) - Mô hình Mixin, cơ chế an toàn đa luồng, xử lý luồng stream và cấu trúc module.
+- [Báo cáo rà soát mã nguồn & Kiểm thử](docs/AUDIT_2026-09-05.md) - Lịch sử đánh giá an toàn, các ca kiểm thử hồi quy và chuẩn hóa mã nguồn.
+- [Đặc tả Icon High-DPI v3](docs/ICON_V3.md) - Thiết kế bộ biểu tượng đa độ phân giải cho Windows.
+

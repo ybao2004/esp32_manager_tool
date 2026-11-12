@@ -14,6 +14,11 @@ try:
 except ImportError:
     serial = None
 
+if serial is None:
+    class _SerialFallback:
+        SerialException = Exception
+    serial = _SerialFallback()
+
 from modules.config import (
     CONTROL_CONFIG, REPORT_FONT_SIZE, DARK_PALETTE, LIGHT_PALETTE,
     NETWORK_COMMANDS, So_dong_serial_toi_da
@@ -139,6 +144,13 @@ class MonitorTabMixin:
         buttons_send_frame = ttk.Frame(input_frame)
         buttons_send_frame.grid(row=1, column=1, sticky="e", pady=(2,0))
 
+        self.clear_monitor_btn = ttk.Button(
+            buttons_send_frame,
+            text="Xóa màn hình",
+            command=lambda: self.on_clear(self.monitor_txt) if hasattr(self, "on_clear") else self.monitor_txt.delete("1.0", "end")
+        )
+        self.clear_monitor_btn.pack(side="left", padx=(0, 5))
+
         self.reset_btn = ttk.Button(buttons_send_frame, text="Reset ESP", command=self.on_reset_esp)
         self.reset_btn.pack(side="left", padx=(0, 5))
 
@@ -207,12 +219,18 @@ class MonitorTabMixin:
             self.saved_baudrate = str(baud)
             self.root.after(0, self._reset_monitor_line_state)
             
-            self.root.after(0, lambda: self.set_status(f"Kết nối thành công! Đang đọc trên {port} @ {baud} bps", "success"))
-            self.root.after(0, lambda: self.detect_btn.config(state="disabled"))
-            self.root.after(0, lambda: self.serial_toggle_btn.config(text="Ngắt kết nối", state="normal"))
-            self.root.after(0, lambda: self.monitor_txt.config(state="normal"))
-            self.root.after(0, lambda: self._set_mcu_dependent_ui_state("normal"))
-            self.root.after(0, self.save_config)
+            def _on_conn_success(p=port, b=baud):
+                self.set_status(f"Kết nối thành công! Đang đọc trên {p} @ {b} bps", "success")
+                self.detect_btn.config(state="disabled")
+                self.serial_toggle_btn.config(text="Ngắt kết nối", state="normal")
+                self.monitor_txt.config(state="normal")
+                self._set_mcu_dependent_ui_state("normal")
+                if hasattr(self, 'global_com_lbl') and self.global_com_lbl.winfo_exists():
+                    p_theme = DARK_PALETTE if self.is_dark_mode else LIGHT_PALETTE
+                    self.global_com_lbl.config(text=f"{p} @ {b} bps | ĐÃ KẾT NỐI", foreground=p_theme.get("success", "#00aa00"))
+                self.save_config()
+
+            self.root.after(0, _on_conn_success)
             
             # Each connection owns its cancellation event; never revive an old reader.
             self.stop_serial_thread = threading.Event()
@@ -222,7 +240,14 @@ class MonitorTabMixin:
             self.serial_thread.start()
 
         except Exception as e:
-            error_message = f"Không thể mở cổng {port}.\nLỗi: {e}"
+            error_message = (
+                f"Không thể mở cổng {port}.\n"
+                f"Lỗi: {e}\n\n"
+                "Hướng dẫn xử lý sự cố:\n"
+                "1. Đảm bảo cổng COM không bị chiếm bởi phần mềm khác (Arduino IDE, PlatformIO, PuTTY, Cura...).\n"
+                "2. Kiểm tra cáp USB và chắc chắn board ESP32 đã được cấp đủ nguồn điện.\n"
+                "3. Kiểm tra Driver nạp (CH340, CP210x, FTDI) trong Device Manager."
+            )
             self.root.after(0, lambda msg=error_message: messagebox.showerror("Lỗi Kết nối", msg))
             self.serial_connection = None
             self.root.after(0, lambda: self.set_status("Lỗi: kết nối Serial thất bại.", "error"))
@@ -252,6 +277,9 @@ class MonitorTabMixin:
         self.detect_btn.config(state="normal")
         self.serial_toggle_btn.config(text="Kết nối")
         self._set_mcu_dependent_ui_state("disabled")
+        if hasattr(self, 'global_com_lbl') and self.global_com_lbl.winfo_exists():
+            p_theme = DARK_PALETTE if self.is_dark_mode else LIGHT_PALETTE
+            self.global_com_lbl.config(text="COM: Chưa kết nối", foreground=p_theme.get("disabled_fg", ""))
         
     def _reset_monitor_line_state(self):
         self.is_new_line = True
@@ -260,21 +288,46 @@ class MonitorTabMixin:
     def _serial_read_thread(self, connection, stop_event):
         decoder = codecs.getincrementaldecoder('utf-8')(errors='replace')
         feedback_buffer = ""
+        batch_text = ""
+        batch_lines = []
+        last_dispatch = time.monotonic()
+        batch_interval = 0.025  # 25ms batching window (~40 FPS) to prevent event loop starvation
+
         while not stop_event.is_set() and connection.is_open:
             try:
                 data = connection.read(1024)
+                now = time.monotonic()
                 if data:
                     text = decoder.decode(data)
                     feedback_buffer += text
-                    lines = []
+                    batch_text += text
                     while '\n' in feedback_buffer:
                         line, feedback_buffer = feedback_buffer.split('\n', 1)
-                        lines.append(line.strip())
+                        batch_lines.append(line.strip())
                     if len(feedback_buffer) > 4096:
                         feedback_buffer = feedback_buffer[-2048:]
-                    self.root.after(0, self._deliver_serial_chunk, connection, stop_event, text, lines)
+
+                # Determine if we should dispatch the batch now
+                should_flush = False
+                if batch_text:
+                    if not data:
+                        should_flush = True
+                    elif len(batch_text) >= 2048 or (now - last_dispatch) >= batch_interval:
+                        should_flush = True
+
+                if should_flush:
+                    self.root.after(0, self._deliver_serial_chunk, connection, stop_event, batch_text, batch_lines)
+                    batch_text = ""
+                    batch_lines = []
+                    last_dispatch = now
+
             except Exception:
                 if not stop_event.is_set():
+                    if batch_text:
+                        try:
+                            self.root.after(0, self._deliver_serial_chunk, connection, stop_event, batch_text, batch_lines)
+                        except Exception:
+                            pass
                     self.root.after(0, self._serial_session_failed, connection, stop_event)
                 break
 
@@ -290,7 +343,14 @@ class MonitorTabMixin:
     def _serial_session_failed(self, connection, stop_event):
         if self.serial_connection is connection and not stop_event.is_set():
             self.on_serial_disconnect()
-            messagebox.showerror("Lỗi", "Mất kết nối với thiết bị đột ngột.")
+            msg = (
+                "Mất kết nối với thiết bị đột ngột.\n\n"
+                "Hướng dẫn xử lý sự cố:\n"
+                "1. Kiểm tra lại giắc cắm cáp USB xem có bị lỏng hoặc chạm chập không.\n"
+                "2. Đảm bảo nguồn điện cấp cho ESP32 ổn định (tránh sụt áp khi bật RF/WiFi).\n"
+                "3. Kiểm tra xem vi điều khiển có bị lỗi Watchdog Reset hoặc treo cứng không."
+            )
+            messagebox.showerror("Lỗi", msg)
 
     def process_esp_feedback(self, line):
         if not line.startswith("RES:"): return
@@ -435,11 +495,28 @@ class MonitorTabMixin:
         if self.serial_connection and self.serial_connection.is_open:
             if self.var_crlf.get() and not data_to_send.endswith("\n"): 
                 data_to_send += "\r\n"
-            try:
-                self.serial_connection.write(data_to_send.encode('utf-8'))
-                self.set_status(status_description, status_level)
-            except Exception as e: 
-                messagebox.showerror("Lỗi Gửi", f"Không thể gửi dữ liệu.\nLỗi: {e}")
+            conn = self.serial_connection
+            payload = data_to_send.encode('utf-8')
+            desc = status_description
+            lvl = status_level
+
+            def _write_worker():
+                try:
+                    conn.write(payload)
+                    if desc and getattr(self, 'root', None) and self.root.winfo_exists():
+                        self.root.after(0, lambda: self.set_status(desc, lvl))
+                except Exception as e:
+                    err_msg = (
+                        f"Không thể gửi dữ liệu.\n"
+                        f"Lỗi: {e}\n\n"
+                        "Hướng dẫn xử lý sự cố:\n"
+                        "1. Kiểm tra lại kết nối cáp USB và trạng thái cổng COM.\n"
+                        "2. Đảm bảo vi điều khiển không bị treo hoặc ngắt kết nối đột ngột."
+                    )
+                    if getattr(self, 'root', None) and self.root.winfo_exists():
+                        self.root.after(0, lambda msg=err_msg: messagebox.showerror("Lỗi Gửi", msg))
+
+            threading.Thread(target=_write_worker, daemon=True).start()
         else:
             self.set_status("Lỗi: Chưa kết nối Serial!", "error")
 
@@ -524,13 +601,22 @@ class MonitorTabMixin:
 
         def trigger_hardware_reset():
             try:
+                if self.serial_connection is None:
+                    return
                 time.sleep(0.05)
+                if self.serial_connection is None:
+                    return
                 self.serial_connection.setDTR(False)
                 self.serial_connection.setRTS(True)
                 time.sleep(0.1)
+                if self.serial_connection is None:
+                    return
                 self.serial_connection.setRTS(False)
                 self.serial_connection.setDTR(False)
                 self.root.after(0, lambda: self.set_status("Đã kích hoạt Reset ESP thành công!", "success"))
+            except (AttributeError, serial.SerialException) as e:
+                error_message = f"Reset phần cứng gặp lỗi: {e}"
+                self.root.after(0, lambda msg=error_message: self.set_status(msg, "warning"))
             except Exception as e:
                 error_message = f"Reset phần cứng gặp lỗi: {e}"
                 self.root.after(0, lambda msg=error_message: self.set_status(msg, "warning"))

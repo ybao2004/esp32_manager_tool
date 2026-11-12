@@ -8,9 +8,14 @@ from modules.binary_scanner import (
     default_bootloader_offset, scan_project_bin_files, validate_binary_segments
 )
 from modules.esptool_util import (
+    clean_esptool_ansi,
+    decode_flash_device_id,
     derive_mac_addresses,
     esptool_command_succeeded,
     get_chip_data,
+    parse_esp_app_desc,
+    parse_esp_bootloader_desc,
+    parse_esp_image_header,
     parse_esptool_output,
 )
 from modules.mac_database import ESPRESSIF_OUIS, get_mac_oui, is_espressif_oui
@@ -197,6 +202,146 @@ class EsptoolUtilityTests(unittest.TestCase):
         self.assertEqual(addresses["MAC Wi-Fi Station"], "FF:FF:FF:FF:FF:FF")
         self.assertEqual(addresses["MAC Wi-Fi AP"], "00:00:00:00:00:00")
         self.assertEqual(addresses["MAC Bluetooth"], "00:00:00:00:00:01")
+        self.assertEqual(addresses["MAC Ethernet / Nội bộ"], "00:00:00:00:00:02")
+
+    def test_clean_ansi_and_decode_flash_device_id(self):
+        raw = "Detecting chip type... ESP32-P4\n[1A[2K[1A[2K[1A[2KConnected to ESP32-P4 on COM7:"
+        cleaned = clean_esptool_ansi(raw)
+        self.assertNotIn("[1A[2K", cleaned)
+        self.assertIn("Connected to ESP32-P4 on COM7:", cleaned)
+
+        decoded = decode_flash_device_id("4018")
+        self.assertIn("0x4018", decoded)
+        self.assertIn("16 MB", decoded)
+        self.assertIn("128 Mbit", decoded)
+
+    def test_parse_esp32p4_full_inspection_and_boot_log(self):
+        sample_output = (
+            "esptool v5.3.0\n"
+            "Serial port COM7:\n"
+            "Connecting...\n"
+            "Detecting chip type... ESP32-P4\n"
+            "[1A[2K[1A[2K[1A[2KConnected to ESP32-P4 on COM7:\n"
+            "Chip type:          ESP32-P4 (revision v3.2)\n"
+            "Features:           Dual Core + LP Core, 400MHz\n"
+            "Crystal frequency:  40MHz\n"
+            "USB mode:           USB-Serial/JTAG\n"
+            "MAC:                e8:f6:0a:eb:89:94\n"
+            "Manufacturer: 46\n"
+            "Device: 4018\n"
+            "Detected flash size: 16MB\n"
+            "Security Information:\n"
+            "=====================\n"
+            "Flags: 0x00000000 (0b0)\n"
+            "Key Purposes: (0, 0, 0, 0, 0, 0)\n"
+            "Chip ID: 18\n"
+            "API Version: 0\n"
+            "Secure Boot: Disabled\n"
+            "Flash Encryption: Disabled\n"
+            "SPI Boot Crypt Count (SPI_BOOT_CRYPT_CNT): 0x0\n"
+            "PARTITION_ENTRY: nvs | data | nvs | 0x9000 | 0x6000 (24 KB)\n"
+            "PARTITION_ENTRY: factory | app | factory | 0x10000 | 0x200000 (2.00 MB)\n"
+            "I (263) hex_psram: vendor id    : 0x0d (AP)\n"
+            "I (264) hex_psram: dev id       : 0x03 (generation 4)\n"
+            "I (269) hex_psram: density      : 0x07 (256 Mbit)\n"
+            "I (273) hex_psram: good-die     : 0x06 (Pass)\n"
+            "I (291) hex_psram: BitMode      : 0x01 (X16 Mode)\n"
+            "I (295) hex_psram: Readlatency  : 0x04 (14 cycles@Fixed)\n"
+            "I (467) esp_psram: Found 32MB PSRAM device\n"
+            "I (468) esp_psram: Speed: 200MHz\n"
+            "I (470) hex_psram: psram CS IO is dedicated\n"
+            "I (1387) esp_psram: SPI SRAM memory test OK\n"
+            "I (1396) cpu_start: GPIO 38 and 37 are used as console UART I/O pins\n"
+            "I (1397) cpu_start: cpu freq: 400000000 Hz\n"
+            "I (1403) app_init: Project name:     wt_factory_esp32p4\n"
+            "I (1408) app_init: App version:      9d1050d-dirty\n"
+            "I (1412) app_init: Compile time:     Sep 15 2026 15:20:46\n"
+            "I (1417) app_init: ELF file SHA256:  c01745214abcdef\n"
+            "I (1422) app_init: ESP-IDF:          v6.0.1\n"
+            "I (1425) efuse_init: Min chip rev:     v3.1\n"
+            "I (1429) efuse_init: Max chip rev:     v3.99\n"
+            "I (1444) heap_init: At 4FF7FB10 len 0003B4B0 (237 KiB): RETENT_RAM\n"
+            "I (1466) esp_psram: Adding pool of 32768K of PSRAM memory to heap allocator\n"
+            "I (1476) spi_flash: flash io: qio\n"
+            "I (1749) factory_test_dut: HUSB CDC factory DUT ready: board=WT9932P4C61-TINY, gpio_count=27, mode=GPIO+CDC\n"
+            "I (1879) board: I2C scan complete. Display: NO, Touch: NO, Camera: NO\n"
+            "W (1929) factory_firmware: SDMMC mount failed: ESP_ERR_TIMEOUT\n"
+            "I (1939) factory_firmware: Hardware status: DSI=0, CSI_init=0, SDMMC=0\n"
+        )
+        parsed = parse_esptool_output({"flash_id": sample_output})
+        self.assertEqual(parsed["chip_name_key"], "ESP32-P4")
+        self.assertEqual(parsed["revision"], "3.2")
+        self.assertEqual(parsed["usb_mode"], "USB-Serial/JTAG")
+        self.assertEqual(parsed["mac"], "E8F60AEB8994")
+        self.assertEqual(parsed["flash_manufacturer"], "46")
+        self.assertEqual(parsed["flash_device"], "4018")
+        self.assertEqual(parsed["flash_mb"], 16.0)
+        self.assertEqual(parsed["psram_mb"], 32)
+        self.assertEqual(parsed["psram_speed"], "200MHz")
+        self.assertEqual(parsed["psram_vendor"], "0x0d (AP)")
+        self.assertEqual(parsed["psram_bit_mode"], "0x01 (X16 Mode)")
+        self.assertEqual(parsed["psram_test_status"], "Đạt (SPI SRAM memory test OK)")
+        self.assertEqual(parsed["psram_heap_pool_kb"], 32768)
+        self.assertEqual(parsed["app_project_name"], "wt_factory_esp32p4")
+        self.assertEqual(parsed["app_version"], "9d1050d-dirty")
+        self.assertEqual(parsed["app_idf_ver"], "v6.0.1")
+        self.assertEqual(parsed["app_min_chip_rev"], "v3.1")
+        self.assertEqual(parsed["app_max_chip_rev"], "v3.99")
+        self.assertEqual(parsed["runtime_flash_io"], "QIO")
+        self.assertEqual(parsed["console_uart_pins"], "GPIO 38 and 37")
+        self.assertIn("WT9932P4C61-TINY", parsed["board_info"])
+        self.assertEqual(parsed["secure_boot"], "Disabled")
+        self.assertEqual(parsed["flash_encryption"], "Disabled")
+        self.assertEqual(len(parsed["partitions"]), 2)
+
+    def test_parse_binary_image_and_app_descriptors(self):
+        import struct
+        # Construct 24-byte esp_image_header_t + 8-byte segment header + 256-byte esp_app_desc_t
+        hdr = bytearray(32)
+        hdr[0] = 0xE9
+        hdr[1] = 3
+        hdr[2] = 0  # QIO
+        hdr[3] = (0x4 << 4) | 0xF  # 16MB, 80MHz
+        struct.pack_into("<I", hdr, 4, 0x40000100)
+        hdr[8] = 0xEE
+        struct.pack_into("<H", hdr, 12, 0x0012)  # ESP32-P4
+        struct.pack_into("<H", hdr, 15, 301)  # v3.1
+        struct.pack_into("<H", hdr, 17, 399)  # v3.99
+        hdr[23] = 1
+
+        app_desc = bytearray(256)
+        struct.pack_into("<I", app_desc, 0, 0xABCD5432)
+        app_desc[16:16 + 13] = b"9d1050d-dirty"
+        app_desc[48:48 + 18] = b"wt_factory_esp32p4"
+        app_desc[80:80 + 8] = b"15:20:46"
+        app_desc[96:96 + 11] = b"Sep 15 2026"
+        app_desc[112:112 + 6] = b"v6.0.1"
+        app_desc[144:176] = bytes.fromhex("c017452140000000000000000000000000000000000000000000000000000001")
+        app_desc[180] = 16  # 64 KB MMU page size
+
+        blob = bytes(hdr + app_desc)
+        parsed_hdr = parse_esp_image_header(blob)
+        self.assertEqual(parsed_hdr["spi_mode"], "QIO")
+        self.assertEqual(parsed_hdr["spi_speed"], "80 MHz")
+        self.assertEqual(parsed_hdr["spi_size_header"], "16 MB")
+        self.assertEqual(parsed_hdr["min_chip_rev"], "v3.1")
+        self.assertEqual(parsed_hdr["max_chip_rev"], "v3.99")
+
+        parsed_app = parse_esp_app_desc(blob)
+        self.assertEqual(parsed_app["app_project_name"], "wt_factory_esp32p4")
+        self.assertEqual(parsed_app["app_version"], "9d1050d-dirty")
+        self.assertEqual(parsed_app["app_compile_time"], "Sep 15 2026 15:20:46")
+        self.assertEqual(parsed_app["app_idf_ver"], "v6.0.1")
+        self.assertEqual(parsed_app["app_mmu_page_size"], "64 KB")
+        self.assertTrue(parsed_app["app_elf_sha256"].startswith("c01745214"))
+
+        boot_desc = bytearray(80)
+        boot_desc[0] = 0x50
+        boot_desc[3] = 1
+        boot_desc[8:14] = b"v6.0.1"
+        boot_desc[40:59] = b"Sep 15 2026 15:20:00"
+        parsed_boot = parse_esp_bootloader_desc(bytes(hdr + boot_desc))
+        self.assertEqual(parsed_boot["bootloader_idf_ver"], "v6.0.1")
 
 
 class StreamUtilityTests(unittest.TestCase):
