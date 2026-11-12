@@ -1,4 +1,4 @@
-# TÀI LIỆU KIẾN TRÚC HỆ THỐNG - ESP32 MANAGER TOOL (v1.1)
+# TÀI LIỆU KIẾN TRÚC HỆ THỐNG - ESP32 MANAGER TOOL (v1.3)
 
 Tài liệu chi tiết về kiến trúc phần mềm, mô hình phân lớp, thiết kế đa luồng và các nguyên lý cốt lõi của **Esp32 manager tool**.
 

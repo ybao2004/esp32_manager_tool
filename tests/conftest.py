@@ -142,7 +142,7 @@ def mock_dialogs(monkeypatch):
         "showerror": _error,
         "askyesno": _askyesno,
     }
-    for mod in ("modules.app_core", "modules.tabs.tab_partition", "modules.tabs.tab_flasher", "modules.tabs.tab_inspector", "modules.tabs.tab_monitor"):
+    for mod in ("modules.app_core", "modules.tabs.tab_partition", "modules.tabs.tab_backup_clone", "modules.tabs.tab_flasher", "modules.tabs.tab_inspector", "modules.tabs.tab_monitor"):
         for dlg_name, dlg_fn in dlg_map.items():
             monkeypatch.setattr(f"{mod}.messagebox.{dlg_name}", dlg_fn, raising=False)
 

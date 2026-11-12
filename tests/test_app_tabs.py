@@ -87,16 +87,19 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
     def test_app_initializes_exactly_four_tabs(self):
         with patch('modules.app_core.set_window_icon_native'):
             app = InspectorApp(self.root)
-            self.assertEqual(app.notebook.index('end'), 4)
-            tab_texts = [app.notebook.tab(i, 'text').strip() for i in range(4)]
+            self.assertEqual(app.notebook.index('end'), 5)
+            tab_texts = [app.notebook.tab(i, 'text').strip() for i in range(5)]
             self.assertEqual(tab_texts, [
                 'Kiểm tra Phần cứng',
                 'Serial Monitor & Điều khiển',
                 'Nạp Flash Firmware (.bin)',
-                'Phân vùng Bộ nhớ (Partition Wizard)'
+                'Phân vùng Bộ nhớ (Partition Wizard)',
+                'Sao lưu & Nhân bản (Backup / Clone)'
             ])
             self.assertTrue(hasattr(app, 'partition_tab'))
+            self.assertTrue(hasattr(app, 'backup_tab'))
             self.assertTrue(hasattr(app, 'disk_map'))
+            self.assertTrue(hasattr(app, 'backup_disk_map'))
             self.assertFalse(hasattr(app, 'packager_tab'))
             self.assertFalse(hasattr(app, 'compiler_tab'))
             self.assertFalse(hasattr(app, 'btn_pack_project'))
@@ -367,6 +370,71 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
             app.var_auto_align.set(True)
             app._on_toggle_auto_align()
             self.assertEqual(app.table.entries[0].offset, 0x10000)
+
+    def test_backup_clone_tab_disk_map_metadata_and_selection(self):
+        from modules.tabs.tab_backup_clone import (
+            compute_bytes_hashes,
+            smart_trim_trailing_ff,
+            infer_bootloader_offset_for_chip,
+            build_backup_metadata_report,
+        )
+        with patch('modules.app_core.set_window_icon_native'):
+            app = InspectorApp(self.root)
+            self.assertTrue(hasattr(app, 'backup_tree'))
+            self.assertTrue(hasattr(app, 'backup_disk_map'))
+            self.assertGreaterEqual(len(app.backup_regions), 5)
+
+            # Kiểm tra chọn tất cả và chọn chỉ Firmware
+            app._action_backup_select_all(True)
+            self.assertTrue(all(r["selected"] for r in app.backup_regions))
+
+            app._action_backup_select_firmware_only()
+            by_name = {r["name"]: r["selected"] for r in app.backup_regions}
+            self.assertTrue(by_name.get("bootloader"))
+            self.assertTrue(by_name.get("partition_table"))
+            self.assertFalse(by_name.get("nvs"))
+
+            # Kiểm tra hàm cắt 0xFF và băm SHA-256 / MD5
+            raw_payload = b"\xE9\x02\x00\x00" + b"\xAA" * 5000 + b"\xFF" * 8192
+            trimmed = smart_trim_trailing_ff(raw_payload, min_keep_bytes=4096)
+            self.assertLess(len(trimmed), len(raw_payload))
+            self.assertEqual(len(trimmed) % 4096, 0)
+
+            hashes = compute_bytes_hashes(trimmed)
+            self.assertEqual(len(hashes["md5"]), 32)
+            self.assertEqual(len(hashes["sha256"]), 64)
+
+            self.assertEqual(infer_bootloader_offset_for_chip("ESP32-P4"), 0x2000)
+            self.assertEqual(infer_bootloader_offset_for_chip("ESP32-S3"), 0x0)
+            self.assertEqual(infer_bootloader_offset_for_chip("ESP32"), 0x1000)
+
+            report = build_backup_metadata_report(
+                chip_info={
+                    "chip_name": "ESP32-P4 (revision v3.2)",
+                    "mac": "E8:F6:0A:EB:89:94",
+                    "flash_size": "16MB",
+                    "crystal": "40MHz",
+                    "features": "Dual Core + LP Core, 400MHz",
+                    "source_port": "COM7",
+                },
+                saved_items=[{
+                    "name": "factory",
+                    "type_str": "app",
+                    "subtype_str": "factory",
+                    "offset": 0x10000,
+                    "original_size": 0x100000,
+                    "saved_size": len(trimmed),
+                    "filename": "0x010000_factory.bin",
+                    "md5": hashes["md5"],
+                    "sha256": hashes["sha256"],
+                }],
+                backup_dir="C:/fake_backup",
+                timestamp_str="2026-11-12 14:10:00",
+            )
+            self.assertIn("ESP32-P4 (revision v3.2)", report)
+            self.assertIn("E8:F6:0A:EB:89:94", report)
+            self.assertIn(hashes["sha256"], report)
+            self.assertIn(hashes["md5"], report)
 
 
 if __name__ == '__main__':

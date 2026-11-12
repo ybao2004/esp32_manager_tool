@@ -13,6 +13,7 @@ hiddenimports = [
     'modules.dialogs.partition_dialogs',
     'modules.dialogs.settings_dialog',
     'modules.tabs.tab_partition',
+    'modules.tabs.tab_backup_clone',
     'modules.tabs.tab_flasher',
     'modules.tabs.tab_inspector',
     'modules.tabs.tab_monitor',

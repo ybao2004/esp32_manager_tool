@@ -16,7 +16,7 @@ except ImportError:
 
 from modules.config import (
     CONTROL_CONFIG, DARK_PALETTE, LIGHT_PALETTE,
-    APP_NAME, APP_VERSION, GITHUB_REPO
+    APP_NAME, APP_VERSION, APP_AUTHOR, APP_LICENSE, GITHUB_REPO
 )
 from modules.win32_util import set_window_icon_native
 from modules.serial_util import is_bluetooth_port
@@ -332,7 +332,7 @@ class SettingsDialogMixin:
 
         about_version_lbl = tk.Label(
             main_box,
-            text=f"Phiên bản: v{APP_VERSION}  |  Bản quyền: MIT License",
+            text=f"Phiên bản: v{APP_VERSION}  |  Tác giả: {APP_AUTHOR}  |  Bản quyền: {APP_LICENSE} License",
             font=("Segoe UI", 10, "bold"),
             fg=p["text_fg"],
             bg=p["bg"]

@@ -1,8 +1,8 @@
-# Esp32 manager tool (v1.1)
+# Esp32 manager tool (v1.3)
 
 Ứng dụng GUI tất-cả-trong-một (All-in-One GUI Toolkit) chuyên nghiệp và gọn nhẹ dành cho kỹ sư nhúng và nhà phát triển làm việc với ESP8266 và toàn bộ các dòng chip ESP32: S2, S3, S31, C2, C3, C5, C6, C61, H2, H21, H4 và P4.
 
-🔗 **Kho mã nguồn GitHub:** [https://github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
+👤 **Tác giả:** `@ybao04`  |  📜 **Bản quyền:** `GPL-3.0 License`  |  🔗 **Kho mã nguồn GitHub:** [https://github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
 
 ---
 
@@ -35,7 +35,13 @@
 - Biên dịch trực tiếp sang file nhị phân `partition-table.bin` 32-byte struct kèm MD5 Checksum.
 - Tương tác phần cứng an toàn: Đọc bảng phân vùng từ chip, nạp xuống chip, sao lưu (dump), xóa trắng (erase) và nạp file `.bin` vào từng phân vùng qua chip ESP32.
 
-### 5. Cài Đặt Hệ Thống & Tự Động Kiểm Tra Cập Nhật
+### 5. Sao Lưu & Nhân Bản Trực Tiếp Nhiều Board - Backup & Direct Clone (Tab 5)
+- **Thanh phân vùng trực quan (Disk Map):** Tự động đọc bảng phân vùng từ board gốc (gồm cả `bootloader`, `partition_table`, `nvs`, `otadata`, `phy_init`, `factory`, `ota_0`, `storage`,...) và vẽ sơ đồ trực quan giống Tab 4.
+- **Sao lưu thông minh (Smart Backup):** Tích chọn từng phân vùng hoặc tất cả phân vùng (hoặc Full Flash `0x0 -> hết Flash`), hỗ trợ tự động cắt bỏ vùng trống `0xFF` ở cuối phân vùng (`Smart Trim`) để tiết kiệm dung lượng và tăng tốc độ nạp lại.
+- **Hồ sơ Sao lưu Toàn vẹn (`backup_info.txt`, `backup_manifest.json`, `partitions.csv`):** Tự động ghi lại mã băm `SHA-256` & `MD5`, dung lượng gốc và dung lượng sau khi cắt gọn, địa chỉ Offset (Hex & Dec), thời gian sao lưu, thông tin chip gốc, Silicon Revision và địa chỉ **MAC gốc**.
+- **Sao chép trực tiếp (Direct Multi-Board Clone):** Khi cắm đồng thời **1 board gốc** (chứa firmware chuẩn) và **1 hoặc nhiều board đích** vào máy tính, chỉ cần chọn cổng COM board gốc, tích chọn các cổng COM board đích và bấm **SAO CHÉP TRỰC TIẾP SANG BOARD ĐÍCH**. Công cụ tự động trích xuất từ board gốc và nhân bản sang toàn bộ board đích (mặc định bỏ qua `nvs`/`otadata` để tránh nhân bản nhầm khóa định danh riêng).
+
+### 6. Cài Đặt Hệ Thống & Tự Động Kiểm Tra Cập Nhật
 - Quản lý giao diện Sáng / Tối (Dark / Light Theme) đồng bộ toàn ứng dụng.
 - Quản lý danh sách cổng COM (ẩn/hiện các cổng COM không mong muốn).
 - Cấu hình mạng TCP/IP Server mặc định và gán nhãn phím điều khiển.
@@ -87,7 +93,8 @@ esp32_manager_tool/
         ├── tab_inspector.py    # Tab 1: Kiểm tra Phần cứng
         ├── tab_monitor.py      # Tab 2: Serial Monitor & Điều khiển IoT
         ├── tab_flasher.py      # Tab 3: Nạp Flash Firmware (.bin)
-        └── tab_partition.py    # Tab 4: Phân vùng Bộ nhớ (Partition Wizard)
+        ├── tab_partition.py    # Tab 4: Phân vùng Bộ nhớ (Partition Wizard)
+        └── tab_backup_clone.py # Tab 5: Sao lưu & Nhân bản trực tiếp (Backup / Clone)
 ```
 
 ---

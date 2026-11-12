@@ -1,7 +1,7 @@
 # HƯỚNG DẪN QUẢN LÝ PHÂN VÙNG BỘ NHỚ FLASH ESP32 (PARTITION WIZARD)
 
 > [!NOTE]
-> Trong **Esp32 manager tool (v1.1)**, công cụ **Partition Wizard** được tích hợp trực tiếp tại **Tab thứ 4** (ngay sau Tab Nạp Flash). Cung cấp giao diện trực quan phong cách MiniTool Partition Wizard, tự động tính toán Offset và biên dịch bảng phân vùng nhị phân 32-byte kèm MD5 Checksum tương thích 100% chuẩn ESP-IDF.
+> Trong **Esp32 manager tool (v1.3)**, công cụ **Partition Wizard** được tích hợp trực tiếp tại **Tab thứ 4** (ngay sau Tab Nạp Flash). Cung cấp giao diện trực quan phong cách MiniTool Partition Wizard, tự động tính toán Offset và biên dịch bảng phân vùng nhị phân 32-byte kèm MD5 Checksum tương thích 100% chuẩn ESP-IDF.
 
 ---
 

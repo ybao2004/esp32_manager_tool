@@ -1,4 +1,4 @@
-# Hướng dẫn sử dụng Esp32 manager tool (v1.1)
+# Hướng dẫn sử dụng Esp32 manager tool (v1.3)
 
 Ứng dụng GUI tất-cả-trong-một (All-in-One GUI Toolkit) chuyên nghiệp và gọn nhẹ dành cho kỹ sư nhúng và nhà phát triển làm việc với ESP8266 và toàn bộ các dòng chip ESP32 (S2, S3, C2, C3, C5, C6, H2, P4,...).
 

@@ -24,6 +24,7 @@ from modules.tabs.tab_inspector import InspectorTabMixin
 from modules.tabs.tab_monitor import MonitorTabMixin
 from modules.tabs.tab_flasher import FlasherTabMixin
 from modules.tabs.tab_partition import PartitionTabMixin
+from modules.tabs.tab_backup_clone import BackupCloneTabMixin
 from modules.dialogs.settings_dialog import SettingsDialogMixin
 
 class InspectorApp(
@@ -31,6 +32,7 @@ class InspectorApp(
     MonitorTabMixin,
     FlasherTabMixin,
     PartitionTabMixin,
+    BackupCloneTabMixin,
     SettingsDialogMixin
 ):
     """
@@ -494,10 +496,12 @@ class InspectorApp(
         self.monitor_tab = ttk.Frame(self.notebook)
         self.flasher_tab = ttk.Frame(self.notebook)
         self.partition_tab = ttk.Frame(self.notebook)
+        self.backup_tab = ttk.Frame(self.notebook)
         self.notebook.add(self.inspector_tab, text=' Kiểm tra Phần cứng ')
         self.notebook.add(self.monitor_tab, text=' Serial Monitor & Điều khiển ')
         self.notebook.add(self.flasher_tab, text=' Nạp Flash Firmware (.bin) ')
         self.notebook.add(self.partition_tab, text=' Phân vùng Bộ nhớ (Partition Wizard) ')
+        self.notebook.add(self.backup_tab, text=' Sao lưu & Nhân bản (Backup / Clone) ')
         
         self.notebook.select(self.monitor_tab)
         
@@ -512,6 +516,7 @@ class InspectorApp(
         self.create_monitor_tab()
         self.create_flasher_tab()
         self.create_partition_tab()
+        self.create_backup_tab()
 
         # Thanh trạng thái & tiến trình toàn cục ở đáy cửa sổ chính (Global Status Bar)
         self.status_bar_frame = ttk.Frame(self.main_frame, padding=(6, 3))
@@ -611,6 +616,14 @@ class InspectorApp(
 
         if hasattr(self, 'disk_map'):
             self.disk_map.set_theme_mode(self.is_dark_mode)
+        if hasattr(self, 'backup_disk_map'):
+            self.backup_disk_map.set_theme_mode(self.is_dark_mode)
+        if hasattr(self, 'backup_log_txt') and self.backup_log_txt.winfo_exists():
+            self.backup_log_txt.configure(bg=p["text_bg"], fg=p["text_fg"], insertbackground=p["fg"], selectbackground=select_bg, selectforeground=select_fg)
+            self.backup_log_txt.tag_configure('header', font=("Consolas", REPORT_FONT_SIZE, 'bold'), foreground=p["text_fg"], selectforeground=select_fg, selectbackground=select_bg)
+            self.backup_log_txt.tag_configure('green', foreground=p["success"], selectforeground=select_fg, selectbackground=select_bg)
+            self.backup_log_txt.tag_configure('blue', foreground=p["accent"], selectforeground=select_fg, selectbackground=select_bg)
+            self.backup_log_txt.tag_configure('red', foreground=p["error"], selectforeground=select_fg, selectbackground=select_bg)
         if hasattr(self, 'txt_partition_val') and self.txt_partition_val.winfo_exists():
             self.txt_partition_val.configure(bg=p["text_bg"], fg=p["text_fg"], insertbackground=p["fg"])
         if hasattr(self, 'txt_partition_log') and self.txt_partition_log.winfo_exists():
@@ -744,6 +757,11 @@ class InspectorApp(
                 self.saved_com_port = latest_new_port
                 self.save_config()
                 self.set_status(f"Đã tự động chọn cổng mới cắm: {latest_new_port}", "info")
+                if hasattr(self, '_refresh_backup_ports') and callable(self._refresh_backup_ports):
+                    try:
+                        self._refresh_backup_ports()
+                    except Exception:
+                        pass
             else:
                 self.update_port_list(current_selection, filtered_ports)
 
@@ -783,6 +801,12 @@ class InspectorApp(
                 self.port_cb.set(new_ports[0])
             else:
                 self.port_cb.set("")
+
+            if hasattr(self, '_refresh_backup_ports') and callable(self._refresh_backup_ports):
+                try:
+                    self._refresh_backup_ports()
+                except Exception:
+                    pass
                 
     def is_device_busy(self) -> bool:
         """Kiểm tra xem bất kỳ tác vụ phần cứng nào đang chạy trên bất kỳ Tab nào."""
@@ -790,7 +814,8 @@ class InspectorApp(
         detecting = hasattr(self, 'is_detecting') and (self.is_detecting.is_set() if hasattr(self.is_detecting, 'is_set') else bool(self.is_detecting))
         connecting = bool(getattr(self, "is_connecting", False))
         partition_hw = bool(getattr(self, "_is_partition_hw_running", False))
-        return bool(flashing or detecting or connecting or partition_hw)
+        backup_hw = bool(getattr(self, "_is_backup_hw_running", False))
+        return bool(flashing or detecting or connecting or partition_hw or backup_hw)
 
     def set_global_busy_state(self, is_busy: bool, operation_name: str = "") -> None:
         """Cập nhật trạng thái bận toàn hệ thống, vô hiệu hóa/kích hoạt lại các điều khiển trên tất cả các tab, và cập nhật thanh trạng thái."""
@@ -817,6 +842,12 @@ class InspectorApp(
         if hasattr(self, '_set_partition_ui_state') and callable(self._set_partition_ui_state):
             try:
                 self._set_partition_ui_state(state)
+            except Exception:
+                pass
+
+        if hasattr(self, '_set_backup_ui_state') and callable(self._set_backup_ui_state):
+            try:
+                self._set_backup_ui_state(state)
             except Exception:
                 pass
 
