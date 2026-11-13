@@ -57,7 +57,7 @@ _TOKENS_MAP = {
         radius_card=5, radius_control=4, control_height=30,
         font_ui="Segoe UI", font_size_pt=9,
         font_mono="Consolas", spacing=8,
-        sidebar_width_expanded=190, sidebar_width_collapsed=52,
+        sidebar_width_expanded=208, sidebar_width_collapsed=52,
         sidebar_collapsed_default=False
     ),
     ("engineering", "dark"): ThemeTokens(
@@ -71,7 +71,7 @@ _TOKENS_MAP = {
         radius_card=5, radius_control=4, control_height=30,
         font_ui="Segoe UI", font_size_pt=9,
         font_mono="Consolas", spacing=8,
-        sidebar_width_expanded=190, sidebar_width_collapsed=52,
+        sidebar_width_expanded=208, sidebar_width_collapsed=52,
         sidebar_collapsed_default=False
     ),
 }

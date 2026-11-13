@@ -20,7 +20,7 @@ class Sidebar(QFrame):
 
     NAV_ITEMS = [
         ("inspector", "Kiểm tra Chip", "inspector"),
-        ("monitor", "Serial Monitor", "monitor"),
+        ("monitor", "Serial Monitor & Log", "monitor"),
         ("flasher", "Nạp Firmware", "flash"),
         ("partition", "Phân vùng", "partition"),
         ("backup", "Sao lưu & Chép", "backup"),

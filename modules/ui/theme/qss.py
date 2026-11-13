@@ -121,6 +121,11 @@ def build_qss(t: ThemeTokens) -> str:
         background-color: {t.danger};
         border-color: {t.danger};
     }}
+    QPushButton[danger="true"]:disabled {{
+        background-color: {t.border};
+        color: {t.text_secondary};
+        border-color: {t.border};
+    }}
 
     QPushButton[danger_outline="true"] {{
         background-color: {t.surface};
@@ -131,6 +136,11 @@ def build_qss(t: ThemeTokens) -> str:
     QPushButton[danger_outline="true"]:hover {{
         background-color: {t.danger};
         color: #FFFFFF;
+    }}
+    QPushButton[danger_outline="true"]:disabled {{
+        background-color: {t.surface_alt};
+        color: {t.text_secondary};
+        border-color: {t.border};
     }}
 
     /* =========================================================================
@@ -210,6 +220,31 @@ def build_qss(t: ThemeTokens) -> str:
         font-family: "{t.font_mono}", "Consolas", monospace;
         font-size: 9.5pt;
         padding: 6px;
+    }}
+    QPlainTextEdit[role="mono"] {{
+        background-color: {t.surface};
+        color: {t.text};
+        border: 1px solid {t.border};
+        border-radius: {t.radius_control}px;
+        font-family: "{t.font_mono}", "Consolas", "Courier New", monospace;
+        font-size: 10pt;
+        padding: 4px 2px;
+    }}
+    QPlainTextEdit[role="mono_readonly"] {{
+        background-color: {t.log_bg};
+        color: {t.text_secondary};
+        border: 1px solid {t.border};
+        border-radius: {t.radius_control}px;
+        font-family: "{t.font_mono}", "Consolas", "Courier New", monospace;
+        font-size: 10pt;
+        padding: 4px 2px;
+    }}
+    QLabel[role="mono_header"] {{
+        color: {t.text_secondary};
+        font-family: "{t.font_mono}", "Consolas", "Courier New", monospace;
+        font-size: 10pt;
+        font-weight: 600;
+        padding: 0 2px 0 7px;
     }}
 
     /* =========================================================================
@@ -376,17 +411,18 @@ def build_qss(t: ThemeTokens) -> str:
         border-radius: 2px;
     }}
     QLabel#backupSourceBadge {{
-    background-color: {t.surface_alt};
+    background-color: transparent;
     color: {t.text_secondary};
-    border: 1px solid {t.border};
-    border-radius: 10px;
-    padding: 3px 10px;
-    font-weight: 600;
+    border: none;
+    border-radius: 0px;
+    padding: 0px;
+    font-weight: normal;
 }}
 QLabel#backupSourceBadge[active="true"] {{
-    background-color: {t.selection};
-    color: {t.accent};
-    border: 1px solid {t.accent};
+    background-color: transparent;
+    color: {t.text};
+    border: none;
+    font-weight: normal;
 }}
 
 QStatusBar {{

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Esp32 manager tool v1.4 - Update Checker & Downloader Utility
+Esp32 manager tool v1.5 - Update Checker & Downloader Utility
 Kiểm tra phiên bản mới từ GitHub Releases API và tải trực tiếp file cập nhật.
 """
 from __future__ import annotations
@@ -260,6 +260,56 @@ def download_update_asset(
         return False, f"Lỗi khi tải file: {str(e)}"
 
 
+_PYINSTALLER_ENV_VARS = (
+    "_MEIPASS",
+    "_MEIPASS2",
+    "_PYI_APPLICATION_HOME_DIR",
+    "_PYI_ARCHIVE_FILE",
+    "_PYI_PARENT_PROCESS_LEVEL",
+    "_PYI_SPLASH_IPC",
+    "PYTHONHOME",
+    "PYTHONPATH",
+    "TCL_LIBRARY",
+    "TK_LIBRARY",
+)
+
+
+def build_clean_subprocess_env(base_env: Dict[str, str] | None = None) -> Dict[str, str]:
+    """Tạo bản sao biến môi trường sạch, gỡ hoàn toàn biến nội bộ PyInstaller bootloader."""
+    env = dict(os.environ if base_env is None else base_env)
+    mei_dirs: list[str] = []
+    for k in ("_MEIPASS", "_MEIPASS2", "_PYI_APPLICATION_HOME_DIR"):
+        for ek, ev in env.items():
+            if ek.upper() == k and str(ev).strip():
+                mei_dirs.append(os.path.normcase(os.path.normpath(str(ev).strip())))
+    runtime_mei = getattr(sys, "_MEIPASS", None)
+    if runtime_mei:
+        mei_dirs.append(os.path.normcase(os.path.normpath(str(runtime_mei))))
+
+    upper_strip_set = {v.upper() for v in _PYINSTALLER_ENV_VARS}
+    for key in list(env.keys()):
+        ku = key.upper()
+        if ku in upper_strip_set or ku.startswith("_PYI_"):
+            env.pop(key, None)
+
+    for key in list(env.keys()):
+        if key.upper() == "PATH" and env[key]:
+            cleaned_parts = []
+            for part in str(env[key]).split(os.pathsep):
+                raw_p = part.strip()
+                if not raw_p:
+                    continue
+                norm_p = os.path.normcase(os.path.normpath(raw_p))
+                if any(norm_p == m or norm_p.startswith(m + os.sep) for m in mei_dirs):
+                    continue
+                if re.search(r"[/\\]_MEI\d+([/\\]|$)", norm_p, re.IGNORECASE):
+                    continue
+                cleaned_parts.append(part)
+            env[key] = os.pathsep.join(cleaned_parts)
+
+    return env
+
+
 def build_windows_self_update_script(
     staged_exe_path: str,
     target_exe_path: str,
@@ -269,8 +319,25 @@ def build_windows_self_update_script(
     """Sinh nội dung script .cmd đợi tiến trình hiện tại thoát, ghi đè .exe và khởi động lại."""
     src = os.path.abspath(staged_exe_path).replace('"', "")
     dst = os.path.abspath(target_exe_path).replace('"', "")
+    dst_dir = os.path.dirname(dst).replace('"', "")
     pid = int(current_pid)
-    relaunch_block = f'start "" "{dst}"\r\n' if relaunch else ""
+    if relaunch:
+        relaunch_block = (
+            'set "_MEIPASS="\r\n'
+            'set "_MEIPASS2="\r\n'
+            'set "_PYI_APPLICATION_HOME_DIR="\r\n'
+            'set "_PYI_ARCHIVE_FILE="\r\n'
+            'set "_PYI_PARENT_PROCESS_LEVEL="\r\n'
+            'set "_PYI_SPLASH_IPC="\r\n'
+            'set "PYTHONHOME="\r\n'
+            'set "PYTHONPATH="\r\n'
+            'set "TCL_LIBRARY="\r\n'
+            'set "TK_LIBRARY="\r\n'
+            'ping -n 2 127.0.0.1 >nul\r\n'
+            f'start "" /D "{dst_dir}" "{dst}"\r\n'
+        )
+    else:
+        relaunch_block = ""
     return (
         "@echo off\r\n"
         "chcp 65001 >nul\r\n"
@@ -345,12 +412,14 @@ def launch_windows_self_updater(
             startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
             startupinfo.wShowWindow = 0  # SW_HIDE
 
+        clean_env = build_clean_subprocess_env()
         proc = subprocess.Popen(
             ["cmd.exe", "/c", script_path],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
+            env=clean_env,
             startupinfo=startupinfo,
             creationflags=creation_flags,
         )

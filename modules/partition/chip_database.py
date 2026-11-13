@@ -23,7 +23,7 @@ class ChipInfo:
 CHIP_FAMILY_DATABASE: Dict[str, ChipInfo] = {
     "esp32": ChipInfo(
         id="esp32",
-        name="ESP32 (Classic)",
+        name="ESP32",
         arch="Xtensa dual-core LX6 @ 240MHz",
         cores=2,
         wireless="Wi-Fi 4 (802.11b/g/n) + Bluetooth 4.2 / BLE",
@@ -122,7 +122,7 @@ CHIP_FAMILY_DATABASE: Dict[str, ChipInfo] = {
     ),
     "esp32p4": ChipInfo(
         id="esp32p4",
-        name="ESP32-P4 (High-Performance)",
+        name="ESP32-P4",
         arch="RISC-V dual-core @ 400MHz",
         cores=2,
         wireless="Không tích hợp RF (Dành cho xử lý tính toán cực mạnh)",
@@ -133,7 +133,7 @@ CHIP_FAMILY_DATABASE: Dict[str, ChipInfo] = {
     ),
     "esp8266": ChipInfo(
         id="esp8266",
-        name="ESP8266 (Legacy)",
+        name="ESP8266",
         arch="Xtensa single-core L106 @ 80/160MHz",
         cores=1,
         wireless="Wi-Fi 4 (802.11b/g/n)",

@@ -245,7 +245,7 @@ class StartupSplash(QWidget):
         self.lbl_subtitle.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         title_col.addWidget(self.lbl_subtitle)
 
-        self.lbl_modules = QLabel("Chip Inspector · Serial Monitor · Flasher · Partition · Direct Clone", self.card)
+        self.lbl_modules = QLabel("Chip Inspector · Serial Monitor & Log · Flasher · Partition · Direct Clone", self.card)
         self.lbl_modules.setObjectName("splashModules")
         self.lbl_modules.setFixedHeight(20)
         self.lbl_modules.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)

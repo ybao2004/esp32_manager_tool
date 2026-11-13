@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Trang Cài Đặt Hệ Thống (SettingsPage - v1.4).
+Trang Cài Đặt Hệ Thống (SettingsPage - v1.5).
 - Bố cục QTabWidget gồm 3 sub-tab chuyên biệt, gọn gàng, loại bỏ hiện tượng cuộn-lồng-cuộn:
   1. Sub-tab 1 ("Cài đặt Chung & Cổng COM"): Chia 2 cột cân đối:
-     - Cột Trái: Giao diện & Chủ đề (tự động áp dụng trực tiếp khi chọn), Cấu hình Server Mặc định, Thông tin Bản quyền v1.4 (GPL-3.0, @ybao04).
+     - Cột Trái: Giao diện & Chủ đề (tự động áp dụng trực tiếp khi chọn), Cấu hình Server Mặc định, Thông tin Bản quyền v1.5 (GPL-3.0, @ybao04).
      - Cột Phải: Quản lý Cổng COM (tự động quét, lọc Bluetooth, tích chọn cổng ẩn, nút [Làm mới danh sách] rộng vừa đủ 165px).
   2. Sub-tab 2 ("Phím chức năng F1-F15"): Bảng 15 dòng chiếm trọn chiều cao, dễ nhìn và dễ chỉnh sửa.
   3. Sub-tab 3 ("Cập nhật Phần mềm"): Kiểm tra và tải trực tiếp bản phát hành mới từ GitHub không xung đột, không đè lấn giao diện.
@@ -37,12 +37,13 @@ from modules.ui.dispatch import UiDispatcher
 from modules.ui.theme.manager import ThemeManager
 from modules.ui.widgets.card import Card
 from modules.ui.widgets.update_badge import UpdateDotBadge, get_update_dot_icon
+from modules.ui.pages.partition_page import _TkVarCompat
 from modules.ui.icons import get_icon, bind_themed_icon
 from modules.ui import dialogs_service as dlg
 
 
 class SettingsPage(QWidget):
-    """Trang Cài Đặt Hệ Thống ESP32 Manager Tool (v1.4)"""
+    """Trang Cài Đặt Hệ Thống ESP32 Manager Tool (v1.5)"""
 
     def __init__(self, core_app=None, parent: QWidget = None):
         super().__init__(parent)
@@ -51,6 +52,7 @@ class SettingsPage(QWidget):
         self._f_entries: list[tuple[QLineEdit, QLineEdit]] = []
         self._syncing_theme_controls = False
         self._syncing_update_prefs = False
+        self._syncing_partition_prefs = False
         self._dispatcher = UiDispatcher.instance()
         self.latest_update_info: dict = {}
         self._update_check_in_progress = False
@@ -144,6 +146,56 @@ class SettingsPage(QWidget):
 
         card_server.body_layout.addLayout(srv_grid)
         left_col.addWidget(card_server)
+
+        # 3. Card Cài đặt Phân vùng & Hiển thị (Dùng chung Tab 4 & Tab 5)
+        card_part = Card("Cài đặt Phân vùng & Hiển thị (Tab 4 & Tab 5)", icon_name="chip", parent=tab_general)
+        part_grid = QGridLayout()
+        part_grid.setContentsMargins(0, 0, 0, 0)
+        part_grid.setHorizontalSpacing(10)
+        part_grid.setVerticalSpacing(8)
+
+        init_align = bool(getattr(self.core, "saved_auto_align", True)) if self.core else True
+        self.chk_auto_align = QCheckBox(
+            "Tự căn 4K/64K khi thêm hoặc sửa phân vùng (Tab 4)",
+            card_part,
+        )
+        self.chk_auto_align.setChecked(init_align)
+        self.var_auto_align = _TkVarCompat(self.chk_auto_align, default=init_align)
+        self.chk_auto_align.toggled.connect(self._on_auto_align_toggled)
+        part_grid.addWidget(self.chk_auto_align, 0, 0, 1, 2)
+
+        part_grid.addWidget(QLabel("Đơn vị hiển thị (Tab 4 & Tab 5):", card_part), 1, 0)
+        self.cb_display_unit = QComboBox(card_part)
+        self.cb_display_unit.addItems(["Thập phân", "Hệ HEX", "Song song"])
+        self.cb_display_unit.setFixedWidth(148)
+        init_unit = str(getattr(self.core, "saved_display_unit", "Thập phân") or "Thập phân") if self.core else "Thập phân"
+        if self.cb_display_unit.findText(init_unit) >= 0:
+            self.cb_display_unit.setCurrentText(init_unit)
+        self.cb_display_unit.get = self.cb_display_unit.currentText
+
+        def _set_display_unit(val: str):
+            val_str = str(val)
+            idx = self.cb_display_unit.findText(val_str)
+            if idx >= 0:
+                self.cb_display_unit.setCurrentIndex(idx)
+            else:
+                self.cb_display_unit.setCurrentText(val_str)
+
+        self.cb_display_unit.set = _set_display_unit
+        self.cb_display_unit.currentTextChanged.connect(self._on_display_unit_changed)
+        part_grid.addWidget(self.cb_display_unit, 1, 1, Qt.AlignmentFlag.AlignLeft)
+
+        lbl_part_hint = QLabel(
+            "Áp dụng đồng thời cho Bảng phân vùng (Tab 4) và Sao lưu & Nhân bản (Tab 5).",
+            card_part,
+        )
+        lbl_part_hint.setProperty("role", "muted")
+        lbl_part_hint.setWordWrap(True)
+        part_grid.addWidget(lbl_part_hint, 2, 0, 1, 2)
+
+        part_grid.setColumnStretch(1, 1)
+        card_part.body_layout.addLayout(part_grid)
+        left_col.addWidget(card_part)
         left_col.addStretch(1)
 
         gen_hbox.addLayout(left_col, 1)
@@ -355,13 +407,19 @@ class SettingsPage(QWidget):
 
         self.btn_cancel_update = QPushButton("Hủy tải", card_update)
         self.btn_cancel_update.setProperty("danger_outline", "true")
-        bind_themed_icon(self.btn_cancel_update, "stop", role="danger")
+        bind_themed_icon(self.btn_cancel_update, "close", role="danger")
         self.btn_cancel_update.setMinimumWidth(100)
         self.btn_cancel_update.clicked.connect(self._on_cancel_update_click)
         self.btn_cancel_update.setVisible(False)
         upd_btn_row.addWidget(self.btn_cancel_update)
 
         upd_btn_row.addStretch(1)
+
+        self.btn_about_app = QPushButton("Thông tin && Bản quyền", card_update)
+        bind_themed_icon(self.btn_about_app, "info")
+        self.btn_about_app.clicked.connect(self._on_open_about_click)
+        upd_btn_row.addWidget(self.btn_about_app)
+
         upd_card_layout.addLayout(upd_btn_row)
 
         # Thanh tiến trình tải (chỉ hiện khi đang tải)
@@ -459,6 +517,20 @@ class SettingsPage(QWidget):
             self.core.tab5_led_blink_enabled = bool(checked)
             if hasattr(self.core, "update_tab5_led_blink_visibility"):
                 self.core.update_tab5_led_blink_visibility()
+
+    def _on_auto_align_toggled(self, checked: bool):
+        if self._syncing_partition_prefs or self.core is None:
+            return
+        self.core.saved_auto_align = bool(checked)
+        if hasattr(self.core, "_on_toggle_auto_align"):
+            self.core._on_toggle_auto_align()
+
+    def _on_display_unit_changed(self, text: str):
+        if self._syncing_partition_prefs or self.core is None:
+            return
+        self.core.saved_display_unit = str(text or "Thập phân")
+        if hasattr(self.core, "_on_display_mode_changed"):
+            self.core._on_display_mode_changed()
 
     def _populate_com_list(self):
         while self.com_list_layout.count():
@@ -753,7 +825,33 @@ class SettingsPage(QWidget):
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _on_open_about_click(self):
+        if self.core is not None and hasattr(self.core, "open_about_dialog"):
+            self.core.open_about_dialog()
+            return
+        from modules.ui.dialogs.about_update_dialogs import AboutDialog
+        dialog = AboutDialog(parent=self)
+        dialog.exec()
+
     def _handle_staged_self_update_ready(self, staged_path: str, target_exe_path: str):
+        if is_running_frozen() and str(target_exe_path).lower().endswith(".exe"):
+            is_pe = False
+            try:
+                with open(staged_path, "rb") as fp:
+                    is_pe = fp.read(2) == b"MZ"
+            except OSError:
+                is_pe = False
+            if not is_pe:
+                self.lbl_download_status.setText("Tệp tải về không phải tệp thực thi .exe hợp lệ.")
+                dlg.show_error(
+                    "Tệp cập nhật không hợp lệ",
+                    f"Tệp tải về tại:\n{staged_path}\n\nkhông phải tệp thực thi Windows (.exe) hợp lệ "
+                    "(có thể gói phát hành trên GitHub đang là tệp nén .zip hoặc bị lỗi tải). "
+                    "Ứng dụng đã hủy ghi đè để bảo vệ bản hiện tại.",
+                    parent=self,
+                )
+                return
+
         self.lbl_download_status.setText("Đã tải xong bản cập nhật. Sẵn sàng cài đặt.")
         if self.core is not None and hasattr(self.core, "is_device_busy") and self.core.is_device_busy():
             dlg.show_warning(
@@ -817,6 +915,17 @@ class SettingsPage(QWidget):
                 self._syncing_update_prefs = False
         if hasattr(self, "chk_tab5_led_blink"):
             self.chk_tab5_led_blink.setChecked(bool(getattr(self.core, "tab5_led_blink_enabled", False)))
+        if hasattr(self, "chk_auto_align") or hasattr(self, "cb_display_unit"):
+            self._syncing_partition_prefs = True
+            try:
+                if hasattr(self, "chk_auto_align"):
+                    self.chk_auto_align.setChecked(bool(getattr(self.core, "saved_auto_align", True)))
+                if hasattr(self, "cb_display_unit"):
+                    unit_val = str(getattr(self.core, "saved_display_unit", "Thập phân") or "Thập phân")
+                    if self.cb_display_unit.findText(unit_val) >= 0:
+                        self.cb_display_unit.setCurrentText(unit_val)
+            finally:
+                self._syncing_partition_prefs = False
 
         self._populate_com_list()
         attached_upper = {dev.upper() for dev in self._com_checkboxes}
@@ -906,6 +1015,12 @@ class SettingsPage(QWidget):
         self.core.is_dark_mode = self.rb_dark.isChecked()
         if hasattr(self, "chk_tab5_led_blink"):
             self.core.tab5_led_blink_enabled = bool(self.chk_tab5_led_blink.isChecked())
+        if hasattr(self, "chk_auto_align"):
+            self.core.saved_auto_align = bool(self.chk_auto_align.isChecked())
+        if hasattr(self, "cb_display_unit"):
+            self.core.saved_display_unit = str(self.cb_display_unit.currentText() or "Thập phân")
+        if hasattr(self.core, "_on_display_mode_changed"):
+            self.core._on_display_mode_changed()
         if hasattr(self.core, "update_tab5_led_blink_visibility"):
             self.core.update_tab5_led_blink_visibility()
 

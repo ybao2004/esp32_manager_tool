@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Trang Nạp Flash Firmware (FlasherPage - v1.6).
-- Card 1: Cấu hình Nạp & Công cụ Xóa (1 hàng gọn gàng: Dòng Chip, Tốc độ Nạp, Xóa toàn bộ trước khi nạp | Xóa Vùng Nhớ Chỉ Định, Xóa Toàn Bộ Flash).
+Trang Nạp Flash Firmware (FlasherPage - v1.5).
+- Card 1: Cấu hình Nạp & Công cụ Xóa (1 hàng gọn gàng: Dòng Chip, Tốc độ Nạp, Xóa toàn bộ trước khi nạp | Bắt đầu nạp, Xóa Toàn Bộ Flash, Xóa nhật ký).
 - Card 2: Danh sách 4 File Firmware (.bin) với phân bổ tỷ lệ cột chuẩn:
   [x] (50px) | File #N (55px) | Đường dẫn File .bin (stretch=1, ~65% chiều rộng) | [Chọn...] (85px) | Offset (100px Monospace) | Dung lượng (85px).
 - Card 3: Thanh điều khiển Nạp Firmware + Progress Bar + Nhật ký Nạp thời gian thực.
@@ -326,11 +326,6 @@ class FlasherPage(QWidget):
         self.btn_flash_write.setToolTip("Bắt đầu nạp các file Firmware đã chọn xuống ESP32")
         cfg_bar.addWidget(self.btn_flash_write)
 
-        self.btn_erase_nvs = _ButtonCompat("Xóa vùng nhớ", card_cfg)
-        bind_themed_icon(self.btn_erase_nvs, "delete")
-        self.btn_erase_nvs.setToolTip("Xóa trắng vùng nhớ chỉ định theo Offset & Size (ví dụ NVS)")
-        cfg_bar.addWidget(self.btn_erase_nvs)
-
         self.btn_erase_flash = _ButtonCompat("Xóa toàn bộ Flash", card_cfg)
         self.btn_erase_flash.setProperty("danger", "true")
         bind_themed_icon(self.btn_erase_flash, "delete", role="on_accent")
@@ -343,7 +338,6 @@ class FlasherPage(QWidget):
 
         for cfg_btn in (
             self.btn_flash_write,
-            self.btn_erase_nvs,
             self.btn_erase_flash,
             self.btn_clear_flasher_log,
         ):

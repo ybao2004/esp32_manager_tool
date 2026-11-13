@@ -21,6 +21,7 @@ from modules.config import DARK_PALETTE, LIGHT_PALETTE, FLASH_BAUDS, FLASH_CHIP_
 from modules.esptool_util import (
     run_esptool_command,
     esptool_command_succeeded,
+    parse_esptool_output,
     parse_esptool_progress_percent,
 )
 from modules.partition.unit_formatter import (
@@ -36,11 +37,35 @@ from modules.partition.project_scanner import scan_esp_project
 
 FLASH_SIZE_OPTIONS = [
     ("2 MB", 2 * 1024 * 1024),
-    ("4 MB (Chuẩn)", 4 * 1024 * 1024),
+    ("4 MB", 4 * 1024 * 1024),
     ("8 MB", 8 * 1024 * 1024),
     ("16 MB", 16 * 1024 * 1024),
     ("32 MB", 32 * 1024 * 1024),
 ]
+
+
+def _resolve_chip_id_from_esptool(chip_text: str | None) -> str | None:
+    """Ánh xạ chuỗi nhận dạng chip từ esptool về mã chip chuẩn trong CHIP_FAMILY_DATABASE."""
+    raw = str(chip_text or "").strip().lower()
+    if not raw:
+        return None
+    clean = re.sub(r"[^a-z0-9]", "", raw)
+    aliases = {
+        "esp8684": "esp32c2",
+        "esp8685": "esp32c3",
+    }
+    for alias, cid in aliases.items():
+        if alias in clean and cid in CHIP_FAMILY_DATABASE:
+            return cid
+    # Ưu tiên ID dài trước để esp32c61 không bị esp32c6 nuốt và esp32s3 không bị esp32 nuốt
+    sorted_ids = sorted(CHIP_FAMILY_DATABASE.keys(), key=len, reverse=True)
+    for cid in sorted_ids:
+        if clean == cid.lower():
+            return cid
+    for cid in sorted_ids:
+        if cid.lower() in clean:
+            return cid
+    return None
 
 
 from modules.ui.widgets.disk_map import DiskMapWidget as DiskMapCanvas
@@ -120,7 +145,7 @@ class PartitionHandbookDialog(QDialog):
             "  - Xóa phân vùng: Bấm nút [-] ở cột đầu tiên của dòng phân vùng muốn xóa.\n"
             "  - Chỉnh sửa nhanh: Bấm chuột phải vào bất kỳ ô nào để chọn trực tiếp hoặc tự đặt tên/nhập tay.\n"
             "  - Mở hộp thoại chi tiết: Nhấp đúp chuột trái (Double-Click) vào dòng phân vùng.\n"
-            "  - Tự động dồn căn biên: Bấm nút 'Dồn và Căn 4K/64K' trên thanh công cụ để tự động tính toán lại Offset không bị chồng lấn và đúng chuẩn căn lề.\n\n"
+            "  - Tự động dồn căn biên: Tích chọn 'Tự căn 4K/64K' hoặc chuột phải vào bảng -> 'Dồn & Căn lề toàn bộ 4K/64K' để tính lại Offset chuẩn ESP-IDF.\n\n"
             "2. BẢN ĐỒ BỘ NHỚ FLASH ESP32 (MEMORY MAP):\n"
             "  - 0x00000 - 0x00FFF (4 KB): Vùng Header bảo lưu của ROM / Bootloader.\n"
             "  - 0x01000 - 0x07FFF (28 KB): Second-Stage Bootloader (0x0000 trên dòng C3/S3).\n"
@@ -139,10 +164,8 @@ class PartitionHandbookDialog(QDialog):
             "  - ota_0 / ota_1: Hai khe nạp firmware từ xa xoay vòng Ping-Pong.\n"
             "  - littlefs / spiffs: Hệ thống file lưu trữ web assets, file cấu hình, log cảm biến.\n\n"
             "5. THAO TÁC PHẦN CỨNG:\n"
-            "  - Đọc từ Chip: Đọc cấu trúc bảng phân vùng hiện có từ chip qua cổng COM.\n"
-            "  - Nạp xuống Chip: Ghi bảng phân vùng hiện tại vào offset 0x8000 của chip.\n"
-            "  - Sao Lưu: Dump nội dung nhị phân của phân vùng đang chọn ra file .bin.\n"
-            "  - Xóa Trắng: Format trắng vùng nhớ của phân vùng đang chọn trên chip.\n"
+            "  - Đọc từ chip: Đọc cấu trúc bảng phân vùng hiện có từ chip qua cổng COM vào trình thiết kế.\n"
+            "  - Sao lưu / Sửa / Ghi đè / Xóa dữ liệu từng phân vùng: Chuyển sang Tab 5 (Sao lưu & Chép).\n"
         )
         txt.setPlainText(doc_content)
         layout.addWidget(txt, 1)
@@ -183,7 +206,9 @@ class PartitionTabMixin:
         if hasattr(self, 'part_tree') and self.part_tree is not None:
             if hasattr(self, 'disk_map') and self.disk_map is not None:
                 self.disk_map.on_select_entry = self._on_disk_map_select_entry
+                self.disk_map.on_double_click_entry = self._on_disk_map_double_click_entry
                 self.disk_map.on_unallocated_click = self._on_disk_map_unallocated_click
+                self.disk_map.on_unallocated_double_click = self._on_disk_map_unallocated_click
                 self.disk_map.on_context_action = self._on_disk_map_context_action
                 self.disk_map.set_theme_mode(self.is_dark_mode)
             self.part_tree.bind("<<TreeviewSelect>>", self._on_tree_select)
@@ -198,11 +223,10 @@ class PartitionTabMixin:
         if isinstance(state, bool):
             state = "normal" if state else "disabled"
         for attr in (
-            'btn_part_scan', 'btn_part_read_hw', 'btn_part_flash_hw',
-            'btn_part_dump_hw', 'btn_part_write_hw', 'btn_part_erase_hw',
+            'btn_part_scan', 'btn_part_read_hw',
             'btn_part_clear', 'btn_part_help',
-            'cb_part_chip', 'cb_part_flash', 'cb_part_mode', 'chk_auto_align',
-            'btn_add_part', 'btn_edit_part', 'btn_del_part', 'btn_autopack',
+            'cb_part_chip', 'cb_part_flash',
+            'btn_add_part', 'btn_edit_part', 'btn_del_part',
             'btn_presets', 'btn_open_csv', 'btn_save_csv'
         ):
             widget = getattr(self, attr, None)
@@ -229,12 +253,17 @@ class PartitionTabMixin:
         dlg.exec()
 
     def _on_toggle_auto_align(self):
-        """Xử lý bật/tắt checkbox tự động căn chỉnh offset"""
+        """Xử lý bật/tắt checkbox tự động căn chỉnh offset (bật lên sẽ dồn khít ngay)."""
         if getattr(self, "var_auto_align", None) and self.var_auto_align.get():
+            if self.table.entries:
+                self._push_partition_undo_state()
             self._cascade_auto_pack(from_idx=0)
         if hasattr(self, 'part_tree') and self.part_tree is not None:
             self.refresh_partition_views()
-            self.set_status("Đã cập nhật chế độ tự động căn chỉnh phân vùng.")
+            if getattr(self, "var_auto_align", None) and self.var_auto_align.get():
+                self.set_status("Đã bật tự căn 4K/64K và dồn lại bảng phân vùng.")
+            else:
+                self.set_status("Đã tắt tự căn 4K/64K (cho phép chỉnh Offset thủ công).")
 
     def _push_partition_undo_state(self):
         state = (
@@ -472,7 +501,7 @@ class PartitionTabMixin:
         if not self.table.entries:
             self.disk_map.set_data([], self.table.flash_size, self.display_mode, None)
             self.lbl_flash_stats.configure(
-                text=f"Dung lượng Flash: {flash_human} | Chưa có phân vùng (Chọn 'Mẫu Chuẩn...', 'Mở CSV/BIN', 'Đọc bảng từ Chip' hoặc '+ Thêm dòng')"
+                text=f"Dung lượng Flash: {flash_human} | Chưa có phân vùng (Chọn 'Mẫu', 'Mở CSV/BIN', 'Đọc từ chip' hoặc 'Thêm dòng')"
             )
             if hasattr(self, "txt_partition_val") and self.txt_partition_val.winfo_exists():
                 self.txt_partition_val.configure(state="normal")
@@ -566,9 +595,18 @@ class PartitionTabMixin:
                     self.cb_part_chip.blockSignals(True)
                     self.part_chip_var.set(chip_info.name)
                     self.cb_part_chip.blockSignals(False)
-                chip_sizes = sorted(chip_info.supported_flash_sizes)
+                chip_sizes = sorted(set(chip_info.supported_flash_sizes))
+                if flash_size is not None and flash_size > 0:
+                    if flash_size not in chip_sizes:
+                        chip_sizes = sorted(chip_sizes + [flash_size])
+                    target_sz = flash_size
+                else:
+                    target_sz = (
+                        chip_info.default_flash_size
+                        if chip_info.default_flash_size in chip_sizes
+                        else chip_sizes[-1]
+                    )
                 size_labels = [f"{sz // (1024 * 1024)} MB" for sz in chip_sizes]
-                target_sz = flash_size if (flash_size in chip_sizes) else chip_sizes[-1]
                 target_lbl = f"{target_sz // (1024 * 1024)} MB"
                 if hasattr(self, "cb_part_flash") and self.cb_part_flash is not None:
                     self.cb_part_flash.blockSignals(True)
@@ -577,16 +615,27 @@ class PartitionTabMixin:
                     self.cb_part_flash.blockSignals(False)
                 self.table.flash_size = target_sz
             else:
+                if str(chip_id or "").lower() in ("auto", "") and hasattr(self, "cb_part_chip") and self.cb_part_chip is not None:
+                    self.cb_part_chip.blockSignals(True)
+                    self.part_chip_var.set("auto")
+                    self.cb_part_chip.blockSignals(False)
                 if hasattr(self, "cb_part_flash") and self.cb_part_flash is not None:
                     self.cb_part_flash.blockSignals(True)
-                    self.cb_part_flash["values"] = [opt[0] for opt in FLASH_SIZE_OPTIONS]
-                    chosen_lbl = FLASH_SIZE_OPTIONS[-1][0]
-                    chosen_sz = FLASH_SIZE_OPTIONS[-1][1]
-                    if flash_size is not None:
+                    opt_labels = [opt[0] for opt in FLASH_SIZE_OPTIONS]
+                    chosen_lbl = "4 MB"
+                    chosen_sz = 4 * 1024 * 1024
+                    if flash_size is not None and flash_size > 0:
+                        matched = False
                         for lbl, sz in FLASH_SIZE_OPTIONS:
                             if sz == flash_size:
                                 chosen_lbl, chosen_sz = lbl, sz
+                                matched = True
                                 break
+                        if not matched:
+                            chosen_sz = flash_size
+                            chosen_lbl = f"{max(1, flash_size // (1024 * 1024))} MB"
+                            opt_labels = opt_labels + [chosen_lbl]
+                    self.cb_part_flash["values"] = opt_labels
                     self.part_flash_var.set(chosen_lbl)
                     self.cb_part_flash.blockSignals(False)
                     self.table.flash_size = chosen_sz
@@ -597,10 +646,11 @@ class PartitionTabMixin:
         if getattr(self, "_syncing_chip_flash_combo", False):
             return
         name = self.part_chip_var.get()
-        if name == "(Chưa chọn)":
+        if name in ("auto", "(Chưa chọn)", ""):
             self.table.target_chip = "auto"
             self.table.bootloader_offset = 0x1000
-            self._sync_chip_and_flash_combos("auto", flash_size=FLASH_SIZE_OPTIONS[-1][1])
+            cur_flash = getattr(self.table, "flash_size", 0) or (4 * 1024 * 1024)
+            self._sync_chip_and_flash_combos("auto", flash_size=cur_flash)
             self.refresh_partition_views()
             return
 
@@ -636,14 +686,21 @@ class PartitionTabMixin:
             self.refresh_partition_views()
 
     def _on_display_mode_changed(self, event=None):
-        mode_str = self.part_mode_var.get()
-        if "HEX" in mode_str:
-            self.display_mode = DisplayMode.HEX
-        elif "Song song" in mode_str:
+        if hasattr(self, "part_mode_var") and self.part_mode_var is not None:
+            mode_str = str(self.part_mode_var.get() or "Thập phân")
+        else:
+            mode_str = str(getattr(self, "saved_display_unit", "Thập phân") or "Thập phân")
+        self.saved_display_unit = mode_str
+        if "Song song" in mode_str:
             self.display_mode = DisplayMode.DUAL
+        elif "HEX" in mode_str:
+            self.display_mode = DisplayMode.HEX
         else:
             self.display_mode = DisplayMode.DECIMAL
-        self.refresh_partition_views()
+        if hasattr(self, "part_tree") and self.part_tree is not None:
+            self.refresh_partition_views()
+        if hasattr(self, "backup_tree") and self.backup_tree is not None and hasattr(self, "refresh_backup_views"):
+            self.refresh_backup_views()
 
     def _on_tree_select(self, event=None):
         selected_iid = self.part_tree.selection()
@@ -673,7 +730,8 @@ class PartitionTabMixin:
             return "break"
 
     def _on_tree_double_click(self, event):
-        row_id = self.part_tree.identify_row(event.y)
+        raw_iid = getattr(event, "iid", None)
+        row_id = raw_iid if (isinstance(raw_iid, str) and raw_iid) else self.part_tree.identify_row(event.y)
         if not row_id:
             return
         if row_id == getattr(self, "_add_row_iid", "__add_row__"):
@@ -778,6 +836,20 @@ class PartitionTabMixin:
                 self.part_tree.selection_set(item)
                 self.part_tree.see(item)
                 break
+
+    def _on_disk_map_double_click_entry(self, entry: PartitionEntry):
+        """Bấm đúp vào khối phân vùng trên sơ đồ Flash -> Chọn dòng và mở hộp thoại chỉnh sửa."""
+        if entry is None or entry.is_system or entry.is_unallocated:
+            return
+        self.disk_map.selected_entry = entry
+        self.disk_map.redraw()
+        for item in self.part_tree.get_children():
+            name = self._get_entry_name_from_iid(item)
+            if name == entry.name:
+                self.part_tree.selection_set(item)
+                self.part_tree.see(item)
+                break
+        self._action_edit_selected()
 
     def _on_disk_map_unallocated_click(self, offset: int, size: int):
         ans = messagebox.askyesno(
@@ -1311,6 +1383,12 @@ class PartitionTabMixin:
 
             self.refresh_partition_views()
             self.set_status(f"Đã nạp mẫu: {preset['name']}")
+            if hasattr(self, "append_tab_log"):
+                self.append_tab_log(
+                    "Phân vùng",
+                    f"Áp dụng mẫu phân vùng: {preset['name']} ({len(self.table.entries)} phân vùng).",
+                    level="info",
+                )
 
     def _action_open_file(self):
         path = filedialog.askopenfilename(
@@ -1343,7 +1421,15 @@ class PartitionTabMixin:
 
             self.current_partition_file_path = path
             self.refresh_partition_views()
+            if hasattr(self, "append_tab_log"):
+                self.append_tab_log(
+                    "Phân vùng",
+                    f"Mở tệp phân vùng: {os.path.basename(path)} ({len(self.table.entries)} phân vùng).",
+                    level="info",
+                )
         except Exception as e:
+            if hasattr(self, "append_tab_log"):
+                self.append_tab_log("Phân vùng", f"[LỖI] Không thể mở tệp phân vùng '{os.path.basename(path)}': {e}", level="error")
             messagebox.showerror("Lỗi mở file", f"Không thể đọc file phân vùng:\n{e}", parent=self.root)
 
     def _action_save_csv(self):
@@ -1366,8 +1452,12 @@ class PartitionTabMixin:
                 f.write(csv_content)
             self.current_partition_file_path = target_path
             self.set_status(f"Đã lưu toàn bộ bảng phân vùng: {os.path.basename(target_path)}", "success")
+            if hasattr(self, "append_tab_log"):
+                self.append_tab_log("Phân vùng", f"Đã lưu bảng phân vùng ra CSV: {target_path}.", level="success")
             messagebox.showinfo("Thành công", f"Đã lưu toàn bộ bảng phân vùng ra file CSV chuẩn ESP-IDF:\n{target_path}", parent=self.root)
         except Exception as e:
+            if hasattr(self, "append_tab_log"):
+                self.append_tab_log("Phân vùng", f"[LỖI] Không thể lưu file CSV '{target_path}': {e}", level="error")
             messagebox.showerror("Lỗi lưu file", f"Không thể lưu file CSV:\n{e}", parent=self.root)
 
     def _action_scan_project(self):
@@ -1394,6 +1484,12 @@ class PartitionTabMixin:
 
         self.refresh_partition_views()
         self.set_status(f"Đã quét thành công dự án: {res.project_name}")
+        if hasattr(self, "append_tab_log"):
+            self.append_tab_log(
+                "Phân vùng",
+                f"Quét dự án '{res.project_name}': {res.target_chip.upper()} | Flash {format_bytes_human(res.flash_size, compact=True)} ({len(self.table.entries)} phân vùng).",
+                level="success",
+            )
         messagebox.showinfo("Quét dự án thành công", f"Đã trích xuất cấu hình phân vùng từ dự án: {res.project_name}\nTarget: {res.target_chip.upper()} | Flash: {format_bytes_human(res.flash_size, compact=True)}", parent=self.root)
 
     # =========================================================================
@@ -1401,9 +1497,9 @@ class PartitionTabMixin:
     # =========================================================================
 
     def _log_partition_hw(self, text: str):
-        """Ghi nhật ký thao tác phần cứng phân vùng trực tiếp vào Tab Serial Monitor"""
-        if hasattr(self, "append_to_monitor"):
-            self.append_to_monitor(f"[PARTITION_HW] {text}")
+        """Ghi nhật ký thao tác phần cứng phân vùng sang sub-tab Log của Tab 2 với tiền tố [Phân vùng]."""
+        if hasattr(self, "append_tab_log"):
+            self.append_tab_log("Phân vùng", text)
 
     def _update_partition_hw_progress(self, line: str, task_label: str | None = None):
         """Phân tích dòng output từ esptool để cập nhật thanh tiến trình toàn cục (0% -> 100%)."""
@@ -1435,7 +1531,8 @@ class PartitionTabMixin:
         baud_str = self.baud_cb.get().strip()
         baud = int(baud_str) if baud_str.isdigit() else 460800
         chip_target = self.table.target_chip
-        if chip_target == "auto" or not chip_target or (hasattr(self, "part_chip_var") and self.part_chip_var.get() == "(Chưa chọn)"):
+        part_chip_sel = self.part_chip_var.get() if hasattr(self, "part_chip_var") else ""
+        if chip_target in ("auto", "(Chưa chọn)", "") or part_chip_sel in ("auto", "(Chưa chọn)"):
             chip_target = "auto"
 
         # Ngắt Serial Monitor an toàn nếu đang mở
@@ -1473,22 +1570,59 @@ class PartitionTabMixin:
                 tmp_path = tmp.name
 
             try:
-                safe_after(lambda: self._log_partition_hw(f"\n=== BẮT ĐẦU ĐỌC BẢNG PHÂN VÙNG TỪ CHIP QUA {port} ==="))
-                args = ['--port', port, '--baud', str(baud)]
+                safe_after(lambda: self._log_partition_hw(f"\n=== BẮT ĐẦU DÒ CHIP & ĐỌC BẢNG PHÂN VÙNG QUA {port} ==="))
+
+                # Bước 1: Dò Chip (nếu để auto) và dung lượng Flash thật qua flash-id
+                fid_args = ['--port', port, '--baud', str(baud)]
                 if chip and chip != "auto":
-                    args.extend(['--chip', chip])
+                    fid_args.extend(['--chip', chip])
+                fid_args.append('flash-id')
+
+                fid_stream_lines: list[str] = []
+
+                def on_fid_stream(line):
+                    fid_stream_lines.append(str(line))
+                    safe_after(lambda l=line: self._log_partition_hw(f"  {l}"))
+
+                fid_res = run_esptool_command(fid_args, progress_callback=on_fid_stream)
+                fid_text = "\n".join(
+                    p for p in (fid_res if isinstance(fid_res, str) else "", "\n".join(fid_stream_lines)) if p
+                )
+                fid_parsed = parse_esptool_output({"flash_id": fid_text}) if fid_text else {}
+                detected_chip = fid_parsed.get("chip_name_key") or fid_parsed.get("chip_line")
+                detected_flash_mb = float(fid_parsed.get("flash_mb") or 0)
+                resolved_cid = _resolve_chip_id_from_esptool(detected_chip)
+
+                # Bước 2: Đọc 4KB bảng phân vùng ở offset cấu hình
+                effective_chip = chip if (chip and chip != "auto") else (resolved_cid or "")
+                args = ['--port', port, '--baud', str(baud)]
+                if effective_chip:
+                    args.extend(['--chip', effective_chip])
                 args.extend(['read_flash', part_offset, '0x1000', tmp_path])
 
-                detected_chip = None
+                read_stream_lines: list[str] = []
+
                 def on_stream(line):
-                    nonlocal detected_chip
-                    safe_after(lambda: self._log_partition_hw(f"  {line}"))
+                    read_stream_lines.append(str(line))
+                    safe_after(lambda l=line: self._log_partition_hw(f"  {l}"))
                     safe_after(lambda l=line: self._update_partition_hw_progress(l))
-                    m = re.search(r"(?:Detecting chip type\.\.\.|Chip is)\s+([A-Za-z0-9\-]+)", line, re.IGNORECASE)
-                    if m:
-                        detected_chip = m.group(1).strip()
 
                 res = run_esptool_command(args, progress_callback=on_stream)
+                read_text = "\n".join(
+                    p for p in (res if isinstance(res, str) else "", "\n".join(read_stream_lines)) if p
+                )
+                if read_text:
+                    read_parsed = parse_esptool_output({"read_flash": read_text})
+                    if not detected_chip:
+                        detected_chip = read_parsed.get("chip_name_key") or read_parsed.get("chip_line")
+                        resolved_cid = _resolve_chip_id_from_esptool(detected_chip)
+                    if not detected_flash_mb and read_parsed.get("flash_mb"):
+                        detected_flash_mb = float(read_parsed.get("flash_mb") or 0)
+
+                detected_flash_bytes = (
+                    int(round(detected_flash_mb * 1024 * 1024)) if detected_flash_mb > 0 else 0
+                )
+
                 if esptool_command_succeeded(res) and os.path.isfile(tmp_path) and os.path.getsize(tmp_path) > 0:
                     with open(tmp_path, "rb") as f:
                         data = f.read()
@@ -1496,15 +1630,18 @@ class PartitionTabMixin:
                     def update_ui():
                         self._push_partition_undo_state()
                         self.table.from_binary(data)
-                        if detected_chip:
-                            clean_det = detected_chip.lower().replace("-", "")
-                            for cid, info in CHIP_FAMILY_DATABASE.items():
-                                if cid.lower() == clean_det or clean_det in cid.lower() or cid.lower() in clean_det:
-                                    self.table.target_chip = cid
-                                    self.table.bootloader_offset = info.bootloader_offset
-                                    highest_sz = max(info.supported_flash_sizes)
-                                    self._sync_chip_and_flash_combos(cid, flash_size=highest_sz)
-                                    break
+                        if chip == "auto":
+                            if resolved_cid and resolved_cid in CHIP_FAMILY_DATABASE:
+                                info = CHIP_FAMILY_DATABASE[resolved_cid]
+                                self.table.target_chip = resolved_cid
+                                self.table.bootloader_offset = info.bootloader_offset
+                                target_flash = detected_flash_bytes if detected_flash_bytes > 0 else info.default_flash_size
+                                self._sync_chip_and_flash_combos(resolved_cid, flash_size=target_flash)
+                            elif detected_flash_bytes > 0:
+                                self._sync_chip_and_flash_combos("auto", flash_size=detected_flash_bytes)
+                        else:
+                            if detected_flash_bytes > 0:
+                                self._sync_chip_and_flash_combos(chip, flash_size=detected_flash_bytes)
                         self.refresh_partition_views()
                         part_count = len(self.table.entries)
                         self.set_status(
@@ -1518,8 +1655,21 @@ class PartitionTabMixin:
 
                     safe_after(update_ui)
                 else:
-                    safe_after(lambda: self.set_status("Lỗi đọc bảng phân vùng từ chip!", "error", progress=0))
-                    safe_after(lambda: self._log_partition_hw(">>> [LỖI] Không thể đọc dữ liệu phân vùng từ ESP32."))
+                    def update_failed_hw():
+                        if chip == "auto" and resolved_cid and resolved_cid in CHIP_FAMILY_DATABASE:
+                            info = CHIP_FAMILY_DATABASE[resolved_cid]
+                            self.table.target_chip = resolved_cid
+                            self.table.bootloader_offset = info.bootloader_offset
+                            target_flash = detected_flash_bytes if detected_flash_bytes > 0 else info.default_flash_size
+                            self._sync_chip_and_flash_combos(resolved_cid, flash_size=target_flash)
+                            self.refresh_partition_views()
+                        elif detected_flash_bytes > 0:
+                            self._sync_chip_and_flash_combos(chip or "auto", flash_size=detected_flash_bytes)
+                            self.refresh_partition_views()
+                        self.set_status("Lỗi đọc bảng phân vùng từ chip!", "error", progress=0)
+                        self._log_partition_hw(">>> [LỖI] Không thể đọc dữ liệu phân vùng từ ESP32.")
+
+                    safe_after(update_failed_hw)
             except Exception as ex:
                 err_msg = str(ex)
                 safe_after(lambda: self.set_status("Lỗi đọc bảng phân vùng từ chip!", "error", progress=0))
@@ -1533,289 +1683,6 @@ class PartitionTabMixin:
                 self._is_partition_hw_running = False
                 if hasattr(self, "set_global_busy_state"):
                     safe_after(lambda: self.set_global_busy_state(False))
-
-        self.partition_hw_thread = threading.Thread(target=worker, daemon=True)
-        self.partition_hw_thread.start()
-
-    def _hw_flash_partition_table(self):
-        """Nạp bảng phân vùng hiện tại xuống chip"""
-        if self._is_partition_hw_running:
-            return
-        if hasattr(self, "is_device_busy") and self.is_device_busy():
-            messagebox.showwarning("Thiết bị đang bận", "Thiết bị đang bận xử lý tác vụ khác!")
-            return
-        hw_info = self._prepare_hardware_port()
-        if not hw_info:
-            return
-        port, baud, chip = hw_info
-        part_offset = hex(getattr(self.table, "part_table_offset", 0x8000) or 0x8000)
-
-        errors = self.table.validate()
-        if errors:
-            ans = messagebox.askyesno(
-                "Cảnh báo tính hợp lệ",
-                f"Bảng phân vùng có {len(errors)} lỗi/cảnh báo. Bạn có chắc chắn muốn nạp xuống chip?",
-                parent=self.root
-            )
-            if not ans:
-                return
-
-        def safe_after(fn, delay=0):
-            try:
-                if getattr(self, "root", None) and self.root.winfo_exists():
-                    self.root.after(delay, fn)
-            except Exception:
-                pass
-
-        def worker():
-            self._is_partition_hw_running = True
-            if hasattr(self, "set_global_busy_state"):
-                safe_after(lambda: self.set_global_busy_state(True, "nạp bảng phân vùng xuống chip"))
-            with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
-                tmp_path = tmp.name
-
-            try:
-                bin_data = self.table.to_binary()
-                with open(tmp_path, "wb") as f:
-                    f.write(bin_data)
-
-                safe_after(lambda: self._log_partition_hw(f"\n=== NẠP BẢNG PHÂN VÙNG MỚI XUỐNG {part_offset} QUA {port} ==="))
-                args = ['--port', port, '--baud', str(baud)]
-                if chip and chip != "auto":
-                    args.extend(['--chip', chip])
-                args.extend(['write_flash', part_offset, tmp_path])
-
-                def on_stream(line):
-                    safe_after(lambda: self._log_partition_hw(f"  {line}"))
-                    safe_after(lambda l=line: self._update_partition_hw_progress(l))
-
-                res = run_esptool_command(args, progress_callback=on_stream)
-                if esptool_command_succeeded(res):
-                    safe_after(lambda: self.set_status("Đã nạp Bảng phân vùng xuống chip thành công!", "success", progress=100))
-                    safe_after(lambda: self._log_partition_hw(">>> NẠP BẢNG PHÂN VÙNG XUỐNG CHIP THÀNH CÔNG!"))
-                    safe_after(lambda: messagebox.showinfo("Thành công", "Đã nạp Bảng phân vùng mới xuống ESP32 thành công!", parent=self.root))
-                else:
-                    safe_after(lambda: self.set_status("Lỗi nạp bảng phân vùng xuống chip!", "error", progress=0))
-                    safe_after(lambda: self._log_partition_hw(">>> [LỖI] Không thể ghi bảng phân vùng xuống chip."))
-            except Exception as ex:
-                err_msg = str(ex)
-                safe_after(lambda: self.set_status("Lỗi nạp bảng phân vùng xuống chip!", "error", progress=0))
-                safe_after(lambda msg=err_msg: self._log_partition_hw(f">>> [NGOẠI LỆ] {msg}"))
-            finally:
-                if os.path.isfile(tmp_path):
-                    try:
-                        os.remove(tmp_path)
-                    except OSError:
-                        pass
-                self._is_partition_hw_running = False
-                if hasattr(self, "set_global_busy_state"):
-                    safe_after(lambda: self.set_global_busy_state(False))
-
-        self.partition_hw_thread = threading.Thread(target=worker, daemon=True)
-        self.partition_hw_thread.start()
-
-    def _hw_dump_selected_partition(self):
-        """Sao lưu một phân vùng cụ thể ra file .bin trên máy tính"""
-        if self._is_partition_hw_running:
-            return
-        if hasattr(self, "is_device_busy") and self.is_device_busy():
-            messagebox.showwarning("Thiết bị đang bận", "Thiết bị đang bận xử lý tác vụ khác!")
-            return
-
-        selected_iid = self.part_tree.selection()
-        if not selected_iid:
-            messagebox.showinfo("Chưa chọn", "Vui lòng chọn phân vùng cần sao lưu (Dump).", parent=self.root)
-            return
-
-        name = self._get_entry_name_from_iid(selected_iid[0])
-        entry = next((e for e in self.table.entries if e.name == name), None)
-        if not entry:
-            return
-
-        save_path = filedialog.asksaveasfilename(
-            title=f"Lưu file sao lưu phân vùng '{entry.name}'",
-            defaultextension=".bin",
-            initialfile=f"{entry.name}_{format_hex(entry.offset)}.bin",
-            filetypes=[("Binary Files (*.bin)", "*.bin"), ("All Files (*.*)", "*.*")],
-            parent=self.root
-        )
-        if not save_path:
-            return
-
-        hw_info = self._prepare_hardware_port()
-        if not hw_info:
-            return
-        port, baud, chip = hw_info
-
-        def worker():
-            self._is_partition_hw_running = True
-            if hasattr(self, 'set_global_busy_state'):
-                self.root.after(0, lambda: self.set_global_busy_state(True, f"sao lưu phân vùng '{entry.name}'"))
-            try:
-                self.root.after(0, self._log_partition_hw, f"\n=== SAO LƯU PHÂN VÙNG '{entry.name}' (0x{entry.offset:X}, {entry.size:,} B) VÀO {save_path} ===")
-                args = ['--port', port, '--baud', str(baud)]
-                if chip and chip != "auto":
-                    args.extend(['--chip', chip])
-                args.extend(['read_flash', format_hex(entry.offset), format_hex(entry.size), save_path])
-
-                def on_stream(line):
-                    self.root.after(0, self._log_partition_hw, f"  {line}")
-                    self.root.after(0, self._update_partition_hw_progress, line)
-
-                res = run_esptool_command(args, progress_callback=on_stream)
-                if esptool_command_succeeded(res):
-                    self.root.after(0, lambda: self.set_status(f"Đã sao lưu phân vùng '{entry.name}' thành công!", "success", progress=100))
-                    self.root.after(0, self._log_partition_hw, f">>> SAO LƯU THÀNH CÔNG: {save_path}")
-                    self.root.after(0, lambda: messagebox.showinfo("Thành công", f"Đã sao lưu phân vùng '{entry.name}' ra file .bin thành công:\n{save_path}", parent=self.root))
-                else:
-                    self.root.after(0, lambda: self.set_status(f"Lỗi sao lưu phân vùng '{entry.name}'!", "error", progress=0))
-                    self.root.after(0, self._log_partition_hw, f">>> [LỖI] Không thể đọc phân vùng '{entry.name}' từ chip.")
-            except Exception as ex:
-                self.root.after(0, lambda: self.set_status(f"Lỗi sao lưu phân vùng '{entry.name}'!", "error", progress=0))
-                self.root.after(0, self._log_partition_hw, f">>> [NGOẠI LỆ] {ex}")
-            finally:
-                self._is_partition_hw_running = False
-                if hasattr(self, 'set_global_busy_state'):
-                    self.root.after(0, lambda: self.set_global_busy_state(False))
-
-        self.partition_hw_thread = threading.Thread(target=worker, daemon=True)
-        self.partition_hw_thread.start()
-
-    def _hw_erase_selected_partition(self):
-        """Xóa trắng (erase-region) một phân vùng cụ thể trên chip"""
-        if self._is_partition_hw_running:
-            return
-        if hasattr(self, "is_device_busy") and self.is_device_busy():
-            messagebox.showwarning("Thiết bị đang bận", "Thiết bị đang bận xử lý tác vụ khác!")
-            return
-
-        selected_iid = self.part_tree.selection()
-        if not selected_iid:
-            messagebox.showinfo("Chưa chọn", "Vui lòng chọn phân vùng cần xóa trắng (Erase).", parent=self.root)
-            return
-
-        name = self._get_entry_name_from_iid(selected_iid[0])
-        entry = next((e for e in self.table.entries if e.name == name), None)
-        if not entry:
-            return
-
-        ans = messagebox.askyesno(
-            "Xác nhận xóa trắng",
-            f"Bạn có chắc chắn muốn XÓA TRẮNG (Erase Region) phân vùng '{entry.name}' tại {format_hex(entry.offset)} ({format_bytes_human(entry.size)}) trên chip không?\nThao tác này sẽ xóa sạch dữ liệu trong phân vùng đó!",
-            parent=self.root
-        )
-        if not ans:
-            return
-
-        hw_info = self._prepare_hardware_port()
-        if not hw_info:
-            return
-        port, baud, chip = hw_info
-
-        def worker():
-            self._is_partition_hw_running = True
-            if hasattr(self, 'set_global_busy_state'):
-                self.root.after(0, lambda: self.set_global_busy_state(True, f"xóa vùng phân vùng '{entry.name}'"))
-            try:
-                self.root.after(0, self._log_partition_hw, f"\n=== XÓA TRẮNG VÙNG NHỚ PHÂN VÙNG '{entry.name}' (0x{entry.offset:X}, {entry.size:,} B) ===")
-                args = ['--port', port, '--baud', str(baud)]
-                if chip and chip != "auto":
-                    args.extend(['--chip', chip])
-                args.extend(['erase-region', format_hex(entry.offset), format_hex(entry.size)])
-
-                def on_stream(line):
-                    self.root.after(0, self._log_partition_hw, f"  {line}")
-                    self.root.after(0, self._update_partition_hw_progress, line)
-
-                res = run_esptool_command(args, progress_callback=on_stream)
-                if esptool_command_succeeded(res):
-                    self.root.after(0, lambda: self.set_status(f"Đã xóa trắng phân vùng '{entry.name}' thành công!", "success", progress=100))
-                    self.root.after(0, self._log_partition_hw, f">>> ĐÃ XÓA TRẮNG THÀNH CÔNG PHÂN VÙNG '{entry.name}'!")
-                    self.root.after(0, lambda: messagebox.showinfo("Thành công", f"Đã xóa trắng vùng nhớ phân vùng '{entry.name}' thành công!", parent=self.root))
-                else:
-                    self.root.after(0, lambda: self.set_status(f"Lỗi xóa phân vùng '{entry.name}'!", "error", progress=0))
-                    self.root.after(0, self._log_partition_hw, f">>> [LỖI] Không thể xóa phân vùng '{entry.name}'.")
-            except Exception as ex:
-                self.root.after(0, lambda: self.set_status(f"Lỗi xóa phân vùng '{entry.name}'!", "error", progress=0))
-                self.root.after(0, self._log_partition_hw, f">>> [NGOẠI LỆ] {ex}")
-            finally:
-                self._is_partition_hw_running = False
-                if hasattr(self, 'set_global_busy_state'):
-                    self.root.after(0, lambda: self.set_global_busy_state(False))
-
-        self.partition_hw_thread = threading.Thread(target=worker, daemon=True)
-        self.partition_hw_thread.start()
-
-    def _hw_write_selected_partition(self):
-        """Nạp file .bin vào phân vùng đang chọn"""
-        if self._is_partition_hw_running:
-            return
-        if hasattr(self, "is_device_busy") and self.is_device_busy():
-            messagebox.showwarning("Thiết bị đang bận", "Thiết bị đang bận xử lý tác vụ khác!")
-            return
-
-        selected_iid = self.part_tree.selection()
-        if not selected_iid:
-            messagebox.showinfo("Chưa chọn", "Vui lòng chọn phân vùng cần nạp file .bin.", parent=self.root)
-            return
-
-        name = self._get_entry_name_from_iid(selected_iid[0])
-        entry = next((e for e in self.table.entries if e.name == name), None)
-        if not entry:
-            return
-
-        bin_path = filedialog.askopenfilename(
-            title=f"Chọn file .bin nạp vào phân vùng '{entry.name}'",
-            filetypes=[("Binary Files (*.bin)", "*.bin"), ("All Files (*.*)", "*.*")],
-            parent=self.root
-        )
-        if not bin_path:
-            return
-
-        file_sz = os.path.getsize(bin_path)
-        if file_sz > entry.size:
-            messagebox.showerror(
-                "File quá lớn",
-                f"File {os.path.basename(bin_path)} có dung lượng {file_sz:,} Bytes, vượt quá kích thước cho phép của phân vùng '{entry.name}' ({entry.size:,} Bytes)!",
-                parent=self.root
-            )
-            return
-
-        hw_info = self._prepare_hardware_port()
-        if not hw_info:
-            return
-        port, baud, chip = hw_info
-
-        def worker():
-            self._is_partition_hw_running = True
-            if hasattr(self, 'set_global_busy_state'):
-                self.root.after(0, lambda: self.set_global_busy_state(True, f"nạp file vào phân vùng '{entry.name}'"))
-            try:
-                self.root.after(0, self._log_partition_hw, f"\n=== NẠP FILE {os.path.basename(bin_path)} VÀO PHÂN VÙNG '{entry.name}' TẠI 0x{entry.offset:X} ===")
-                args = ['--port', port, '--baud', str(baud)]
-                if chip and chip != "auto":
-                    args.extend(['--chip', chip])
-                args.extend(['write_flash', format_hex(entry.offset), bin_path])
-
-                def on_stream(line):
-                    self.root.after(0, self._log_partition_hw, f"  {line}")
-                    self.root.after(0, self._update_partition_hw_progress, line)
-
-                res = run_esptool_command(args, progress_callback=on_stream)
-                if esptool_command_succeeded(res):
-                    self.root.after(0, lambda: self.set_status(f"Nạp file vào phân vùng '{entry.name}' thành công!", "success", progress=100))
-                    self.root.after(0, self._log_partition_hw, f">>> NẠP FILE THÀNH CÔNG VÀO PHÂN VÙNG '{entry.name}'!")
-                    self.root.after(0, lambda: messagebox.showinfo("Thành công", f"Đã nạp file {os.path.basename(bin_path)} vào phân vùng '{entry.name}' thành công!", parent=self.root))
-                else:
-                    self.root.after(0, lambda: self.set_status(f"Lỗi nạp file vào phân vùng '{entry.name}'!", "error", progress=0))
-                    self.root.after(0, self._log_partition_hw, f">>> [LỖI] Không thể nạp file vào phân vùng '{entry.name}'.")
-            except Exception as ex:
-                self.root.after(0, lambda: self.set_status(f"Lỗi nạp file vào phân vùng '{entry.name}'!", "error", progress=0))
-                self.root.after(0, self._log_partition_hw, f">>> [NGOẠI LỆ] {ex}")
-            finally:
-                self._is_partition_hw_running = False
-                if hasattr(self, 'set_global_busy_state'):
-                    self.root.after(0, lambda: self.set_global_busy_state(False))
 
         self.partition_hw_thread = threading.Thread(target=worker, daemon=True)
         self.partition_hw_thread.start()

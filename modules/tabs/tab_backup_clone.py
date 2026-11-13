@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-Esp32 manager tool v1.4 - Tab 5: Backup & Direct Multi-Board Clone Mixin
-Sao lưu phân vùng / toàn bộ Flash từ chip kèm hồ sơ băm (MD5, SHA-256, MAC gốc, tên chip, thời gian, địa chỉ, dung lượng)
-và Sao chép trực tiếp (Direct Clone) từ 1 Board gốc sang 1 hoặc nhiều Board đích cùng lúc.
+Esp32 manager tool v1.5 - Tab 5: Backup & Direct Multi-Board Clone Mixin
+Sao lưu phân vùng / toàn bộ Flash từ chip kèm hồ sơ băm (MD5, SHA-256, MAC gốc, tên chip, thời gian, địa chỉ, dung lượng),
+thao tác Đọc / Xem / Chỉnh sửa / Xóa dữ liệu phân vùng Non-Firmware (NVS, SPIFFS, LittleFS, FATFS...),
+Menu chuột phải đồng bộ giữa bảng và sơ đồ DiskMap, và Sao chép trực tiếp sang nhiều Board đích.
 """
 from __future__ import annotations
 
@@ -19,7 +20,9 @@ from modules.ui import dialogs_service as messagebox
 from modules.ui import dialogs_service as filedialog
 from modules.backup_utils import (
     compute_bytes_hashes, smart_trim_trailing_ff,
-    infer_bootloader_offset_for_chip, build_backup_metadata_report
+    infer_bootloader_offset_for_chip, build_backup_metadata_report,
+    format_full_flash_filename, format_partition_backup_filename,
+    is_non_firmware_data_region,
 )
 
 from modules.config import (
@@ -34,7 +37,7 @@ from modules.esptool_util import (
 )
 from modules.serial_util import list_com_ports_local
 from modules.partition.unit_formatter import (
-    DisplayMode, format_bytes_human, format_hex, align_up
+    DisplayMode, format_bytes_human, format_hex, format_value, align_up
 )
 from modules.partition.chip_database import (
     CHIP_FAMILY_DATABASE, get_chip_info
@@ -92,6 +95,7 @@ class BackupCloneTabMixin:
         self.backup_selected_keys: set[str] = set()
         self.backup_region_hashes: dict[str, str] = {}
         self.clone_target_vars: dict[str, tk.BooleanVar] = {}
+        self._backup_active_key: str | None = None
 
         # Khởi tạo bảng phân vùng trống hoàn toàn cho tới khi đọc cấu trúc từ chip nguồn
         self.backup_table = PartitionTable(flash_size=4 * 1024 * 1024, target_chip="esp32")
@@ -99,13 +103,21 @@ class BackupCloneTabMixin:
         if hasattr(self, 'backup_tree') and self.backup_tree is not None:
             if hasattr(self, 'backup_disk_map') and self.backup_disk_map is not None:
                 self.backup_disk_map.on_select_entry = self._on_backup_map_click_entry
+                self.backup_disk_map.on_double_click_entry = self._on_backup_map_double_click_entry
+                self.backup_disk_map.on_context_action = self._on_backup_map_context_action
                 self.backup_disk_map.set_theme_mode(getattr(self, "is_dark_mode", False))
             self.backup_tree.bind("<Button-1>", self._on_backup_tree_click)
+            self.backup_tree.bind("<Double-1>", self._on_backup_tree_double_click)
+            self.backup_tree.bind("<space>", self._on_backup_tree_space)
+            if hasattr(self.backup_tree, "itemSelectionChanged"):
+                self.backup_tree.itemSelectionChanged.connect(self._on_backup_tree_selection_changed)
+            if hasattr(self.backup_tree, "customContextMenuRequested"):
+                self.backup_tree.customContextMenuRequested.connect(self._on_backup_tree_context_menu)
             self.refresh_backup_views()
             return
 
     def log_backup(self, text: str, tag: str | None = None):
-        """Ghi nhật ký vào khung log của Tab 5."""
+        """Ghi nhật ký vào khung log của Tab 5 và phản chiếu sang sub-tab Log."""
         try:
             if hasattr(self, "backup_log_txt") and self.backup_log_txt.winfo_exists():
                 self.backup_log_txt.config(state="normal")
@@ -114,6 +126,8 @@ class BackupCloneTabMixin:
                 self.backup_log_txt.config(state="disabled")
         except Exception:
             pass
+        if hasattr(self, "append_tab_log"):
+            self.append_tab_log("Sao lưu & Chép", text, level=tag)
 
     def _get_all_backup_regions(self) -> list[dict]:
         """
@@ -427,7 +441,9 @@ class BackupCloneTabMixin:
             lbl.setWordWrap(True)
             lbl.setProperty("role", "subtitle")
             lbl.setStyleSheet("font-style: italic;")
-            if hasattr(self.clone_target_ports_frame, "_grid"):
+            if hasattr(self.clone_target_ports_frame, "set_hint_widget"):
+                self.clone_target_ports_frame.set_hint_widget(lbl)
+            elif hasattr(self.clone_target_ports_frame, "_grid"):
                 self.clone_target_ports_frame._grid.addWidget(lbl, 0, 0)
             return
 
@@ -435,10 +451,12 @@ class BackupCloneTabMixin:
         for idx, p_name in enumerate(target_candidates):
             var = _BooleanVar(value=prev_states.get(p_name, True))
             self.clone_target_vars[p_name] = var
-            cb = QCheckBox(f"Board Đích: {p_name}", self.clone_target_ports_frame)
+            cb = QCheckBox(p_name, self.clone_target_ports_frame)
             cb.setChecked(var.get())
             cb.stateChanged.connect(lambda state, v=var: v.set(state == 2))
-            if hasattr(self.clone_target_ports_frame, "_grid"):
+            if hasattr(self.clone_target_ports_frame, "add_target_widget"):
+                self.clone_target_ports_frame.add_target_widget(cb)
+            elif hasattr(self.clone_target_ports_frame, "_grid"):
                 self.clone_target_ports_frame._grid.addWidget(cb, idx // 3, idx % 3)
 
     def _select_all_clone_targets(self, select: bool = True):
@@ -456,6 +474,7 @@ class BackupCloneTabMixin:
 
         self._refresh_backup_ports()
 
+        mode = getattr(self, "display_mode", DisplayMode.DECIMAL)
         regions = self._get_all_backup_regions()
         for r in regions:
             r["selected"] = r["key"] in self.backup_selected_keys
@@ -466,7 +485,7 @@ class BackupCloneTabMixin:
             self.backup_disk_map.set_data(
                 layout_entries=[],
                 flash_size=self.backup_table.flash_size,
-                display_mode=DisplayMode.DECIMAL,
+                display_mode=mode,
                 selected_entry=None
             )
             was_blocked = self.backup_tree.blockSignals(True)
@@ -478,11 +497,13 @@ class BackupCloneTabMixin:
             finally:
                 self.backup_tree.blockSignals(was_blocked)
             self.lbl_backup_chip_summary.config(
-                text="Chưa đọc dữ liệu phân vùng từ chip nguồn (Chọn cổng Board Gốc và bấm 'Đọc Cấu Trúc Từ Chip Nguồn')."
+                text="Chưa đọc dữ liệu phân vùng từ chip nguồn (Chọn cổng Board Gốc và bấm 'Đọc chip nguồn')."
             )
+            self._backup_active_key = None
+            self._sync_backup_selection_buttons()
             return
 
-        # Cập nhật thanh sơ đồ phân vùng (sử dụng checked_names, không đóng khung dính chọn cứng)
+        # Cập nhật thanh sơ đồ phân vùng (làm mờ khối bỏ chọn, vẫn giữ highlight cho khối đang trỏ)
         layout_entries = self.backup_table.get_layout_with_unallocated()
         checked_names: set[str] = set()
         for r in regions:
@@ -493,12 +514,15 @@ class BackupCloneTabMixin:
                 elif r["name"] == "partition_table":
                     checked_names.add("Partition Table")
 
+        active_reg = self._find_region_by_key(getattr(self, "_backup_active_key", None))
+        active_entry = self._resolve_region_to_layout_entry(active_reg, layout_entries)
+
         self.backup_disk_map.set_checked_names(checked_names)
         self.backup_disk_map.set_data(
             layout_entries=layout_entries,
             flash_size=self.backup_table.flash_size,
-            display_mode=DisplayMode.DECIMAL,
-            selected_entry=None
+            display_mode=mode,
+            selected_entry=active_entry
         )
 
         # Cập nhật bảng Treeview
@@ -528,31 +552,47 @@ class BackupCloneTabMixin:
                         reg["name"],
                         reg["type"],
                         reg["subtype"],
-                        format_hex(reg["offset"]),
-                        format_bytes_human(reg["size"]),
+                        format_value(reg["offset"], mode, is_size=False),
+                        format_value(reg["size"], mode, is_size=True),
                         hash_info,
                     )
                 )
-            self.backup_tree.clearSelection()
-            self.backup_tree.setCurrentItem(None)
+            if self._backup_active_key and self.backup_tree.exists(self._backup_active_key):
+                self.backup_tree.selection_set(self._backup_active_key)
+            else:
+                self._backup_active_key = None
+                self.backup_tree.clearSelection()
+                self.backup_tree.setCurrentItem(None)
         finally:
             self.backup_tree.blockSignals(was_blocked)
 
         chip_lbl = self.backup_source_info.get("chip_line", "Chưa đọc từ chip")
         mac_lbl = self.backup_source_info.get("mac", "N/A")
-        flash_lbl = format_bytes_human(self.backup_table.flash_size)
+        flash_lbl = format_value(self.backup_table.flash_size, mode, is_size=True)
+        selected_sz_lbl = format_value(selected_bytes, mode, is_size=True)
         self.lbl_backup_chip_summary.config(
             text=(
                 f"Chip gốc: {chip_lbl}  |  MAC gốc: {mac_lbl}  |  Flash: {flash_lbl}  |  "
-                f"Đang chọn: {selected_count}/{len(regions)} phân vùng ({format_bytes_human(selected_bytes)})"
+                f"Đang chọn: {selected_count}/{len(regions)} phân vùng ({selected_sz_lbl})"
             )
         )
+        self._sync_backup_selection_buttons()
 
-    def _on_backup_map_click_entry(self, entry: PartitionEntry):
-        """Khi click vào một khối phân vùng trên thanh sơ đồ DiskMapCanvas -> Đảo chọn phân vùng đó."""
-        if entry.is_unallocated:
-            return
-        if entry.is_system:
+    def _find_region_by_key(self, key: str | None) -> dict | None:
+        if not key:
+            return None
+        for reg in getattr(self, "backup_regions", []) or []:
+            if reg.get("key") == key:
+                return reg
+        for reg in self._get_all_backup_regions():
+            if reg.get("key") == key:
+                return reg
+        return None
+
+    def _resolve_entry_to_backup_region(self, entry: PartitionEntry) -> dict | None:
+        if entry is None or getattr(entry, "is_unallocated", False):
+            return None
+        if getattr(entry, "is_system", False):
             boot_off = int(self.backup_source_info.get("bootloader_offset", 0x1000))
             part_off = int(self.backup_source_info.get("part_table_offset", 0x8000))
             if entry.type_str == "bootloader" or entry.name.lower() == "bootloader":
@@ -561,30 +601,147 @@ class BackupCloneTabMixin:
                 key = f"sys_parttable_{part_off:X}"
         else:
             key = f"part_{entry.name}_{entry.offset:X}"
+        return self._find_region_by_key(key)
 
-        if key in self.backup_selected_keys:
-            self.backup_selected_keys.remove(key)
+    def _get_active_backup_region(self) -> dict | None:
+        if hasattr(self, "backup_tree") and self.backup_tree is not None:
+            sel = self.backup_tree.selection()
+            if sel:
+                reg = self._find_region_by_key(sel[0])
+                if reg is not None:
+                    return reg
+        return self._find_region_by_key(getattr(self, "_backup_active_key", None))
+
+    def _sync_backup_selection_buttons(self):
+        reg = self._get_active_backup_region()
+        allowed, _ = is_non_firmware_data_region(reg)
+        busy = bool(getattr(self, "_is_backup_hw_running", False))
+        enable = bool(allowed and not busy)
+        for attr in ("btn_backup_edit_data", "btn_backup_erase_data"):
+            w = getattr(self, attr, None)
+            if w is None:
+                continue
+            try:
+                if hasattr(w, "setEnabled"):
+                    w.setEnabled(enable)
+                elif hasattr(w, "config"):
+                    w.config(state="normal" if enable else "disabled")
+            except Exception:
+                pass
+
+    def _resolve_region_to_layout_entry(self, region: dict | None, layout_entries: list | None = None):
+        if region is None:
+            return None
+        entries = layout_entries if layout_entries is not None else getattr(self.backup_disk_map, "layout_entries", [])
+        r_name = str(region.get("name", "") or "").lower()
+        r_off = int(region.get("offset", -1) or -1)
+        for ent in entries or []:
+            if getattr(ent, "is_unallocated", False):
+                continue
+            ent_name = str(getattr(ent, "name", "") or "").lower()
+            if int(getattr(ent, "offset", -2)) == r_off:
+                return ent
+            if r_name == "bootloader" and ent_name == "bootloader":
+                return ent
+            if r_name == "partition_table" and ent_name in ("partition table", "partition_table"):
+                return ent
+        return None
+
+    def _sync_backup_disk_map_selection(self):
+        if not hasattr(self, "backup_disk_map") or self.backup_disk_map is None:
+            return
+        reg = self._get_active_backup_region()
+        self.backup_disk_map.selected_entry = self._resolve_region_to_layout_entry(reg)
+        self.backup_disk_map.redraw()
+
+    def _on_backup_tree_selection_changed(self):
+        if hasattr(self, "backup_tree") and self.backup_tree is not None:
+            sel = self.backup_tree.selection()
+            self._backup_active_key = sel[0] if sel else None
+        self._sync_backup_disk_map_selection()
+        self._sync_backup_selection_buttons()
+
+    def _on_backup_map_click_entry(self, entry: PartitionEntry):
+        """Khi click vào một khối phân vùng trên sơ đồ DiskMap -> Chỉ định/highlight dòng đó (không tự tích chọn)."""
+        reg = self._resolve_entry_to_backup_region(entry)
+        if not reg:
+            return
+        key = reg["key"]
+        self._backup_active_key = key
+        if hasattr(self, "backup_tree") and self.backup_tree is not None and self.backup_tree.exists(key):
+            was_blocked = self.backup_tree.blockSignals(True)
+            try:
+                self.backup_tree.selection_set(key)
+            finally:
+                self.backup_tree.blockSignals(was_blocked)
+        self._sync_backup_disk_map_selection()
+        self._sync_backup_selection_buttons()
+
+    def _on_backup_map_double_click_entry(self, entry: PartitionEntry):
+        """Khi bấm đúp vào khối phân vùng trên sơ đồ DiskMap -> Mở Đọc/Xem & Sửa dữ liệu phân vùng."""
+        if entry is None or entry.is_unallocated:
+            return
+        reg = self._resolve_entry_to_backup_region(entry)
+        if not reg:
+            return
+        self._on_backup_map_click_entry(entry)
+        self._hw_open_backup_partition_data_dialog(reg)
+
+    def _extract_backup_tree_event(self, event) -> tuple[str, int]:
+        raw_iid = getattr(event, "iid", None)
+        iid = raw_iid if (isinstance(raw_iid, str) and raw_iid) else self.backup_tree.identify_row(getattr(event, "y", 0))
+        raw_col = getattr(event, "col", None)
+        if isinstance(raw_col, int) and not isinstance(raw_col, bool):
+            col_idx = raw_col
         else:
-            self.backup_selected_keys.add(key)
-        self.refresh_backup_views()
+            col_tag = self.backup_tree.identify_column(getattr(event, "x", 0))
+            try:
+                col_idx = int(str(col_tag).lstrip("#")) - 1
+            except (ValueError, TypeError):
+                col_idx = -1
+        return iid, col_idx
 
     def _on_backup_tree_click(self, event):
-        iid = self.backup_tree.identify_row(event.y)
+        iid, col_idx = self._extract_backup_tree_event(event)
         if not iid:
             return
-        if iid in self.backup_selected_keys:
-            self.backup_selected_keys.remove(iid)
+
+        self._backup_active_key = iid
+        if int(col_idx) == 0:
+            if iid in self.backup_selected_keys:
+                self.backup_selected_keys.remove(iid)
+            else:
+                self.backup_selected_keys.add(iid)
+            self.refresh_backup_views()
+            if self.backup_tree.exists(iid):
+                self.backup_tree.selection_set(iid)
+            self._sync_backup_selection_buttons()
         else:
-            self.backup_selected_keys.add(iid)
-        self.refresh_backup_views()
+            if self.backup_tree.exists(iid):
+                self.backup_tree.selection_set(iid)
+            self._sync_backup_disk_map_selection()
+            self._sync_backup_selection_buttons()
+
+    def _on_backup_tree_double_click(self, event):
+        """Khi bấm đúp vào hàng phân vùng (trừ cột 0 Chọn) -> Mở Đọc/Xem & Sửa dữ liệu phân vùng."""
+        iid, col_idx = self._extract_backup_tree_event(event)
+        if not iid or int(col_idx) == 0:
+            return
+        self._backup_active_key = iid
         if self.backup_tree.exists(iid):
             self.backup_tree.selection_set(iid)
+        self._sync_backup_disk_map_selection()
+        self._sync_backup_selection_buttons()
+        reg = self._find_region_by_key(iid)
+        if reg:
+            self._hw_open_backup_partition_data_dialog(reg)
 
     def _on_backup_tree_space(self, event):
         sel = self.backup_tree.selection()
         if not sel:
             return
         iid = sel[0]
+        self._backup_active_key = iid
         if iid in self.backup_selected_keys:
             self.backup_selected_keys.remove(iid)
         else:
@@ -592,6 +749,7 @@ class BackupCloneTabMixin:
         self.refresh_backup_views()
         if self.backup_tree.exists(iid):
             self.backup_tree.selection_set(iid)
+        self._sync_backup_selection_buttons()
 
     def _backup_select_all(self, select: bool = True):
         self.backup_selected_keys.clear()
@@ -622,7 +780,7 @@ class BackupCloneTabMixin:
             "btn_backup_read_chip", "btn_backup_sel_all", "btn_backup_unsel_all",
             "btn_backup_sel_fw", "chk_backup_trim", "btn_backup_to_folder",
             "btn_backup_full_chip", "btn_backup_to_flasher", "btn_direct_clone",
-            "chk_clone_erase"
+            "chk_clone_erase", "btn_backup_edit_data", "btn_backup_erase_data"
         ):
             w = getattr(self, attr, None)
             if w and hasattr(w, "config"):
@@ -630,6 +788,8 @@ class BackupCloneTabMixin:
                     w.config(state=state)
                 except Exception:
                     pass
+        if state == "normal":
+            self._sync_backup_selection_buttons()
 
     def _prepare_backup_source_port(self) -> tuple[str, int] | None:
         if hasattr(self, "_stop_board_led_blink"):
@@ -821,7 +981,8 @@ class BackupCloneTabMixin:
 
     def _dump_selected_regions_to_dir_sync(
         self, port: str, baud: int, out_dir: str, regions: list[dict], smart_trim: bool, safe_after,
-        progress_start: float = 15.0, progress_end: float = 95.0, stage_label: str = "Sao lưu"
+        progress_start: float = 15.0, progress_end: float = 95.0, stage_label: str = "Sao lưu",
+        ts_tag: str | None = None,
     ) -> dict | None:
         """
         Thực thi đọc tuần tự các phân vùng đã chọn từ cổng `port` ra thư mục `out_dir`,
@@ -831,12 +992,17 @@ class BackupCloneTabMixin:
         total_bytes = max(1, sum(r["size"] for r in regions))
         completed_bytes = 0
         saved_regions_meta = []
+        batch_ts = ts_tag or datetime.now().strftime("%Y%m%d_%H%M%S")
+        chip_for_name = self.backup_source_info.get("chip_name") or "ESP32"
+        mac_for_name = self.backup_source_info.get("mac") or ""
 
         for idx, reg in enumerate(regions, 1):
             r_name = reg["name"]
             r_off = reg["offset"]
             r_size = reg["size"]
-            safe_filename = f"{idx:02d}_{r_name}_{format_hex(r_off)}.bin"
+            safe_filename = format_partition_backup_filename(
+                chip_for_name, mac_for_name, r_name, r_off, ts_tag=batch_ts
+            )
             dest_path = os.path.join(out_dir, safe_filename)
 
             reg_start_prog = progress_start + ((completed_bytes / total_bytes) * (progress_end - progress_start))
@@ -1008,7 +1174,7 @@ class BackupCloneTabMixin:
 
                 manifest = self._dump_selected_regions_to_dir_sync(
                     port, baud, out_dir, selected_regions, smart_trim, safe_after,
-                    progress_start=20.0, progress_end=98.0, stage_label="Sao lưu"
+                    progress_start=20.0, progress_end=98.0, stage_label="Sao lưu", ts_tag=ts_tag
                 )
                 if manifest:
                     self.backup_last_saved_dir = out_dir
@@ -1069,12 +1235,89 @@ class BackupCloneTabMixin:
             return
         port, baud = prep
 
-        chip_tag = (self.backup_source_info.get("chip_name") or "ESP32").replace(" ", "_")
+        needs_probe = (
+            self.backup_source_info.get("source_port") != port
+            or self.backup_source_info.get("chip_name") in (None, "", "Chưa xác định", "N/A")
+            or self.backup_source_info.get("mac") in (None, "", "Chưa xác định", "N/A")
+        )
+        if not needs_probe:
+            self._prompt_and_start_full_flash_dump(port, baud)
+            return
+
+        def safe_after(fn, delay=0):
+            try:
+                if getattr(self, "root", None) and self.root.winfo_exists():
+                    self.root.after(delay, fn)
+            except Exception:
+                pass
+
+        def probe_worker():
+            self._is_backup_hw_running = True
+            if hasattr(self, "set_global_busy_state"):
+                safe_after(lambda: self.set_global_busy_state(True, "nhận diện Chip & MAC trước khi lưu Full Flash"))
+            else:
+                safe_after(lambda: self._set_backup_ui_state("disabled"))
+            ok = False
+            try:
+                safe_after(lambda pt=port: self.set_status(f"Đang đọc tên chip & MAC gốc trên {pt}...", "info", progress=12))
+                fid_out = run_esptool_command(["--port", port, "--baud", str(baud), "flash-id"])
+                if esptool_command_succeeded(fid_out):
+                    parsed = parse_esptool_output({"flash_id": fid_out})
+                    chip_key = parsed.get("chip_name_key") or "ESP32"
+                    chip_line = parsed.get("chip_line") or chip_key
+                    rev = parsed.get("revision") or "N/A"
+                    crystal = parsed.get("crystal") or "N/A"
+                    mac_hex = parsed.get("mac")
+                    mac_fmt = ":".join(mac_hex[i:i+2] for i in range(0, 12, 2)).upper() if mac_hex and len(mac_hex) == 12 else "N/A"
+                    flash_mb = parsed.get("flash_mb") or 4.0
+                    flash_bytes = int(flash_mb * 1024 * 1024)
+                    boot_off = infer_bootloader_offset_for_chip(chip_key)
+                    self.backup_source_info.update({
+                        "source_port": port,
+                        "chip_name": chip_key,
+                        "chip_line": chip_line,
+                        "revision": rev,
+                        "crystal": crystal,
+                        "mac": mac_fmt,
+                        "flash_size": flash_bytes,
+                        "bootloader_offset": boot_off,
+                        "part_table_offset": 0x8000,
+                    })
+                    self.backup_table.flash_size = flash_bytes
+                    ok = True
+            except Exception:
+                ok = False
+            finally:
+                self._is_backup_hw_running = False
+                if hasattr(self, "set_global_busy_state"):
+                    safe_after(lambda: self.set_global_busy_state(False))
+                else:
+                    safe_after(lambda: self._set_backup_ui_state("normal"))
+
+            if ok:
+                safe_after(lambda: self._prompt_and_start_full_flash_dump(port, baud))
+            else:
+                safe_after(lambda: self.set_status("Không thể nhận diện Chip/MAC trên cổng nguồn!", "error", progress=0))
+                safe_after(lambda pt=port: messagebox.showerror(
+                    "Lỗi nhận diện Board Gốc",
+                    f"Không thể kết nối với ESP32 trên cổng {pt} để lấy Tên chip và MAC trước khi lưu Full Flash.",
+                    parent=self.root,
+                ))
+
+        self.backup_hw_thread = threading.Thread(target=probe_worker, daemon=True)
+        self.backup_hw_thread.start()
+
+    def _prompt_and_start_full_flash_dump(self, port: str, baud: int):
         ts_tag = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_name = format_full_flash_filename(
+            self.backup_source_info.get("chip_name") or "ESP32",
+            self.backup_source_info.get("mac") or "",
+            ts_tag=ts_tag,
+        )
         save_path = filedialog.asksaveasfilename(
             title="Lưu bản sao lưu Toàn Bộ Flash (0x0 -> Hết Flash)",
             defaultextension=".bin",
-            initialfile=f"FullFlash_{chip_tag}_{ts_tag}.bin",
+            initialfile=default_name,
             filetypes=[("Binary Flash Dump (*.bin)", "*.bin"), ("All Files (*.*)", "*.*")],
             parent=self.root
         )
@@ -1104,7 +1347,7 @@ class BackupCloneTabMixin:
                 ):
                     self._probe_chip_and_partition_sync(port, baud, safe_after)
 
-                flash_sz = int(self.backup_table.flash_size)
+                flash_sz = int(self.backup_source_info.get("flash_size") or self.backup_table.flash_size)
                 safe_after(lambda: self.log_backup(
                     f"\n=== BẮT ĐẦU SAO LƯU TOÀN BỘ FLASH (0x0 -> {format_hex(flash_sz)}, {format_bytes_human(flash_sz)}) ===",
                     "header"
@@ -1577,3 +1820,594 @@ class BackupCloneTabMixin:
 
         self.backup_hw_thread = threading.Thread(target=worker, daemon=True)
         self.backup_hw_thread.start()
+
+    # =========================================================================
+    # MENU CHUỘT PHẢI & ĐỌC / SỬA / XUẤT / NẠP / XÓA DỮ LIỆU PHÂN VÙNG (v1.5)
+    # =========================================================================
+    def _backup_safe_ui(self, fn, delay: int = 0):
+        try:
+            if delay == 0 and hasattr(self, "ui_call") and callable(self.ui_call):
+                self.ui_call(fn)
+            elif getattr(self, "root", None) and self.root.winfo_exists():
+                self.root.after(delay, fn)
+            else:
+                fn()
+        except Exception:
+            pass
+
+    def _toggle_backup_region_selection(self, key: str):
+        if not key:
+            return
+        self._backup_active_key = key
+        if key in self.backup_selected_keys:
+            self.backup_selected_keys.remove(key)
+        else:
+            self.backup_selected_keys.add(key)
+        self.refresh_backup_views()
+
+    def _on_backup_tree_context_menu(self, pos):
+        if not hasattr(self, "backup_tree") or self.backup_tree is None:
+            return
+        iid = self.backup_tree.identify_row(pos.y())
+        if not iid:
+            return
+        self._backup_active_key = iid
+        if self.backup_tree.exists(iid):
+            self.backup_tree.selection_set(iid)
+        self._sync_backup_selection_buttons()
+        reg = self._find_region_by_key(iid)
+        if not reg:
+            return
+        global_pos = self.backup_tree.viewport().mapToGlobal(pos)
+        self._show_backup_context_menu(reg, global_pos)
+
+    def _on_backup_map_context_action(self, action_type: str, entry: PartitionEntry, compat_evt=None):
+        reg = self._resolve_entry_to_backup_region(entry)
+        if not reg:
+            return
+        key = reg["key"]
+        self._backup_active_key = key
+        if hasattr(self, "backup_tree") and self.backup_tree is not None and self.backup_tree.exists(key):
+            self.backup_tree.selection_set(key)
+        self._sync_backup_selection_buttons()
+
+        from PyQt6.QtCore import QPoint
+        from PyQt6.QtGui import QCursor
+        if compat_evt is not None and hasattr(compat_evt, "x_root") and hasattr(compat_evt, "y_root"):
+            global_pos = QPoint(int(compat_evt.x_root), int(compat_evt.y_root))
+        else:
+            global_pos = QCursor.pos()
+        self._show_backup_context_menu(reg, global_pos)
+
+    def _build_backup_context_menu(self, region: dict, parent=None):
+        from PyQt6.QtWidgets import QMenu
+        from PyQt6.QtGui import QAction
+        from modules.ui.text import qt_text
+        from modules.ui.icons import get_icon
+        from modules.ui.theme.manager import ThemeManager
+
+        menu = QMenu(parent or getattr(self, "root", None))
+        menu.setToolTipsVisible(True)
+        tokens = ThemeManager.instance().tokens
+
+        r_key = str(region.get("key", ""))
+        r_name = str(region.get("name", ""))
+        r_off = int(region.get("offset", 0) or 0)
+        r_sz = int(region.get("size", 0) or 0)
+
+        header_act = QAction(
+            qt_text(f"{r_name}  ·  {format_hex(r_off)}  ({format_bytes_human(r_sz)})"),
+            menu,
+        )
+        header_act.setEnabled(False)
+        menu.addAction(header_act)
+
+        is_checked = r_key in self.backup_selected_keys
+        toggle_lbl = "Bỏ tích sao lưu" if is_checked else "Tích chọn sao lưu"
+        act_toggle = QAction(toggle_lbl, menu)
+        act_toggle.triggered.connect(lambda _c=False, k=r_key: self._toggle_backup_region_selection(k))
+        menu.addAction(act_toggle)
+
+        menu.addSeparator()
+
+        is_data_allowed, _ = is_non_firmware_data_region(region)
+        busy = bool(getattr(self, "_is_backup_hw_running", False))
+        can_hw_data = bool(is_data_allowed and not busy)
+
+        if is_data_allowed:
+            act_view_edit = QAction(
+                get_icon("edit", color=tokens.text, size=15),
+                qt_text("Đọc / Sửa dữ liệu..."),
+                menu,
+            )
+            act_view_edit.setEnabled(can_hw_data)
+            act_view_edit.triggered.connect(lambda _c=False, rg=region: self._hw_open_backup_partition_data_dialog(rg))
+            menu.addAction(act_view_edit)
+
+            act_export = QAction(
+                get_icon("save", color=tokens.text, size=15),
+                qt_text("Xuất dữ liệu (.bin)..."),
+                menu,
+            )
+            act_export.setEnabled(can_hw_data)
+            act_export.triggered.connect(lambda _c=False, rg=region: self._hw_quick_export_partition_bin(rg))
+            menu.addAction(act_export)
+
+            act_import = QAction(
+                get_icon("open", color=tokens.text, size=15),
+                qt_text("Nạp .bin ghi đè..."),
+                menu,
+            )
+            act_import.setEnabled(can_hw_data)
+            act_import.triggered.connect(lambda _c=False, rg=region: self._hw_quick_import_overwrite_partition_bin(rg))
+            menu.addAction(act_import)
+
+            act_erase = QAction(
+                get_icon("delete", color=tokens.danger, size=15),
+                qt_text("Xóa dữ liệu vùng"),
+                menu,
+            )
+            act_erase.setEnabled(can_hw_data)
+            act_erase.triggered.connect(lambda _c=False, rg=region: self._hw_erase_selected_backup_partition_data(rg))
+            menu.addAction(act_erase)
+        else:
+            lock_info = QAction(
+                get_icon("warning", color=tokens.warning, size=15),
+                qt_text("Đã khóa sửa/xóa (Bootloader / App)"),
+                menu,
+            )
+            lock_info.setEnabled(False)
+            lock_info.setToolTip(
+                "Khóa an toàn: Không hỗ trợ sửa/xóa Bootloader, Partition Table hoặc Firmware (app)."
+            )
+            menu.addAction(lock_info)
+
+        return menu
+
+    def _show_backup_context_menu(self, region: dict, global_pos):
+        menu = self._build_backup_context_menu(region, parent=getattr(self, "root", None))
+        menu.exec(global_pos)
+
+    def _validate_non_firmware_region(self, region: dict | None, action_label: str) -> tuple[bool, str]:
+        if region is None:
+            messagebox.showwarning(
+                "Chưa chọn phân vùng",
+                f"Vui lòng chọn một phân vùng dữ liệu (ví dụ: nvs, spiffs, littlefs, fat...) để {action_label}.",
+                parent=self.root,
+            )
+            return False, "empty"
+        allowed, level = is_non_firmware_data_region(region)
+        if not allowed:
+            messagebox.showwarning(
+                "Khóa an toàn phân vùng",
+                f"Phân vùng '{region.get('name', '')}' ({region.get('type', '')}/{region.get('subtype', '')}) "
+                f"là thành phần Firmware / Hệ thống khởi động.\n"
+                f"Tab Sao lưu chỉ cho phép {action_label} đối với phân vùng dữ liệu (type=data).",
+                parent=self.root,
+            )
+            return False, level
+        return True, level
+
+    def _run_read_region_worker(self, port: str, baud: int, region: dict, done_cb):
+        r_name = str(region.get("name", "data"))
+        r_off = int(region.get("offset", 0) or 0)
+        r_sz = int(region.get("size", 0) or 0)
+
+        def worker():
+            self._is_backup_hw_running = True
+            self._backup_safe_ui(lambda: self._sync_backup_selection_buttons())
+            if hasattr(self, "set_global_busy_state"):
+                self._backup_safe_ui(lambda: self.set_global_busy_state(True, f"đọc dữ liệu vùng {r_name}"))
+            else:
+                self._backup_safe_ui(lambda: self._set_backup_ui_state("disabled"))
+
+            tmp_path = ""
+            raw_data: bytes | None = None
+            err_msg = ""
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tf:
+                    tmp_path = tf.name
+
+                self._backup_safe_ui(lambda: self.log_backup(
+                    f"\n=== ĐỌC DỮ LIỆU PHÂN VÙNG '{r_name}' ({format_hex(r_off)}, {format_bytes_human(r_sz)}) ===",
+                    "header",
+                ))
+                self._backup_safe_ui(lambda: self.set_status(
+                    f"Đang đọc phân vùng '{r_name}' từ {port}...",
+                    "info",
+                    progress=15,
+                    task_label=f"Đọc vùng {r_name}",
+                ))
+
+                def on_stream(line):
+                    pct = parse_esptool_progress_percent(line)
+                    if pct is not None:
+                        self._backup_safe_ui(lambda p=15.0 + (pct / 100.0) * 80.0, pc=int(round(pct)): self.set_status(
+                            f"Đang đọc vùng '{r_name}' ({pc}%)...",
+                            "info",
+                            progress=p,
+                            task_label=f"Đọc vùng {r_name}",
+                        ))
+
+                res = run_esptool_command(
+                    ["--port", port, "--baud", str(baud), "read-flash", format_hex(r_off), format_hex(r_sz), tmp_path],
+                    progress_callback=on_stream,
+                )
+                if esptool_command_succeeded(res) and os.path.isfile(tmp_path):
+                    with open(tmp_path, "rb") as fp:
+                        raw_data = fp.read()
+                    hashes = compute_bytes_hashes(raw_data)
+                    self.backup_region_hashes[region["key"]] = f"SHA256: {hashes['sha256'][:16]}..."
+                    self._backup_safe_ui(lambda: self.set_status(
+                        f"Đã đọc xong phân vùng '{r_name}' ({format_bytes_human(len(raw_data))}).",
+                        "success",
+                        progress=100,
+                        task_label=f"Đọc xong {r_name}",
+                    ))
+                    self._backup_safe_ui(self.refresh_backup_views)
+                else:
+                    err_msg = res or f"Không thể đọc phân vùng '{r_name}' từ {port}."
+                    self._backup_safe_ui(lambda m=err_msg: self.log_backup(f">>> [LỖI] {m}", "red"))
+                    self._backup_safe_ui(lambda: self.set_status(f"Lỗi đọc vùng '{r_name}'!", "error", progress=0))
+            except Exception as exc:
+                err_msg = str(exc)
+                self._backup_safe_ui(lambda m=err_msg: self.log_backup(f">>> [NGOẠI LỆ] {m}", "red"))
+            finally:
+                if tmp_path and os.path.isfile(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+                self._is_backup_hw_running = False
+                if hasattr(self, "set_global_busy_state"):
+                    self._backup_safe_ui(lambda: self.set_global_busy_state(False))
+                else:
+                    self._backup_safe_ui(lambda: self._set_backup_ui_state("normal"))
+                self._backup_safe_ui(lambda d=raw_data, e=err_msg: done_cb(d, e))
+
+        self.backup_hw_thread = threading.Thread(target=worker, daemon=True)
+        self.backup_hw_thread.start()
+
+    def _run_write_region_worker(self, port: str, baud: int, region: dict, data_bytes: bytes, done_cb):
+        r_name = str(region.get("name", "data"))
+        r_off = int(region.get("offset", 0) or 0)
+        r_sz = int(region.get("size", 0) or 0)
+        payload = bytes(data_bytes or b"")
+        if len(payload) > r_sz:
+            done_cb(False, f"Dữ liệu ({len(payload)} B) lớn hơn kích thước phân vùng '{r_name}' ({r_sz} B).")
+            return
+        if len(payload) < r_sz:
+            payload = payload + (b"\xFF" * (r_sz - len(payload)))
+
+        def worker():
+            self._is_backup_hw_running = True
+            self._backup_safe_ui(lambda: self._sync_backup_selection_buttons())
+            if hasattr(self, "set_global_busy_state"):
+                self._backup_safe_ui(lambda: self.set_global_busy_state(True, f"ghi đè dữ liệu vùng {r_name}"))
+            else:
+                self._backup_safe_ui(lambda: self._set_backup_ui_state("disabled"))
+
+            tmp_path = ""
+            ok = False
+            msg = ""
+            try:
+                with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tf:
+                    tf.write(payload)
+                    tmp_path = tf.name
+
+                self._backup_safe_ui(lambda: self.log_backup(
+                    f"\n=== GHI ĐÈ DỮ LIỆU PHÂN VÙNG '{r_name}' TẠI {format_hex(r_off)} ({format_bytes_human(len(payload))}) ===",
+                    "header",
+                ))
+                self._backup_safe_ui(lambda: self.set_status(
+                    f"Đang ghi đè phân vùng '{r_name}' lên {port}...",
+                    "warning",
+                    progress=15,
+                    task_label=f"Ghi vùng {r_name}",
+                ))
+
+                def on_stream(line):
+                    pct = parse_esptool_progress_percent(line)
+                    if pct is not None:
+                        self._backup_safe_ui(lambda p=15.0 + (pct / 100.0) * 80.0, pc=int(round(pct)): self.set_status(
+                            f"Đang ghi phân vùng '{r_name}' ({pc}%)...",
+                            "warning",
+                            progress=p,
+                            task_label=f"Ghi vùng {r_name}",
+                        ))
+
+                res = run_esptool_command(
+                    ["--port", port, "--baud", str(baud), "write-flash", "-z", format_hex(r_off), tmp_path],
+                    progress_callback=on_stream,
+                )
+                if esptool_command_succeeded(res):
+                    ok = True
+                    hashes = compute_bytes_hashes(payload)
+                    self.backup_region_hashes[region["key"]] = f"SHA256: {hashes['sha256'][:16]}..."
+                    msg = f"Đã ghi đè {format_bytes_human(len(payload))} vào vùng '{r_name}' tại {format_hex(r_off)}."
+                    self._backup_safe_ui(lambda m=msg: self.log_backup(f">>> [THÀNH CÔNG] {m}", "green"))
+                    self._backup_safe_ui(lambda: self.set_status(
+                        f"Đã ghi đè xong phân vùng '{r_name}'!",
+                        "success",
+                        progress=100,
+                        task_label=f"Ghi xong {r_name}",
+                    ))
+                    self._backup_safe_ui(self.refresh_backup_views)
+                else:
+                    ok = False
+                    msg = res or f"Ghi đè phân vùng '{r_name}' thất bại."
+                    self._backup_safe_ui(lambda m=msg: self.log_backup(f">>> [LỖI] {m}", "red"))
+                    self._backup_safe_ui(lambda: self.set_status(f"Lỗi ghi phân vùng '{r_name}'!", "error", progress=0))
+            except Exception as exc:
+                ok = False
+                msg = str(exc)
+                self._backup_safe_ui(lambda m=msg: self.log_backup(f">>> [NGOẠI LỆ] {m}", "red"))
+            finally:
+                if tmp_path and os.path.isfile(tmp_path):
+                    try:
+                        os.remove(tmp_path)
+                    except Exception:
+                        pass
+                self._is_backup_hw_running = False
+                if hasattr(self, "set_global_busy_state"):
+                    self._backup_safe_ui(lambda: self.set_global_busy_state(False))
+                else:
+                    self._backup_safe_ui(lambda: self._set_backup_ui_state("normal"))
+                self._backup_safe_ui(lambda o=ok, m=msg: done_cb(o, m))
+
+        self.backup_hw_thread = threading.Thread(target=worker, daemon=True)
+        self.backup_hw_thread.start()
+
+    def _run_erase_region_worker(self, port: str, baud: int, region: dict, done_cb):
+        r_name = str(region.get("name", "data"))
+        r_off = int(region.get("offset", 0) or 0)
+        r_sz = int(region.get("size", 0) or 0)
+
+        def worker():
+            self._is_backup_hw_running = True
+            self._backup_safe_ui(lambda: self._sync_backup_selection_buttons())
+            if hasattr(self, "set_global_busy_state"):
+                self._backup_safe_ui(lambda: self.set_global_busy_state(True, f"xóa dữ liệu vùng {r_name}"))
+            else:
+                self._backup_safe_ui(lambda: self._set_backup_ui_state("disabled"))
+
+            ok = False
+            msg = ""
+            try:
+                self._backup_safe_ui(lambda: self.log_backup(
+                    f"\n=== XÓA DỮ LIỆU PHÂN VÙNG '{r_name}' ({format_hex(r_off)}, {format_bytes_human(r_sz)}) ===",
+                    "header",
+                ))
+                self._backup_safe_ui(lambda: self.set_status(
+                    f"Đang xóa dữ liệu phân vùng '{r_name}' trên {port}...",
+                    "warning",
+                    progress=30,
+                    task_label=f"Xóa vùng {r_name}",
+                ))
+                res = run_esptool_command(
+                    ["--port", port, "--baud", str(baud), "erase-region", format_hex(r_off), format_hex(r_sz)]
+                )
+                if esptool_command_succeeded(res):
+                    ok = True
+                    self.backup_region_hashes[region["key"]] = "Đã xóa (0xFF)"
+                    msg = f"Đã xóa trắng dữ liệu phân vùng '{r_name}' ({format_hex(r_off)}, {format_bytes_human(r_sz)}) về 0xFF."
+                    self._backup_safe_ui(lambda m=msg: self.log_backup(f">>> [THÀNH CÔNG] {m}", "green"))
+                    self._backup_safe_ui(lambda: self.set_status(
+                        f"Đã xóa dữ liệu phân vùng '{r_name}'!",
+                        "success",
+                        progress=100,
+                        task_label=f"Đã xóa {r_name}",
+                    ))
+                    self._backup_safe_ui(self.refresh_backup_views)
+                else:
+                    ok = False
+                    msg = res or f"Xóa dữ liệu phân vùng '{r_name}' thất bại."
+                    self._backup_safe_ui(lambda m=msg: self.log_backup(f">>> [LỖI] {m}", "red"))
+                    self._backup_safe_ui(lambda: self.set_status(f"Lỗi xóa phân vùng '{r_name}'!", "error", progress=0))
+            except Exception as exc:
+                ok = False
+                msg = str(exc)
+                self._backup_safe_ui(lambda m=msg: self.log_backup(f">>> [NGOẠI LỆ] {m}", "red"))
+            finally:
+                self._is_backup_hw_running = False
+                if hasattr(self, "set_global_busy_state"):
+                    self._backup_safe_ui(lambda: self.set_global_busy_state(False))
+                else:
+                    self._backup_safe_ui(lambda: self._set_backup_ui_state("normal"))
+                self._backup_safe_ui(lambda o=ok, m=msg: done_cb(o, m))
+
+        self.backup_hw_thread = threading.Thread(target=worker, daemon=True)
+        self.backup_hw_thread.start()
+
+    def _hw_open_backup_partition_data_dialog(self, region: dict | None = None):
+        if self._is_backup_hw_running or (hasattr(self, "is_device_busy") and self.is_device_busy()):
+            messagebox.showwarning("Thiết bị đang bận", "Vui lòng đợi tác vụ hiện tại hoàn tất!", parent=self.root)
+            return
+        reg = region or self._get_active_backup_region()
+        ok_reg, _ = self._validate_non_firmware_region(reg, "đọc và chỉnh sửa dữ liệu")
+        if not ok_reg or reg is None:
+            return
+        prep = self._prepare_backup_source_port()
+        if not prep:
+            return
+        port, baud = prep
+
+        def _after_read(raw_bytes: bytes | None, err_msg: str):
+            if raw_bytes is None:
+                messagebox.showerror(
+                    "Lỗi đọc phân vùng",
+                    err_msg or f"Không thể đọc dữ liệu phân vùng '{reg.get('name', '')}' từ {port}.",
+                    parent=self.root,
+                )
+                return
+
+            from modules.ui.dialogs.partition_data_dialog import PartitionDataDialog
+            dialog = PartitionDataDialog(
+                parent=self.root,
+                region=reg,
+                raw_data=raw_bytes,
+                chip_name=self.backup_source_info.get("chip_name") or "ESP32",
+                mac=self.backup_source_info.get("mac") or "",
+                port=port,
+                on_read_from_chip=lambda cb: self._run_read_region_worker(port, baud, reg, cb),
+                on_write_to_chip=lambda data, cb: self._run_write_region_worker(port, baud, reg, data, cb),
+                on_erase_on_chip=lambda cb: self._run_erase_region_worker(port, baud, reg, cb),
+            )
+            self._active_partition_data_dialog = dialog
+            dialog.exec()
+
+        self._run_read_region_worker(port, baud, reg, _after_read)
+
+    def _hw_quick_export_partition_bin(self, region: dict | None = None):
+        if self._is_backup_hw_running or (hasattr(self, "is_device_busy") and self.is_device_busy()):
+            messagebox.showwarning("Thiết bị đang bận", "Vui lòng đợi tác vụ hiện tại hoàn tất!", parent=self.root)
+            return
+        reg = region or self._get_active_backup_region()
+        ok_reg, _ = self._validate_non_firmware_region(reg, "xuất nhanh dữ liệu (.bin)")
+        if not ok_reg or reg is None:
+            return
+        prep = self._prepare_backup_source_port()
+        if not prep:
+            return
+        port, baud = prep
+
+        default_name = format_partition_backup_filename(
+            self.backup_source_info.get("chip_name") or "ESP32",
+            self.backup_source_info.get("mac") or "",
+            str(reg.get("name", "data")),
+            int(reg.get("offset", 0) or 0),
+        )
+        save_path = filedialog.asksaveasfilename(
+            title=f"Xuất nhanh dữ liệu phân vùng '{reg.get('name', '')}' (.bin)",
+            defaultextension=".bin",
+            initialfile=default_name,
+            filetypes=[("Binary files (*.bin)", "*.bin"), ("All files (*.*)", "*.*")],
+            parent=self.root,
+        )
+        if not save_path:
+            return
+
+        def _after_read(raw_bytes: bytes | None, err_msg: str):
+            if raw_bytes is None:
+                messagebox.showerror("Lỗi xuất phân vùng", err_msg or "Không thể đọc dữ liệu từ chip.", parent=self.root)
+                return
+            try:
+                with open(save_path, "wb") as fp:
+                    fp.write(raw_bytes)
+                self.log_backup(f">>> ĐÃ XUẤT DỮ LIỆU VÙNG '{reg.get('name', '')}': {save_path}", "green")
+                messagebox.showinfo(
+                    "Xuất dữ liệu thành công",
+                    f"Đã lưu dữ liệu phân vùng '{reg.get('name', '')}' ({format_bytes_human(len(raw_bytes))}) tại:\n{save_path}",
+                    parent=self.root,
+                )
+            except Exception as exc:
+                messagebox.showerror("Lỗi ghi tệp", str(exc), parent=self.root)
+
+        self._run_read_region_worker(port, baud, reg, _after_read)
+
+    def _hw_quick_import_overwrite_partition_bin(self, region: dict | None = None):
+        if self._is_backup_hw_running or (hasattr(self, "is_device_busy") and self.is_device_busy()):
+            messagebox.showwarning("Thiết bị đang bận", "Vui lòng đợi tác vụ hiện tại hoàn tất!", parent=self.root)
+            return
+        reg = region or self._get_active_backup_region()
+        ok_reg, level = self._validate_non_firmware_region(reg, "nạp file .bin ghi đè")
+        if not ok_reg or reg is None:
+            return
+        prep = self._prepare_backup_source_port()
+        if not prep:
+            return
+        port, baud = prep
+
+        in_path = filedialog.askopenfilename(
+            title=f"Chọn file .bin để ghi đè vào phân vùng '{reg.get('name', '')}'",
+            filetypes=[("Binary files (*.bin)", "*.bin"), ("All files (*.*)", "*.*")],
+            parent=self.root,
+        )
+        if not in_path:
+            return
+        try:
+            with open(in_path, "rb") as fp:
+                raw_data = fp.read()
+        except Exception as exc:
+            messagebox.showerror("Lỗi đọc tệp", str(exc), parent=self.root)
+            return
+
+        r_sz = int(reg.get("size", 0) or 0)
+        r_name = str(reg.get("name", ""))
+        r_sub = str(reg.get("subtype", ""))
+        r_off = int(reg.get("offset", 0) or 0)
+        if len(raw_data) > r_sz:
+            messagebox.showerror(
+                "Tệp quá kích thước phân vùng",
+                f"Tệp '{os.path.basename(in_path)}' ({len(raw_data):,} B) vượt quá dung lượng phân vùng '{r_name}' ({r_sz:,} B).",
+                parent=self.root,
+            )
+            return
+
+        if level == "sensitive":
+            if not messagebox.askyesno(
+                "Cảnh báo phân vùng hệ thống nhạy cảm",
+                f"Phân vùng '{r_name}' ({r_sub}) chứa dữ liệu hệ thống nhạy cảm (OTA / PHY / Keys).\n"
+                f"Bạn có chắc chắn muốn nạp '{os.path.basename(in_path)}' ghi đè lên vùng này không?",
+                parent=self.root,
+            ):
+                return
+
+        if not messagebox.askyesno(
+            "Xác nhận ghi đè phân vùng",
+            f"Ghi đè '{os.path.basename(in_path)}' ({len(raw_data):,} B) xuống phân vùng '{r_name}'\n"
+            f"tại địa chỉ {format_hex(r_off)} trên cổng {port}?",
+            parent=self.root,
+        ):
+            return
+
+        def _after_write(ok: bool, msg: str):
+            if ok:
+                messagebox.showinfo("Ghi đè thành công", msg, parent=self.root)
+            else:
+                messagebox.showerror("Lỗi ghi đè", msg, parent=self.root)
+
+        self._run_write_region_worker(port, baud, reg, raw_data, _after_write)
+
+    def _hw_erase_selected_backup_partition_data(self, region: dict | None = None):
+        if self._is_backup_hw_running or (hasattr(self, "is_device_busy") and self.is_device_busy()):
+            messagebox.showwarning("Thiết bị đang bận", "Vui lòng đợi tác vụ hiện tại hoàn tất!", parent=self.root)
+            return
+        reg = region or self._get_active_backup_region()
+        ok_reg, level = self._validate_non_firmware_region(reg, "xóa dữ liệu")
+        if not ok_reg or reg is None:
+            return
+        prep = self._prepare_backup_source_port()
+        if not prep:
+            return
+        port, baud = prep
+
+        r_name = str(reg.get("name", ""))
+        r_sub = str(reg.get("subtype", ""))
+        r_off = int(reg.get("offset", 0) or 0)
+        r_sz = int(reg.get("size", 0) or 0)
+
+        if level == "sensitive":
+            if not messagebox.askyesno(
+                "Cảnh báo phân vùng hệ thống nhạy cảm",
+                f"Phân vùng '{r_name}' ({r_sub}) chứa dữ liệu hệ thống nhạy cảm (OTA / PHY / Keys).\n"
+                "Xóa vùng này có thể đặt lại boot OTA hoặc thông số hiệu chuẩn Wi-Fi/RF. Tiếp tục?",
+                parent=self.root,
+            ):
+                return
+
+        if not messagebox.askyesno(
+            "Xác nhận xóa dữ liệu phân vùng",
+            f"Xóa trắng toàn bộ dữ liệu trong phân vùng '{r_name}' ({format_hex(r_off)}, {format_bytes_human(r_sz)}) trên {port}?\n"
+            "Hành động này chỉ xóa vùng dữ liệu, KHÔNG ảnh hưởng Bootloader hay Firmware App.",
+            parent=self.root,
+        ):
+            return
+
+        def _after_erase(ok: bool, msg: str):
+            if ok:
+                messagebox.showinfo("Xóa dữ liệu vùng thành công", msg, parent=self.root)
+            else:
+                messagebox.showerror("Lỗi xóa dữ liệu vùng", msg, parent=self.root)
+
+        self._run_erase_region_worker(port, baud, reg, _after_erase)

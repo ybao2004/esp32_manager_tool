@@ -3,9 +3,81 @@
 Các hàm tiện ích sao lưu, mã băm và suy đoán địa chỉ bộ nhớ cho ESP32 (v1.5).
 """
 import hashlib
+import re
 from datetime import datetime
 from modules.config import APP_NAME, APP_VERSION
 from modules.partition.unit_formatter import align_up, format_hex, format_bytes_human
+
+SENSITIVE_DATA_SUBTYPES = frozenset({"otadata", "ota", "phy", "nvs_keys", "efuse"})
+
+
+def sanitize_filename_token(text: str | None, default: str = "UNKNOWN") -> str:
+    """Làm sạch chuỗi tên chip/phân vùng để dùng an toàn trong tên tệp Windows."""
+    raw = str(text or "").strip()
+    if not raw or raw.lower() in ("n/a", "chưa xác định", "chưa rõ", "unknown", "none"):
+        return default
+    cleaned = re.sub(r'[<>:"/\\|?*\s]+', "_", raw)
+    cleaned = re.sub(r"_+", "_", cleaned).strip("._ ")
+    return cleaned or default
+
+
+def normalize_mac_filename_token(mac: str | None) -> str:
+    """Chuẩn hóa địa chỉ MAC bỏ dấu ':' thành chuỗi HEX viết hoa 12 ký tự (fallback NOMAC)."""
+    raw = str(mac or "").strip()
+    if not raw or raw.lower() in ("n/a", "chưa xác định", "chưa rõ", "unknown", "none"):
+        return "NOMAC"
+    hex_only = re.sub(r"[^0-9A-Fa-f]", "", raw).upper()
+    if len(hex_only) != 12:
+        return "NOMAC"
+    return hex_only
+
+
+def format_full_flash_filename(
+    chip_name: str | None,
+    mac: str | None,
+    ts_tag: str | None = None,
+) -> str:
+    """Định dạng tên file sao lưu Full Flash: <tên chip gốc>_<MAC gốc>_Full - <yyyymmdd_hhmmss>.bin."""
+    chip_tok = sanitize_filename_token(chip_name, default="ESP32")
+    mac_tok = normalize_mac_filename_token(mac)
+    ts = ts_tag or datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{chip_tok}_{mac_tok}_Full - {ts}.bin"
+
+
+def format_partition_backup_filename(
+    chip_name: str | None,
+    mac: str | None,
+    part_name: str | None,
+    offset: int,
+    ts_tag: str | None = None,
+) -> str:
+    """Định dạng tên file sao lưu phân vùng: <tên chip gốc>_<MAC gốc>_<tên phân vùng>_<offset> - <yyyymmdd_hhmmss>.bin."""
+    chip_tok = sanitize_filename_token(chip_name, default="ESP32")
+    mac_tok = normalize_mac_filename_token(mac)
+    part_tok = sanitize_filename_token(part_name, default="region")
+    off_tok = f"0x{int(offset):X}"
+    ts = ts_tag or datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"{chip_tok}_{mac_tok}_{part_tok}_{off_tok} - {ts}.bin"
+
+
+def is_non_firmware_data_region(region: dict | None) -> tuple[bool, str]:
+    """
+    Kiểm tra xem vùng phân vùng trên Tab 5 có phải dữ liệu (không phải firmware/hệ thống) hay không.
+    Trả về (allowed, level):
+      - (False, "blocked") cho Bootloader, Partition Table và mọi phân vùng app (factory/ota_*/test).
+      - (True, "sensitive") cho phân vùng data nhạy cảm (otadata/ota/phy/nvs_keys/efuse).
+      - (True, "normal") cho các phân vùng data thông thường (nvs/spiffs/littlefs/fat/coredump/...).
+    """
+    if not region:
+        return False, "empty"
+    r_type = str(region.get("type") or "").strip().lower()
+    r_sub = str(region.get("subtype") or "").strip().lower()
+    r_key = str(region.get("key") or "")
+    if r_type != "data" or r_key in ("__bootloader__", "__part_table__"):
+        return False, "blocked"
+    if r_sub in SENSITIVE_DATA_SUBTYPES:
+        return True, "sensitive"
+    return True, "normal"
 
 
 def compute_bytes_hashes(data: bytes) -> dict[str, str]:

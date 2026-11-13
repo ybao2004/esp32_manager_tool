@@ -134,13 +134,15 @@ def build_detailed_tooltip_text(entry: PartitionEntry) -> str:
 
 class DiskMapWidget(QWidget):
     entry_clicked = pyqtSignal(object)
+    entry_double_clicked = pyqtSignal(object)
     unallocated_clicked = pyqtSignal(object)
+    unallocated_double_clicked = pyqtSignal(object)
     entry_context_requested = pyqtSignal(object, QPoint)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(52)
-        self.setFixedHeight(52)
+        self.setMinimumHeight(42)
+        self.setFixedHeight(42)
         self.setMouseTracking(True)
 
         self.layout_entries: list[PartitionEntry] = []
@@ -148,6 +150,11 @@ class DiskMapWidget(QWidget):
         self.display_mode = None
         self.selected_entry: PartitionEntry | None = None
         self.checked_names: set[str] | None = None  # Dùng cho Tab 5 (mờ khối không chọn)
+        self.on_select_entry = None
+        self.on_double_click_entry = None
+        self.on_unallocated_click = None
+        self.on_unallocated_double_click = None
+        self.on_context_action = None
 
         self._rendered_blocks: list[tuple[float, float, float, float, PartitionEntry]] = []
         self._current_tokens: ThemeTokens = ThemeManager.instance().tokens
@@ -220,6 +227,13 @@ class DiskMapWidget(QWidget):
         font_size = QFont("Segoe UI", 7)
         fm_name = QFontMetrics(font_name)
 
+        line1_h = 15.0
+        line2_h = 13.0
+        line_gap = 1.0 if bar_h < 42 else 2.0
+        total_txt_h = line1_h + line_gap + line2_h
+        top_txt_y = top_y + max(2.0, (bar_h - total_txt_h) / 2.0 - 0.5)
+        bot_txt_y = top_txt_y + line1_h + line_gap
+
         selected_rect: QRectF | None = None
 
         # Vòng 1: Vẽ toàn bộ khối phân vùng, vạch phân cách và chữ nhãn
@@ -239,9 +253,13 @@ class DiskMapWidget(QWidget):
                     bg_col.setAlpha(90)
                     fg_col.setAlpha(120)
 
+            allow_system_highlight = self.checked_names is not None
             is_selected = (
-                self.selected_entry and not entry.is_unallocated and not entry.is_system and
-                self.selected_entry.name == entry.name and self.selected_entry.offset == entry.offset
+                self.selected_entry is not None
+                and not entry.is_unallocated
+                and (allow_system_highlight or not entry.is_system)
+                and self.selected_entry.name == entry.name
+                and self.selected_entry.offset == entry.offset
             )
 
             rect = QRectF(x1, top_y, max(0.0, block_w), bar_h)
@@ -257,26 +275,24 @@ class DiskMapWidget(QWidget):
             if is_selected:
                 selected_rect = QRectF(rect)
 
-            # Nhãn tên & kích thước
+            # Nhãn tên & kích thước căn giữa theo chiều dọc khối màu
             if block_w >= 28:
                 painter.setPen(fg_col)
                 painter.setFont(font_name)
                 label_text = "Trống" if (entry.is_unallocated and block_w < 78) else entry.name
                 elided_name = fm_name.elidedText(label_text, Qt.TextElideMode.ElideRight, int(block_w - 6))
-                top_txt_y = top_y + (2 if bar_h < 46 else 6)
-                bot_txt_y = top_y + (20 if bar_h < 46 else 24)
-                painter.drawText(QRectF(x1 + 3, top_txt_y, block_w - 6, 16), Qt.AlignmentFlag.AlignCenter, elided_name)
+                painter.drawText(QRectF(x1 + 3, top_txt_y, block_w - 6, line1_h), Qt.AlignmentFlag.AlignCenter, elided_name)
 
                 painter.setFont(font_size)
                 size_str = format_bytes_human(entry.size, compact=True)
-                painter.drawText(QRectF(x1 + 3, bot_txt_y, block_w - 6, 14), Qt.AlignmentFlag.AlignCenter, size_str)
+                painter.drawText(QRectF(x1 + 3, bot_txt_y, block_w - 6, line2_h), Qt.AlignmentFlag.AlignCenter, size_str)
 
             self._rendered_blocks.append((x1, top_y, x2, bot_y, entry))
 
         # Vòng 2: Vẽ viền chọn kép tương phản cao lên trên cùng để các khối cạnh bên không che khuất cạnh phải
         if selected_rect is not None and selected_rect.width() >= 4.0:
-            outer_col = QColor("#FFFFFF") if is_dark else QColor("#0F172A")
-            inner_col = QColor("#0F172A") if is_dark else QColor("#FFFFFF")
+            outer_col = QColor("#FFFFFF") if is_dark else QColor("#00FF04")
+            inner_col = QColor("#00FF04") if is_dark else QColor("#FFFFFF")
 
             painter.setBrush(Qt.BrushStyle.NoBrush)
 
@@ -311,11 +327,12 @@ class DiskMapWidget(QWidget):
             if event.button() == Qt.MouseButton.LeftButton:
                 if entry.is_unallocated:
                     self.unallocated_clicked.emit(entry)
-                    if callable(self.on_unallocated_click):
-                        self.on_unallocated_click(entry.offset, entry.size)
+                    cb = getattr(self, "on_unallocated_click", None)
+                    if callable(cb):
+                        cb(entry.offset, entry.size)
                 else:
                     if self.checked_names is not None:
-                        self.selected_entry = None
+                        self.selected_entry = entry
                     elif (
                         self.selected_entry is not None
                         and self.selected_entry.name == entry.name
@@ -325,13 +342,15 @@ class DiskMapWidget(QWidget):
                     else:
                         self.selected_entry = entry
                     self.entry_clicked.emit(entry)
-                    if callable(self.on_select_entry):
-                        self.on_select_entry(entry)
+                    cb = getattr(self, "on_select_entry", None)
+                    if callable(cb):
+                        cb(entry)
                     self.update()
             elif event.button() == Qt.MouseButton.RightButton:
                 global_pt = event.globalPosition().toPoint()
                 self.entry_context_requested.emit(entry, global_pt)
-                if callable(self.on_context_action):
+                cb = getattr(self, "on_context_action", None)
+                if callable(cb):
                     local_pt = event.pos()
                     compat_evt = type(
                         "_DiskMapEvent",
@@ -344,8 +363,25 @@ class DiskMapWidget(QWidget):
                             "globalPos": lambda _s: global_pt,
                         },
                     )()
-                    self.on_context_action("full_context_menu", entry, compat_evt)
+                    cb("full_context_menu", entry, compat_evt)
         super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        entry = self._find_entry_at(event.pos())
+        if entry and event.button() == Qt.MouseButton.LeftButton:
+            if entry.is_unallocated:
+                self.unallocated_double_clicked.emit(entry)
+                cb = getattr(self, "on_unallocated_double_click", None)
+                if callable(cb):
+                    cb(entry.offset, entry.size)
+            else:
+                self.selected_entry = entry
+                self.update()
+                self.entry_double_clicked.emit(entry)
+                cb = getattr(self, "on_double_click_entry", None)
+                if callable(cb):
+                    cb(entry)
+        super().mouseDoubleClickEvent(event)
 
     def _on_theme_changed(self, tokens: ThemeTokens):
         self._current_tokens = tokens

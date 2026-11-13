@@ -1,19 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-Trang Serial Monitor & Bảng Điều Khiển IoT (MonitorPage - v1.6).
-- Thanh công cụ phía trên Terminal: [x] Tự động cuộn, [x] Thêm dấu thời gian, [Xóa màn hình], [Reset ESP], [Đóng/Mở Bảng Phải]
-- Dòng nhập lệnh phía dưới chiếm 100% chiều rộng cột trái: [Ô nhập lệnh (stretch=1)] + [x Thêm \r\n] + [Gửi]
-- Bảng bên phải rộng cố định 310px (thu gọn / mở rộng mượt mà), hiển thị trọn vẹn Wi-Fi & 15 nút F1-F15.
+Trang Serial Monitor & Log (MonitorPage - v1.6).
+- Chia 2 sub-tab trong QTabWidget:
+  + Serial: Terminal thời gian thực, thanh công cụ, dòng nhập lệnh và Bảng điều khiển Wi-Fi / F1-F15.
+  + Log: Nhật ký hoạt động tập trung từ Tab 1, 3, 4, 5 kèm tiền tố [Tên Tab], bộ lọc, timestamp, Lưu & Xóa.
 """
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
-    QPushButton, QComboBox, QCheckBox, QFrame
+    QPushButton, QComboBox, QCheckBox, QFrame, QTabWidget
 )
 from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtGui import QKeyEvent
 from modules.config import CONTROL_CONFIG
 from modules.ui.widgets.card import Card
-from modules.ui.widgets.flow_layout import FlowLayout
+from modules.ui.widgets.flow_layout import FlowLayout, make_group
 from modules.ui.widgets.log_view import LogView
 from modules.ui.icons import get_icon, bind_themed_icon
 
@@ -186,12 +186,24 @@ class MonitorPage(QWidget):
         self._build_ui()
 
     def _build_ui(self):
-        root_layout = QHBoxLayout(self)
-        root_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        self.sub_tabs = QTabWidget(self)
+        self.sub_tabs.setObjectName("monitorSubTabs")
+        outer_layout.addWidget(self.sub_tabs, 1)
+
+        # =====================================================================
+        # SUB-TAB 1: SERIAL MONITOR & BẢNG ĐIỀU KHIỂN IOT
+        # =====================================================================
+        self.serial_tab_widget = QWidget(self.sub_tabs)
+        root_layout = QHBoxLayout(self.serial_tab_widget)
+        root_layout.setContentsMargins(4, 6, 4, 4)
         root_layout.setSpacing(6)
 
         # --- CỘT TRÁI: Card Terminal & Thanh nhập lệnh đồng bộ chiều cao với cột phải ---
-        left_card = Card("Giao tiếp Serial Monitor & Gửi Lệnh", icon_name="monitor", parent=self)
+        left_card = Card("Giao tiếp Serial Monitor & Gửi Lệnh", icon_name="monitor", parent=self.serial_tab_widget)
         left_layout = QVBoxLayout()
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(6)
@@ -263,7 +275,7 @@ class MonitorPage(QWidget):
         root_layout.addWidget(left_card, 1)
 
         # --- CỘT PHẢI: Bảng Mạng Wi-Fi & 15 Phím chức năng F1-F15 (rộng cố định 320px) ---
-        self.right_panel = QWidget(self)
+        self.right_panel = QWidget(self.serial_tab_widget)
         self.right_panel.setFixedWidth(320)
         right_layout = QVBoxLayout(self.right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -346,6 +358,66 @@ class MonitorPage(QWidget):
 
         right_layout.addStretch(1)
         root_layout.addWidget(self.right_panel, 0)
+
+        self.sub_tabs.addTab(self.serial_tab_widget, "Serial")
+
+        # =====================================================================
+        # SUB-TAB 2: NHẬT KÝ HOẠT ĐỘNG TỔNG HỢP (TAB 1, 3, 4, 5)
+        # =====================================================================
+        self.log_tab_widget = QWidget(self.sub_tabs)
+        log_root_layout = QVBoxLayout(self.log_tab_widget)
+        log_root_layout.setContentsMargins(4, 6, 4, 4)
+        log_root_layout.setSpacing(6)
+
+        log_card = Card("Nhật Ký Hoạt Động Tổng Hợp (Tab 1, 3, 4, 5)", icon_name="info", parent=self.log_tab_widget)
+        log_inner = QVBoxLayout()
+        log_inner.setContentsMargins(0, 0, 0, 0)
+        log_inner.setSpacing(6)
+
+        log_toolbar = FlowLayout(h_spacing=8, v_spacing=6)
+
+        lbl_source = QLabel("Nguồn tab:", log_card)
+        self.cb_log_source_filter = _ComboCompat(log_card)
+        self.cb_log_source_filter.addItems([
+            "Tất cả",
+            "Kiểm tra Chip",
+            "Nạp Firmware",
+            "Phân vùng",
+            "Sao lưu & Chép",
+        ])
+        self.cb_log_source_filter.setFixedWidth(156)
+        self.cb_log_source_filter.setFixedHeight(30)
+        log_toolbar.addWidget(make_group(log_card, lbl_source, self.cb_log_source_filter))
+
+        self.cb_log_autoscroll = QCheckBox("Tự động cuộn", log_card)
+        self.var_log_autoscroll = _TkVarCompat(self.cb_log_autoscroll, default=True)
+        log_toolbar.addWidget(self.cb_log_autoscroll)
+
+        self.cb_log_timestamp = QCheckBox("Thêm dấu thời gian", log_card)
+        self.var_log_timestamp = _TkVarCompat(self.cb_log_timestamp, default=True)
+        log_toolbar.addWidget(self.cb_log_timestamp)
+
+        log_toolbar.addStretch(1)
+
+        self.btn_save_central_log = _ButtonCompat("Lưu Log (.txt)", log_card)
+        bind_themed_icon(self.btn_save_central_log, "save")
+        log_toolbar.addWidget(self.btn_save_central_log)
+
+        self.btn_clear_central_log = _ButtonCompat("Xóa Log", log_card)
+        bind_themed_icon(self.btn_clear_central_log, "delete")
+        log_toolbar.addWidget(self.btn_clear_central_log)
+
+        log_inner.addLayout(log_toolbar)
+
+        self.central_log_txt = LogView(log_card)
+        self.central_log_txt.timestamps = False
+        self.central_log_txt.autoscroll = True
+        log_inner.addWidget(self.central_log_txt, 1)
+
+        log_card.body_layout.addLayout(log_inner, 1)
+        log_root_layout.addWidget(log_card, 1)
+
+        self.sub_tabs.addTab(self.log_tab_widget, "Log")
 
     def _on_toggle_right_panel(self, visible: bool):
         self.right_panel.setVisible(visible)

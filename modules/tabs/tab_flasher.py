@@ -8,7 +8,6 @@ import threading
 from modules.ui.models import END
 from modules.ui import dialogs_service as messagebox
 from modules.ui import dialogs_service as filedialog
-from modules.ui.dialogs.erase_region_dialog import EraseRegionDialog
 from modules.config import FLASH_BAUDS, FLASH_CHIP_TARGETS, REPORT_FONT_SIZE
 from modules.binary_scanner import validate_binary_segments
 from modules.esptool_util import (
@@ -63,7 +62,7 @@ class FlasherTabMixin:
             self.save_config()
 
     def log_flash(self, s, tag=None):
-        """Ghi log vào màn hình của tab Nạp Flash."""
+        """Ghi log vào màn hình của tab Nạp Flash và phản chiếu sang sub-tab Log."""
         try:
             if hasattr(self, 'flasher_txt') and self.flasher_txt.winfo_exists():
                 self.flasher_txt.config(state="normal")
@@ -72,6 +71,8 @@ class FlasherTabMixin:
                 self.flasher_txt.config(state="disabled")
         except Exception:
             pass
+        if hasattr(self, "append_tab_log"):
+            self.append_tab_log("Nạp Firmware", s, level=tag)
 
     def on_erase_flash_click(self):
         """Xử lý sự kiện bấm nút Xóa Toàn Bộ Flash."""
@@ -153,110 +154,6 @@ class FlasherTabMixin:
             else:
                 safe_after(lambda: self.set_status("Xóa Flash thất bại!", "error", progress=0))
                 safe_after(lambda: self.log_flash("\n>>> LỖI KHI XÓA FLASH!", 'red'))
-                safe_after(lambda: self._update_flash_progress(0))
-        except Exception as e:
-            error_message = f"Lỗi: {e}"
-            safe_after(lambda msg=error_message: self.set_status(msg, "error", progress=0))
-            safe_after(lambda err=error_message: self.log_flash(f"\n>>> NGOẠI LỆ: {err}", 'red'))
-            safe_after(lambda: self._update_flash_progress(0))
-        finally:
-            self.is_flashing.clear()
-            if hasattr(self, 'set_global_busy_state'):
-                safe_after(lambda: self.set_global_busy_state(False))
-            else:
-                safe_after(lambda: self._set_flash_ui_state("normal"))
-            if was_connected and hasattr(self, 'on_serial_connect'):
-                safe_after(self.on_serial_connect, 500)
-
-    def on_erase_nvs_click(self):
-        """Xử lý sự kiện bấm nút Xóa vùng Flash."""
-        port = self.port_cb.get().strip()
-        if not port:
-            messagebox.showwarning("Thiếu Cổng", "Vui lòng chọn cổng COM trước khi xóa vùng Flash.")
-            return
-
-        if self.is_flashing.is_set() or self.is_detecting.is_set() or getattr(self, "is_connecting", False):
-            messagebox.showwarning("Bận", "Thiết bị đang bận xử lý tác vụ khác!")
-            return
-
-        self._show_erase_nvs_dialog(port)
-
-    def _show_erase_nvs_dialog(self, port):
-        """Hộp thoại cấu hình và xác nhận Xóa phân vùng bộ nhớ NVS."""
-        dlg = EraseRegionDialog(self.root, default_offset="0x9000", default_size="0x6000")
-        accepted = True
-        if getattr(dlg, "result", None) is None and getattr(dlg, "offset", None) is None and hasattr(dlg, "exec"):
-            accepted = bool(dlg.exec())
-        if accepted:
-            if getattr(dlg, "result", None):
-                off_val, sz_val = dlg.result
-            elif getattr(dlg, "offset", None) is not None and getattr(dlg, "size", None) is not None:
-                off_val, sz_val = dlg.offset, dlg.size
-            else:
-                return
-            was_connected = bool(self.serial_connection and getattr(self.serial_connection, 'is_open', True))
-            if was_connected:
-                self.on_serial_disconnect()
-                self.is_flashing.set()
-                self._set_flash_ui_state("disabled")
-                self.root.after(400, lambda: self._start_erase_nvs_thread(port, hex(off_val), hex(sz_val), was_connected=True))
-            else:
-                self._start_erase_nvs_thread(port, hex(off_val), hex(sz_val), was_connected=False)
-
-    def _start_erase_nvs_thread(self, port, offset_hex, size_hex, was_connected=False):
-        self.is_flashing.set()
-        self.on_clear(self.flasher_txt, clear_status=False)
-        self.set_status(f"Đang xóa vùng Flash ({offset_hex}, {size_hex}) trên {port}...", "warning")
-        self._update_flash_progress(0, task_label=f"Xóa vùng Flash {offset_hex}")
-        if hasattr(self, 'set_global_busy_state'):
-            self.set_global_busy_state(True, "xóa vùng flash")
-        else:
-            self._set_flash_ui_state("disabled")
-
-        chip_target = self.flash_chip_cb.get().strip()
-        baud = self.flash_baud_cb.get().strip()
-
-        sz_kb = int(size_hex, 16 if size_hex.lower().startswith("0x") else 10) / 1024.0
-        self.log_flash("=== BẮT ĐẦU XÓA VÙNG FLASH THEO ĐỊA CHỈ ===", 'header')
-        self.log_flash(f"Cổng COM: {port} | Baudrate: {baud} | Chip: {chip_target}")
-        self.log_flash(f"Địa chỉ Offset: {offset_hex} | Kích thước: {size_hex} ({sz_kb:.1f} KB)")
-        self.flash_thread = threading.Thread(target=self._erase_nvs_worker, args=(port, baud, chip_target, offset_hex, size_hex, was_connected), daemon=True)
-        self.flash_thread.start()
-
-    def _erase_nvs_worker(self, port, baud, chip_target, offset_hex, size_hex, was_connected=False):
-        args = ['--port', port, '--baud', str(baud)]
-        if chip_target and chip_target != "auto":
-            args.extend(['--chip', chip_target])
-        args.extend(['erase-region', offset_hex, size_hex])
-
-        def safe_after(fn, delay=0):
-            try:
-                if getattr(self, "root", None) and self.root.winfo_exists():
-                    self.root.after(delay, fn)
-            except Exception:
-                pass
-
-        def on_stream(line):
-            safe_after(lambda: self.log_flash(f"  {line}"))
-            l_str = str(line)
-            if "Connecting" in l_str:
-                safe_after(lambda: self._update_flash_progress(15))
-            elif "Stub flasher running" in l_str or "Running stub" in l_str:
-                safe_after(lambda: self._update_flash_progress(40))
-            elif "Erasing region" in l_str:
-                safe_after(lambda: self._update_flash_progress(70))
-            elif "Erase completed" in l_str:
-                safe_after(lambda: self._update_flash_progress(95))
-
-        try:
-            res = run_esptool_command(args, progress_callback=on_stream)
-            if esptool_command_succeeded(res):
-                safe_after(lambda: self.set_status("Đã xóa vùng Flash thành công!", "success", progress=100))
-                safe_after(lambda: self.log_flash("\n>>> XÓA VÙNG FLASH THÀNH CÔNG!", 'green'))
-                safe_after(lambda: self._update_flash_progress(100))
-            else:
-                safe_after(lambda: self.set_status("Xóa vùng Flash thất bại!", "error", progress=0))
-                safe_after(lambda: self.log_flash("\n>>> LỖI KHI XÓA VÙNG FLASH!", 'red'))
                 safe_after(lambda: self._update_flash_progress(0))
         except Exception as e:
             error_message = f"Lỗi: {e}"
@@ -462,8 +359,6 @@ class FlasherTabMixin:
             self.btn_erase_flash.config(state=state)
         if hasattr(self, 'btn_erase_only'):
             self.btn_erase_only.config(state=state)
-        if hasattr(self, 'btn_erase_nvs'):
-            self.btn_erase_nvs.config(state=state)
         combo_state = "disabled" if state == "disabled" else "readonly"
         self.flash_chip_cb.config(state=combo_state)
         self.flash_baud_cb.config(state=combo_state)

@@ -20,6 +20,7 @@ _ICON_ALIASES: dict[str, str] = {
     "window_console": "monitor",
     "checkmark": "success",
     "router": "server",
+    "dismiss": "close",
 }
 
 

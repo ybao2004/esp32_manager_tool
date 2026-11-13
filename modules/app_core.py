@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ESP Tool & Hardware Inspector v1.4 - Core Application Controller (PyQt6 Edition)
+ESP Tool & Hardware Inspector v1.5 - Core Application Controller (PyQt6 Edition)
 Đơn giản hóa kiến trúc, khởi động mượt với StartupSplash thuần QWidget trên Taskbar,
 hỗ trợ đầy đủ icon Windows Taskbar ở cả source & .exe, khóa đơn thực thể (Single-Instance)
 và giải phóng tiến trình / tài nguyên an toàn khi thoát.

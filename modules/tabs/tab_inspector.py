@@ -93,6 +93,8 @@ class InspectorTabMixin:
             self.detect_btn.config(state="disabled")
             self.serial_toggle_btn.config(state="disabled")
         self.set_status(f"Đang kiểm tra trên {port}...", "info", progress=0, task_label=f"Kiểm tra phần cứng ({port})")
+        if hasattr(self, "append_tab_log"):
+            self.append_tab_log("Kiểm tra Chip", f"Bắt đầu kiểm tra phần cứng qua cổng {port}...", level="info")
         self.detect_thread = threading.Thread(target=self._detect_thread, args=(port, self.baud_cb.get()), daemon=True)
         self.detect_thread.start()
 
@@ -163,9 +165,35 @@ class InspectorTabMixin:
             has_error = any(not esptool_command_succeeded(output) for output in outputs.values())
             info = parse_esptool_output(outputs)
             self.root.after(0, self._display_formatted_report, info)
+            if hasattr(self, "append_tab_log"):
+                raw_text = info.get("raw", "") if isinstance(info, dict) else ""
+                sync_failed = (
+                    not info.get("chip_name_key")
+                    and not info.get("mac")
+                    and ("fatal error" in raw_text.lower() or "failed to connect" in raw_text.lower())
+                )
+                if has_error or sync_failed:
+                    self.append_tab_log(
+                        "Kiểm tra Chip",
+                        f"[LỖI] Kiểm tra chip qua cổng {port} thất bại (không đọc đủ thông số chip).",
+                        level="error",
+                    )
+                else:
+                    summary_parts = [info.get("chip_line") or info.get("chip_name_key") or "ESP"]
+                    if info.get("flash_mb"):
+                        summary_parts.append(f"Flash {info['flash_mb']:.2f} MB")
+                    if info.get("mac"):
+                        summary_parts.append(f"MAC {info['mac']}")
+                    self.append_tab_log(
+                        "Kiểm tra Chip",
+                        f"Hoàn tất kiểm tra chip ({port}): " + " | ".join(summary_parts),
+                        level="success",
+                    )
         except Exception as e:
             has_error = True
             error_str = str(e)
+            if hasattr(self, "append_tab_log"):
+                self.append_tab_log("Kiểm tra Chip", f"[LỖI] Kiểm tra chip qua cổng {port} thất bại: {error_str}", level="error")
             if (serial is not None and isinstance(e, serial.SerialException)) or "could not open port" in error_str.lower():
                 msg = (
                     f"Không thể mở cổng '{port}'.\n"
@@ -476,8 +504,11 @@ class InspectorTabMixin:
         if base_mac_formatted:
             oui = get_mac_oui(base_mac_formatted) or base_mac_formatted[:8]
             if is_espressif_oui(base_mac_formatted):
-                report_data.append(("  Nguồn gốc MAC (OUI)", f"Tiền tố được cấp cho Espressif ({oui})", 'green'))
-                report_data.append(("", "OUI hỗ trợ nhận diện nhà cung cấp, không phải chứng thư chống giả tuyệt đối.", None))
+                report_data.append((
+                    "  Nguồn gốc MAC (OUI)",
+                    f"Tiền tố được cấp cho Espressif ({oui})\nOUI hỗ trợ nhận diện nhà cung cấp, không phải chứng thư chống giả tuyệt đối.",
+                    'green',
+                ))
                 report_data.append(("  Chip Nhớ (Flash)", f"Flash {man_short} (ID: {info.get('flash_device', 'N/A')})", 'green' if not man_short.startswith("Không rõ") else 'blue'))
             else: 
                 report_data.append(("  Nguồn gốc MAC (OUI)", f"Không thấy {oui} trong CSDL Espressif", 'red'))
@@ -520,7 +551,10 @@ class InspectorTabMixin:
                 self.inspector_txt.insert("end", f"  {value}\n", tags)
             else: 
                 tags = ('kv_hanging', tag) if tag else ('kv_hanging',)
-                self.inspector_txt.insert("end", f"{key+':':<{key_width}} {value}\n", tags)
+                val_lines = str(value).split("\n")
+                self.inspector_txt.insert("end", f"{key+':':<{key_width}} {val_lines[0]}\n", tags)
+                for extra_line in val_lines[1:]:
+                    self.inspector_txt.insert("end", f"{' ' * key_width} {extra_line}\n", ('kv_hanging',))
         if hasattr(self.inspector_txt, "verticalScrollBar"):
             self.inspector_txt.verticalScrollBar().setValue(0)
         self.inspector_txt.config(state="disabled")

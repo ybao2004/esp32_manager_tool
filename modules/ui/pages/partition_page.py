@@ -2,7 +2,7 @@
 """
 Trang Quản Lý Phân Vùng Bộ Nhớ ESP32 (PartitionPage - v1.6).
 - Tách thanh công cụ thành 2 nhóm rõ ràng (không bị cắt chữ bất kỳ nút nào):
-  + Card trên (Cấu hình & Tệp): Chip, Flash, Đơn vị, [x] Tự căn 4K/64K | [Mẫu Chuẩn], [Quét Dự Án], [Mở CSV/BIN], [Xuất CSV], [Xuất BIN], [Dồn & Căn], [Hoàn tác], [Làm lại], [Hướng Dẫn]
+  + Card trên (Cấu hình & Tệp): Chip, Flash, Đọc từ chip | [Mẫu], [Quét Dự Án], [Mở CSV/BIN], [Lưu CSV] | [Hoàn tác], [Làm lại], [Sổ tay]
   + Card giữa: Sơ đồ ổ đĩa trực quan DiskMapWidget + Thống kê dung lượng & kiểm tra hợp lệ ESP-IDF
   + Card chính: Bảng phân vùng tương tác cao (cột Tên co giãn stretch=1) + Thanh thao tác 2 bên:
     Trái: [+ Thêm dòng], [Sửa dòng], [Xóa dòng], [Xóa tất cả]
@@ -11,15 +11,13 @@ Trang Quản Lý Phân Vùng Bộ Nhớ ESP32 (PartitionPage - v1.6).
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QComboBox, QCheckBox, QTreeWidget, QTreeWidgetItem, QHeaderView,
-    QFrame, QProgressBar
+    QAbstractItemView, QFrame, QProgressBar
 )
 from PyQt6.QtCore import Qt, QPoint
 from modules.config import FLASH_SIZE_OPTIONS
 from modules.partition.chip_database import CHIP_FAMILY_DATABASE
 from modules.ui.widgets.card import Card
 from modules.ui.widgets.disk_map import DiskMapWidget
-from modules.ui.widgets.log_view import LogView
-from modules.ui.widgets.collapsible import CollapsiblePanel
 from modules.ui.widgets.flow_layout import FlowLayout, make_group
 from modules.ui.icons import get_icon, bind_themed_icon
 
@@ -99,12 +97,12 @@ class _ComboCompat(QComboBox):
         self.ensurePolished()
         fm = self.fontMetrics()
         curr_txt = self.currentText() or ""
-        # 8px padding trái + 18px drop-down + khoảng thở đầy đủ để không cắt tên chip dài (ví dụ ESP32-P4)
-        target_w = max(self._min_fit_width, fm.horizontalAdvance(curr_txt) + 42)
+        # Vừa khít nội dung hiện tại nhưng chừa đủ khoảng cho mũi tên dropdown
+        target_w = max(self._min_fit_width, fm.horizontalAdvance(curr_txt) + 38)
         self.setFixedWidth(target_w)
         max_item_w = target_w
         for i in range(self.count()):
-            iw = fm.horizontalAdvance(self.itemText(i)) + 38
+            iw = fm.horizontalAdvance(self.itemText(i)) + 42
             if iw > max_item_w:
                 max_item_w = iw
         if self.view():
@@ -266,11 +264,13 @@ class _ProgressBarCompat(QProgressBar):
 
 
 class _EventShim:
-    def __init__(self, x: int = 0, y: int = 0, x_root: int = 0, y_root: int = 0):
+    def __init__(self, x: int = 0, y: int = 0, x_root: int = 0, y_root: int = 0, col: int = 0, iid: str = ""):
         self.x = x
         self.y = y
         self.x_root = x_root
         self.y_root = y_root
+        self.col = col
+        self.iid = iid
 
 
 class _TreeviewCompat(QTreeWidget):
@@ -280,11 +280,22 @@ class _TreeviewCompat(QTreeWidget):
         super().__init__(parent)
         self.setRootIsDecorated(False)
         self.setAlternatingRowColors(True)
+        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._items_by_iid: dict[str, QTreeWidgetItem] = {}
         self._iids_by_item_id: dict[int, str] = {}
         self._auto_id = 0
         self._cols: list[str] = []
+        self._space_callbacks: list = []
+
+    def keyPressEvent(self, event):
+        if event is not None and event.key() == Qt.Key.Key_Space and self._space_callbacks:
+            shim = _EventShim()
+            for cb in list(self._space_callbacks):
+                cb(shim)
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def winfo_exists(self) -> bool:
         return True
@@ -442,25 +453,45 @@ class _TreeviewCompat(QTreeWidget):
         if sb:
             sb.setValue(sb.value() + int(number) * sb.singleStep())
 
+    def _build_cell_event_shim(self, item, col: int) -> _EventShim:
+        col_idx = int(col) if col is not None else 0
+        cell_rect = self.visualRect(self.indexFromItem(item, max(0, col_idx)))
+        if not cell_rect.isValid():
+            cell_rect = self.visualItemRect(item)
+        iid = self._iids_by_item_id.get(id(item)) or item.data(0, Qt.ItemDataRole.UserRole) or ""
+        return _EventShim(
+            x=cell_rect.center().x(),
+            y=cell_rect.center().y(),
+            col=col_idx,
+            iid=str(iid),
+        )
+
     def bind(self, event: str, callback):
         if "TreeviewSelect" in event:
             self.itemSelectionChanged.connect(lambda: callback(None))
         elif "<Button-1>" in event:
             self.itemClicked.connect(
-                lambda item, col: callback(
-                    _EventShim(x=10, y=self.visualItemRect(item).center().y())
-                )
+                lambda item, col: callback(self._build_cell_event_shim(item, col))
             )
         elif "<Double-1>" in event:
             self.itemDoubleClicked.connect(
-                lambda item, col: callback(
-                    _EventShim(x=10, y=self.visualItemRect(item).center().y())
-                )
+                lambda item, col: callback(self._build_cell_event_shim(item, col))
             )
+        elif "space" in event.lower():
+            self._space_callbacks.append(callback)
         elif "<Button-3>" in event:
             def _on_ctx(pt: QPoint):
                 gpos = self.viewport().mapToGlobal(pt)
-                callback(_EventShim(x=pt.x(), y=pt.y(), x_root=gpos.x(), y_root=gpos.y()))
+                col_idx = self.columnAt(int(pt.x()))
+                callback(
+                    _EventShim(
+                        x=pt.x(),
+                        y=pt.y(),
+                        x_root=gpos.x(),
+                        y_root=gpos.y(),
+                        col=col_idx,
+                    )
+                )
             self.customContextMenuRequested.connect(_on_ctx)
 
 
@@ -482,44 +513,38 @@ class PartitionPage(QWidget):
         h_vbox.setContentsMargins(0, 0, 0, 0)
         h_vbox.setSpacing(6)
 
-        # Dòng 1: Cấu hình Chip, Flash, Đơn vị, Tự căn chỉnh + Hoàn tác / Làm lại / Hướng dẫn
-        # FlowLayout: tự xuống dòng khi cửa sổ hẹp thay vì cắt chữ / chồng nút
-        row_top = FlowLayout(h_spacing=6, v_spacing=6)
+        # Dòng 1: Cấu hình Chip, Flash, Đọc từ chip | Mẫu, Quét, Mở, Lưu | Hoàn tác, Làm lại, Sổ tay
+        row_tools = FlowLayout(h_spacing=4, v_spacing=5)
 
-        self.cb_part_chip = _ComboCompat(header_card, min_fit_width=95)
-        chip_names = ["(Chưa chọn)"] + [c.name for c in CHIP_FAMILY_DATABASE.values()]
+        self.cb_part_chip = _ComboCompat(header_card, fit_to_content=False, min_fit_width=160)
+        chip_names = ["auto"] + [c.name for c in CHIP_FAMILY_DATABASE.values()]
         self.cb_part_chip.addItems(chip_names)
-        row_top.addWidget(make_group(header_card, QLabel("Chip:", header_card), self.cb_part_chip))
+        chip_fm = self.cb_part_chip.fontMetrics()
+        chip_w = max([160] + [chip_fm.horizontalAdvance(n) + 42 for n in chip_names])
+        self.cb_part_chip.setFixedWidth(chip_w)
+        if self.cb_part_chip.view():
+            self.cb_part_chip.view().setMinimumWidth(max(chip_w, 195))
+        row_tools.addWidget(make_group(header_card, QLabel("Chip:", header_card), self.cb_part_chip))
 
-        self.cb_part_flash = _ComboCompat(header_card, min_fit_width=76)
+        self.cb_part_flash = _ComboCompat(header_card, fit_to_content=False, min_fit_width=78)
         self.cb_part_flash.addItems([opt[0] for opt in FLASH_SIZE_OPTIONS])
-        self.cb_part_flash.setCurrentText("4 MB (Chuẩn)")
-        row_top.addWidget(make_group(header_card, QLabel("Flash:", header_card), self.cb_part_flash))
+        self.cb_part_flash.setCurrentText("4 MB")
+        flash_fm = self.cb_part_flash.fontMetrics()
+        flash_w = max([78] + [flash_fm.horizontalAdvance(opt[0]) + 40 for opt in FLASH_SIZE_OPTIONS])
+        self.cb_part_flash.setFixedWidth(flash_w)
+        if self.cb_part_flash.view():
+            self.cb_part_flash.view().setMinimumWidth(max(flash_w, 90))
+        row_tools.addWidget(make_group(header_card, QLabel("Flash:", header_card), self.cb_part_flash))
 
-        self.cb_part_mode = _ComboCompat(header_card, min_fit_width=115)
-        self.cb_part_mode.addItems(["Thập phân (KB/MB)", "Hệ HEX (0x...)", "Song song (HEX + KB)"])
-        row_top.addWidget(make_group(header_card, QLabel("Đơn vị:", header_card), self.cb_part_mode))
+        self.btn_part_read_hw = _ButtonCompat("Đọc từ chip", header_card)
+        self.btn_part_read_hw.setProperty("accent", "true")
+        bind_themed_icon(self.btn_part_read_hw, "chip", role="on_accent")
+        self.btn_part_read_hw.setToolTip("Tự động dò Chip/Flash và đọc bảng phân vùng từ mạch vào trình thiết kế")
+        row_tools.addWidget(self.btn_part_read_hw)
 
-        self.chk_auto_align = QCheckBox("Tự căn 4K/64K", header_card)
-        self.var_auto_align = _TkVarCompat(self.chk_auto_align, default=True)
-        row_top.addWidget(self.chk_auto_align)
-
-        row_top.addStretch(1)
-
-        # Nút công cụ nhỏ dạng biểu tượng (có tooltip) để tiết kiệm chiều ngang khi cửa sổ hẹp
-        self.btn_part_help = _ButtonCompat("", header_card)
-        bind_themed_icon(self.btn_part_help, "info")
-        self.btn_part_help.setToolTip("Sổ tay hướng dẫn & tra cứu bảng phân vùng")
-        self.btn_part_help.setAccessibleName("Sổ tay")
-        row_top.addWidget(self.btn_part_help)
-
-        h_vbox.addLayout(row_top)
-
-        # Dòng 2: Các công cụ Mẫu, Dự án, Mở/Lưu CSV, Dồn và Căn | Hoàn tác / Làm lại
-        row_tools = FlowLayout(h_spacing=6, v_spacing=6)
-
-        self.btn_presets = _ButtonCompat("Mẫu Chuẩn...", header_card)
+        self.btn_presets = _ButtonCompat("Mẫu", header_card)
         bind_themed_icon(self.btn_presets, "folder")
+        self.btn_presets.setToolTip("Chọn mẫu bảng phân vùng chuẩn ESP-IDF / Arduino")
         row_tools.addWidget(self.btn_presets)
 
         self.btn_part_scan = _ButtonCompat("Quét Dự Án", header_card)
@@ -534,10 +559,6 @@ class PartitionPage(QWidget):
         bind_themed_icon(self.btn_save_csv, "save")
         self.btn_save_csv.setToolTip("Lưu toàn bộ bảng phân vùng ra file CSV chuẩn ESP-IDF")
         row_tools.addWidget(self.btn_save_csv)
-
-        self.btn_autopack = _ButtonCompat("Dồn và Căn 4K/64K", header_card)
-        bind_themed_icon(self.btn_autopack, "checkmark")
-        row_tools.addWidget(self.btn_autopack)
 
         row_tools.addStretch(1)
 
@@ -555,25 +576,40 @@ class PartitionPage(QWidget):
         self.btn_part_redo.setEnabled(False)
         row_tools.addWidget(self.btn_part_redo)
 
+        self.btn_part_help = _ButtonCompat("", header_card)
+        bind_themed_icon(self.btn_part_help, "info")
+        self.btn_part_help.setToolTip("Sổ tay hướng dẫn & tra cứu bảng phân vùng")
+        self.btn_part_help.setAccessibleName("Sổ tay")
+        row_tools.addWidget(self.btn_part_help)
+
         for hdr_btn in (
+            self.btn_part_read_hw,
             self.btn_presets,
             self.btn_part_scan,
             self.btn_open_csv,
             self.btn_save_csv,
-            self.btn_autopack,
         ):
-            hdr_btn.setStyleSheet("padding: 0 10px;")
+            hdr_btn.setStyleSheet("padding: 0 7px;")
+
+        for icon_btn in (
+            self.btn_part_undo,
+            self.btn_part_redo,
+            self.btn_part_help,
+        ):
+            icon_btn.setFixedWidth(30)
+            icon_btn.setStyleSheet("padding: 0;")
         for icon_btn in (self.btn_part_undo, self.btn_part_redo, self.btn_part_help):
-            icon_btn.setStyleSheet("padding: 0 8px;")
+            icon_btn.setStyleSheet("padding: 0 6px;")
 
         h_vbox.addLayout(row_tools)
 
         header_card.body_layout.addLayout(h_vbox)
         root_layout.addWidget(header_card)
 
-        # 2. Card Sơ đồ ổ đĩa trực quan (MiniTool Partition Map)
+        # 2. Card Sơ đồ ổ đĩa trực quan (MiniTool Partition Map - chiều cao 42px đồng bộ Tab 5)
         map_card = Card("Sơ Đồ Thanh Ổ Đĩa Flash (MiniTool Partition Map)", icon_name="save", parent=self)
         self.disk_map = DiskMapWidget(map_card)
+        self.disk_map.setFixedHeight(42)
         map_card.body_layout.addWidget(self.disk_map)
 
         self.lbl_flash_stats = _LabelCompat("", map_card)
@@ -615,7 +651,7 @@ class PartitionPage(QWidget):
 
         t_layout.addWidget(self.part_tree, 1)
 
-        # Thanh nút dưới bảng: Chia 2 nhóm Trái (Chỉnh sửa bảng) | Phải (Thao tác Phần cứng Chip)
+        # Thanh nút dưới bảng: chỉnh sửa hàng bảng phân vùng
         tbl_actions = FlowLayout(h_spacing=4, v_spacing=4)
 
         self.btn_add_part = _ButtonCompat("Thêm dòng", table_card)
@@ -634,39 +670,11 @@ class PartitionPage(QWidget):
         bind_themed_icon(self.btn_part_clear, "delete")
         tbl_actions.addWidget(self.btn_part_clear)
 
-        tbl_actions.addStretch(1)
-
-        self.btn_part_read_hw = _ButtonCompat("Đọc bảng từ Chip", table_card)
-        self.btn_part_read_hw.setProperty("accent", "true")
-        bind_themed_icon(self.btn_part_read_hw, "chip", role="on_accent")
-        tbl_actions.addWidget(self.btn_part_read_hw)
-
-        self.btn_part_flash_hw = _ButtonCompat("Nạp bảng vào Chip", table_card)
-        bind_themed_icon(self.btn_part_flash_hw, "flash")
-        tbl_actions.addWidget(self.btn_part_flash_hw)
-
-        self.btn_part_dump_hw = _ButtonCompat("Dump vùng", table_card)
-        bind_themed_icon(self.btn_part_dump_hw, "save")
-        tbl_actions.addWidget(self.btn_part_dump_hw)
-
-        self.btn_part_write_hw = _ButtonCompat("Ghi vùng", table_card)
-        bind_themed_icon(self.btn_part_write_hw, "folder")
-        tbl_actions.addWidget(self.btn_part_write_hw)
-
-        self.btn_part_erase_hw = _ButtonCompat("Xóa vùng", table_card)
-        bind_themed_icon(self.btn_part_erase_hw, "delete")
-        tbl_actions.addWidget(self.btn_part_erase_hw)
-
         for action_btn in (
             self.btn_add_part,
             self.btn_edit_part,
             self.btn_del_part,
             self.btn_part_clear,
-            self.btn_part_read_hw,
-            self.btn_part_flash_hw,
-            self.btn_part_dump_hw,
-            self.btn_part_write_hw,
-            self.btn_part_erase_hw,
         ):
             action_btn.setStyleSheet("padding: 0 10px;")
 
@@ -674,11 +682,3 @@ class PartitionPage(QWidget):
 
         table_card.body_layout.addLayout(t_layout)
         root_layout.addWidget(table_card, 1)
-
-        # 4. Panel Nhật ký phần cứng thu gọn
-        self.log_panel = CollapsiblePanel(
-            "Nhật Ký Thao Tác Phần Cứng Phân Vùng", collapsed=True, parent=self
-        )
-        self.part_log_txt = LogView(self.log_panel)
-        self.log_panel.add_widget(self.part_log_txt)
-        root_layout.addWidget(self.log_panel)

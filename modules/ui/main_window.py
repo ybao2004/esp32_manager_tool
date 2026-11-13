@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Cửa sổ chính của ứng dụng ESP32 Manager Tool (MainWindow) v1.4.
+Cửa sổ chính của ứng dụng ESP32 Manager Tool (MainWindow) v1.5.
 Kiến trúc thuần PyQt6 với Sidebar điều hướng thu gọn, Thanh kết nối toàn cục ConnectionBar,
 QStackedWidget chứa 6 trang giao diện Kỹ thuật (Sáng/Tối) và hệ thống quản lý tiến trình thống nhất.
 """
@@ -54,7 +54,7 @@ class _NotebookCompat:
 
     _TAB_NAMES = [
         'Kiểm tra Phần cứng',
-        'Serial Monitor & Điều khiển',
+        'Serial Monitor & Log',
         'Nạp Flash Firmware (.bin)',
         'Phân vùng Bộ nhớ (Partition Wizard)',
         'Sao lưu & Nhân bản (Backup / Clone)',
@@ -265,7 +265,7 @@ class MainWindow(
     BackupCloneTabMixin,
     AboutUpdateMixin
 ):
-    """Cửa sổ chính ứng dụng ESP32 Manager Tool v1.4"""
+    """Cửa sổ chính ứng dụng ESP32 Manager Tool v1.5"""
 
     def __init__(self, root=None, auto_start: bool = True, parent: Optional[QWidget] = None, progress_callback=None):
         QMainWindow.__init__(self, parent)
@@ -349,6 +349,8 @@ class MainWindow(
         self.saved_flash_baud = "460800"
         self.saved_flash_chip = "auto"
         self.saved_flash_erase = False
+        self.saved_auto_align = True
+        self.saved_display_unit = "Thập phân"
 
         # Đọc cấu hình từ file
         self._report_startup_step(48, "Đang nạp cấu hình & giao diện Engineering...")
@@ -470,11 +472,13 @@ class MainWindow(
         # 5. Gán thuộc tính ủy quyền tương thích 100% với Controllers & Tests
         self._setup_attribute_delegations()
 
-        # 6. Khởi tạo nghiệp vụ Tab 4 (Partition Table)
+        # 6. Khởi tạo nghiệp vụ Tab 4 (Partition Table) & Tab 5 (Sao lưu)
         if hasattr(self, "create_partition_tab"):
             self.create_partition_tab()
         if hasattr(self, "create_backup_tab"):
             self.create_backup_tab()
+        if hasattr(self, "_on_display_mode_changed"):
+            self._on_display_mode_changed()
 
         # 7. Gắn đồng bộ Theme cho StatusBar & các widget vẽ trực tiếp
         ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
@@ -562,6 +566,23 @@ class MainWindow(
             if index < len(self.f_buttons):
                 self.f_buttons[index].clicked.connect(lambda _=False, x=i: self.on_control_click(x))
 
+        # Monitor sub-tab Log (Nhật ký tập trung Tab 1, 3, 4, 5)
+        self.monitor_subtabs = self.page_monitor.sub_tabs
+        self.central_log_txt = self.page_monitor.central_log_txt
+        self.cb_log_source_filter = self.page_monitor.cb_log_source_filter
+        self.cb_log_autoscroll = self.page_monitor.cb_log_autoscroll
+        self.var_log_autoscroll = self.page_monitor.var_log_autoscroll
+        self.cb_log_timestamp = self.page_monitor.cb_log_timestamp
+        self.var_log_timestamp = self.page_monitor.var_log_timestamp
+        self.btn_save_central_log = self.page_monitor.btn_save_central_log
+        self.btn_clear_central_log = self.page_monitor.btn_clear_central_log
+
+        self.cb_log_source_filter.currentTextChanged.connect(self.on_central_log_filter_changed)
+        self.cb_log_autoscroll.toggled.connect(self.on_central_log_autoscroll_toggled)
+        self.cb_log_timestamp.toggled.connect(self.on_central_log_timestamp_toggled)
+        self.btn_save_central_log.clicked.connect(lambda: self.on_save_central_log())
+        self.btn_clear_central_log.clicked.connect(self.on_clear_central_log)
+
         # Flasher
         self.flash_chip_cb = self.page_flasher.flash_chip_cb
         self.flash_baud_cb = self.page_flasher.flash_baud_cb
@@ -569,7 +590,6 @@ class MainWindow(
         self.var_flash_erase = self.page_flasher.var_flash_erase
         self.btn_erase_flash = self.page_flasher.btn_erase_flash
         self.btn_erase_only = self.page_flasher.btn_erase_flash
-        self.btn_erase_nvs = self.page_flasher.btn_erase_nvs
         self.flash_file_rows = self.page_flasher.flash_file_rows
         self.btn_flash_write = self.page_flasher.btn_flash_write
         self.flash_prog = self.status_prog
@@ -578,24 +598,19 @@ class MainWindow(
         self.flasher_txt = self.page_flasher.flasher_txt
 
         self.btn_erase_flash.clicked.connect(self.on_erase_flash_click)
-        self.btn_erase_nvs.clicked.connect(self.on_erase_nvs_click)
         self.btn_flash_write.clicked.connect(self.on_flash_write_click)
         self.btn_clear_flasher_log.clicked.connect(lambda: self.on_clear(self.flasher_txt))
 
-        # Partition
+        # Partition (Đơn vị & Tự căn 4K/64K dùng chung từ trang Cài Đặt)
         self.cb_part_chip = self.page_partition.cb_part_chip
         self.part_chip_var = self.page_partition.cb_part_chip
         self.cb_part_flash = self.page_partition.cb_part_flash
         self.part_flash_var = self.page_partition.cb_part_flash
-        self.cb_part_mode = self.page_partition.cb_part_mode
-        self.part_mode_var = self.page_partition.cb_part_mode
-        self.chk_auto_align = self.page_partition.chk_auto_align
-        self.var_auto_align = self.page_partition.var_auto_align
+        self.cb_part_mode = self.page_settings.cb_display_unit
+        self.part_mode_var = self.page_settings.cb_display_unit
+        self.chk_auto_align = self.page_settings.chk_auto_align
+        self.var_auto_align = self.page_settings.var_auto_align
         self.btn_part_read_hw = self.page_partition.btn_part_read_hw
-        self.btn_part_flash_hw = self.page_partition.btn_part_flash_hw
-        self.btn_part_dump_hw = self.page_partition.btn_part_dump_hw
-        self.btn_part_write_hw = self.page_partition.btn_part_write_hw
-        self.btn_part_erase_hw = self.page_partition.btn_part_erase_hw
         self.btn_part_scan = self.page_partition.btn_part_scan
         self.btn_part_clear = self.page_partition.btn_part_clear
         self.btn_part_help = self.page_partition.btn_part_help
@@ -607,23 +622,15 @@ class MainWindow(
         self.btn_add_part = self.page_partition.btn_add_part
         self.btn_edit_part = self.page_partition.btn_edit_part
         self.btn_del_part = self.page_partition.btn_del_part
-        self.btn_autopack = self.page_partition.btn_autopack
         self.btn_presets = self.page_partition.btn_presets
         self.btn_open_csv = self.page_partition.btn_open_csv
         self.btn_save_csv = self.page_partition.btn_save_csv
-        self.part_log_txt = self.page_partition.part_log_txt
 
         self.cb_part_chip.currentTextChanged.connect(lambda _: self._on_chip_changed())
         self.cb_part_chip.activated.connect(lambda _: self._on_chip_changed())
         self.cb_part_flash.currentTextChanged.connect(lambda _: self._on_flash_size_changed())
-        self.cb_part_mode.currentTextChanged.connect(lambda _: self._on_display_mode_changed())
-        self.chk_auto_align.toggled.connect(lambda _: self._on_toggle_auto_align())
 
         self.btn_part_read_hw.clicked.connect(self._hw_read_partition_table)
-        self.btn_part_flash_hw.clicked.connect(self._hw_flash_partition_table)
-        self.btn_part_dump_hw.clicked.connect(self._hw_dump_selected_partition)
-        self.btn_part_write_hw.clicked.connect(self._hw_write_selected_partition)
-        self.btn_part_erase_hw.clicked.connect(self._hw_erase_selected_partition)
         self.btn_part_scan.clicked.connect(self._action_scan_project)
         self.btn_part_clear.clicked.connect(self._action_clear_all_partitions)
         self.btn_part_help.clicked.connect(self._open_handbook_dialog)
@@ -632,7 +639,6 @@ class MainWindow(
         self.btn_add_part.clicked.connect(lambda: self._action_add_partition())
         self.btn_edit_part.clicked.connect(self._action_edit_selected)
         self.btn_del_part.clicked.connect(self._action_delete_selected)
-        self.btn_autopack.clicked.connect(self._action_auto_pack)
         self.btn_presets.clicked.connect(self._action_presets)
         self.btn_open_csv.clicked.connect(self._action_open_file)
         self.btn_save_csv.clicked.connect(self._action_save_csv)
@@ -655,6 +661,8 @@ class MainWindow(
         self.btn_backup_to_folder = self.page_backup.btn_backup_to_folder
         self.btn_backup_full_chip = self.page_backup.btn_backup_full_chip
         self.btn_backup_to_flasher = self.page_backup.btn_backup_to_flasher
+        self.btn_backup_edit_data = self.page_backup.btn_backup_edit_data
+        self.btn_backup_erase_data = self.page_backup.btn_backup_erase_data
         self.var_clone_source_mode = self.page_backup.var_clone_source_mode
         self.btn_sel_all_targets = self.page_backup.btn_sel_all_targets
         self.clone_target_ports_frame = self.page_backup.clone_target_ports_frame
@@ -679,6 +687,8 @@ class MainWindow(
         self.btn_backup_to_folder.clicked.connect(self._hw_backup_selected_to_folder)
         self.btn_backup_full_chip.clicked.connect(self._hw_backup_full_flash_single_file)
         self.btn_backup_to_flasher.clicked.connect(self._action_send_backup_to_flasher_tab)
+        self.btn_backup_edit_data.clicked.connect(self._hw_open_backup_partition_data_dialog)
+        self.btn_backup_erase_data.clicked.connect(self._hw_erase_selected_backup_partition_data)
         self.btn_sel_all_targets.clicked.connect(lambda: self._select_all_clone_targets(True))
         self.btn_direct_clone.clicked.connect(self._hw_start_direct_multi_board_clone)
 
@@ -748,44 +758,9 @@ class MainWindow(
 
     def _create_main_menu(self):
         menubar = self.menuBar()
-
-        # Menu Tệp
-        menu_file = menubar.addMenu("Tệp")
-        act_open = menu_file.addAction("Mở Bảng Phân Vùng...")
-        act_open.triggered.connect(lambda: (self.notebook.select(self.partition_tab), self._action_open_file()))
-        act_save = menu_file.addAction("Lưu CSV")
-        act_save.triggered.connect(lambda: (self.notebook.select(self.partition_tab), self._action_save_csv()))
-        menu_file.addSeparator()
-        act_exit = menu_file.addAction("Thoát")
-        act_exit.triggered.connect(self.close)
-
-        # Menu Công cụ
-        menu_tools = menubar.addMenu("Công cụ")
-        act_inspect = menu_tools.addAction("Kiểm tra Chip ESP")
-        act_inspect.triggered.connect(lambda: (self.notebook.select(self.inspector_tab), self.on_detect()))
-        act_reset = menu_tools.addAction("Reset ESP")
-        act_reset.triggered.connect(self.on_reset_esp)
-        act_erase = menu_tools.addAction("Xóa Toàn Bộ Flash")
-        act_erase.triggered.connect(self.on_erase_flash_click)
-
-        # Menu Theme (Chỉ giữ phong cách Kỹ thuật Sáng/Tối)
-        menu_theme = menubar.addMenu("Chủ đề")
-        act_e_dark = menu_theme.addAction("Kỹ thuật Chuyên sâu (Tối)")
-        act_e_dark.triggered.connect(lambda: self._apply_theme_selection("engineering", True))
-        act_e_light = menu_theme.addAction("Kỹ thuật Chuyên sâu (Sáng)")
-        act_e_light.triggered.connect(lambda: self._apply_theme_selection("engineering", False))
-
-        # Menu Cài đặt
-        menu_settings = menubar.addMenu("Cài đặt")
-        act_settings = menu_settings.addAction("Cài đặt Hệ thống...")
-        act_settings.triggered.connect(lambda: self.notebook.select(self.settings_tab))
-
-        # Menu Giới thiệu
-        menu_about = menubar.addMenu("Giới thiệu")
-        act_about = menu_about.addAction("Thông tin Phiên bản & Bản quyền...")
-        act_about.triggered.connect(self.open_about_dialog)
-        act_check_update = menu_about.addAction("Kiểm tra Cập nhật...")
-        act_check_update.triggered.connect(self.open_update_dialog)
+        menubar.clear()
+        menubar.setVisible(False)
+        menubar.setFixedHeight(0)
 
     # Dispatcher Thread-safe Call
     def ui_call(self, fn, *args, delay_ms: int = 0):
@@ -949,6 +924,11 @@ class MainWindow(
                         self.saved_flash_baud = str(config.get("flash_baud", "460800") or "460800")
                         self.saved_flash_chip = str(config.get("flash_chip", "auto") or "auto")
                         self.saved_flash_erase = config.get("flash_erase", False) is True
+                        self.saved_auto_align = config.get("partition_auto_align", True) is not False
+                        unit_val = str(config.get("display_unit_mode", "Thập phân") or "Thập phân")
+                        self.saved_display_unit = (
+                            unit_val if unit_val in ("Thập phân", "Hệ HEX", "Song song") else "Thập phân"
+                        )
 
                         loaded_labels = config.get("control_labels", {})
                         if isinstance(loaded_labels, dict):
@@ -990,6 +970,12 @@ class MainWindow(
         flash_baud_val = self.flash_baud_cb.currentText().strip() if hasattr(self, 'flash_baud_cb') else self.saved_flash_baud
         flash_chip_val = self.flash_chip_cb.currentText().strip() if hasattr(self, 'flash_chip_cb') else self.saved_flash_chip
         flash_erase_val = self.var_flash_erase.get() if hasattr(self, 'var_flash_erase') else self.saved_flash_erase
+        auto_align_val = bool(self.var_auto_align.get()) if hasattr(self, 'var_auto_align') else bool(getattr(self, "saved_auto_align", True))
+        display_unit_val = (
+            self.part_mode_var.get()
+            if hasattr(self, 'part_mode_var') and self.part_mode_var.get() in ("Thập phân", "Hệ HEX", "Song song")
+            else str(getattr(self, "saved_display_unit", "Thập phân") or "Thập phân")
+        )
 
         config = {
             "wifi_credentials": self.saved_wifi_credentials,
@@ -1010,7 +996,9 @@ class MainWindow(
             "flash_rows": flash_rows_data,
             "flash_baud": flash_baud_val,
             "flash_chip": flash_chip_val,
-            "flash_erase": flash_erase_val
+            "flash_erase": flash_erase_val,
+            "partition_auto_align": auto_align_val,
+            "display_unit_mode": display_unit_val,
         }
         temp_config = f"{CONFIG_FILE}.{os.getpid()}.tmp"
         try:
@@ -1046,6 +1034,8 @@ class MainWindow(
             self.saved_auto_scan = True
             self.saved_auto_select_new = True
             self.saved_auto_check_updates = False
+            self.saved_auto_align = True
+            self.saved_display_unit = "Thập phân"
             if hasattr(self, "var_hide_bt_ports"):
                 self.var_hide_bt_ports.set(True)
             if hasattr(self, "var_auto_scan"):
@@ -1071,6 +1061,8 @@ class MainWindow(
                 self.update_tab5_led_blink_visibility()
             if hasattr(self, "page_settings") and hasattr(self.page_settings, "load_from_core"):
                 self.page_settings.load_from_core()
+            if hasattr(self, "_on_display_mode_changed"):
+                self._on_display_mode_changed()
             if hasattr(self, "refresh_ports_dropdown"):
                 self.refresh_ports_dropdown()
             self.save_config()
@@ -1433,7 +1425,7 @@ class MainWindow(
                         pass
 
         # 5. Dừng toàn bộ QTimer (LogView flush & các QTimer con)
-        for attr in ("inspector_txt", "raw_log_view", "monitor_txt", "flasher_txt", "part_log_txt", "backup_log_txt"):
+        for attr in ("inspector_txt", "raw_log_view", "monitor_txt", "flasher_txt", "central_log_txt", "backup_log_txt"):
             lv = getattr(self, attr, None)
             if lv is not None and hasattr(lv, "stop"):
                 try:

@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
 """
-Trang Sao Lưu & Nhân Bản Đa Bo Mạch (BackupPage - v1.6).
-- Thanh trên cùng: Board Gốc, Làm mới COM, Baudrate, [Đọc Cấu Trúc Từ Chip Nguồn] | [Chọn Tất Cả], [Bỏ Chọn], [Chỉ Chọn Firmware], [x] Cắt trống 0xFF
-- Giữa: Sơ đồ phân vùng trên Chip gốc (DiskMapWidget) + Thống kê MAC / Dung lượng
+Trang Sao Lưu & Nhân Bản Đa Bo Mạch (BackupPage - v1.5).
+- Thanh trên cùng: Board Gốc, Làm mới COM, Baudrate, [Đọc chip nguồn] | [Chọn Tất Cả], [Bỏ Chọn], [Chỉ Chọn Firmware], [x] Cắt trống 0xFF
+- Giữa: Sơ đồ phân vùng trên Chip gốc (DiskMapWidget 42px) + Thống kê MAC / Dung lượng
 - Dưới (Chia đôi 60% Trái / 40% Phải):
-  + Trái (60%): Bảng phân vùng tối ưu độ rộng cột (cột Mã SHA-256 / Trạng thái stretch=1, không sinh thanh cuộn ngang) + 3 nút hành động rõ ràng
-  + Phải (40%): Card Sao Chép Trực Tiếp Đa Mạch + Card Nhật ký Sao lưu & Nhân bản
+  + Trái (60%): Bảng phân vùng tối ưu độ rộng cột + thanh nút Sao lưu & Thao tác dữ liệu Non-Firmware + Menu chuột phải
+  + Phải (40%): Card Sao Chép Trực Tiếp Đa Mạch (COM đích căn trái gọn gàng) + Card Nhật ký Sao lưu & Nhân bản
 """
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
-    QPushButton, QCheckBox, QRadioButton, QSplitter, QFrame, QHeaderView, QScrollArea
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
+    QPushButton, QCheckBox, QRadioButton, QSplitter, QFrame, QHeaderView,
+    QScrollArea, QStyle, QStyleOptionButton, QStyleOptionViewItem, QStyledItemDelegate
 )
-from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtCore import Qt, QRect, pyqtSignal
 from modules.config import FLASH_BAUDS
 from modules.ui.widgets.card import Card
 from modules.ui.widgets.disk_map import DiskMapWidget
@@ -21,6 +22,32 @@ from modules.ui.pages.partition_page import (
     _TreeviewCompat, _ComboCompat, _TkVarCompat, _LabelCompat, _ButtonCompat
 )
 from modules.ui.icons import get_icon, bind_themed_icon
+
+
+class _BackupCheckDelegate(QStyledItemDelegate):
+    """Vẽ hộp kiểm vector căn giữa ô ở cột Chọn (thay cho text thô '[x]' / '[ ]')."""
+
+    def paint(self, painter, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        checked = "[x]" in str(opt.text or "").lower()
+        opt.text = ""
+        style = opt.widget.style() if opt.widget is not None else QApplication.style()
+        style.drawControl(QStyle.ControlElement.CE_ItemViewItem, opt, painter, opt.widget)
+
+        cb_opt = QStyleOptionButton()
+        cb_opt.state = QStyle.StateFlag.State_Enabled if (opt.state & QStyle.StateFlag.State_Enabled) else QStyle.StateFlag.State_None
+        if opt.state & QStyle.StateFlag.State_MouseOver:
+            cb_opt.state |= QStyle.StateFlag.State_MouseOver
+        cb_opt.state |= QStyle.StateFlag.State_On if checked else QStyle.StateFlag.State_Off
+
+        pm = style.pixelMetric(QStyle.PixelMetric.PM_IndicatorWidth, cb_opt, opt.widget)
+        if pm <= 0:
+            pm = 18
+        x = opt.rect.x() + max(0, (opt.rect.width() - pm) // 2)
+        y = opt.rect.y() + max(0, (opt.rect.height() - pm) // 2)
+        cb_opt.rect = QRect(x, y, pm, pm)
+        style.drawPrimitive(QStyle.PrimitiveElement.PE_IndicatorCheckBox, cb_opt, painter, opt.widget)
 
 
 class _TkVarStringCompat:
@@ -37,22 +64,35 @@ class _TkVarStringCompat:
 class _TargetContainer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._grid = QGridLayout(self)
-        self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setSpacing(6)
+        self._vbox = QVBoxLayout(self)
+        self._vbox.setContentsMargins(0, 0, 0, 0)
+        self._vbox.setSpacing(4)
+        self._hint_box = QVBoxLayout()
+        self._hint_box.setContentsMargins(0, 0, 0, 0)
+        self._hint_box.setSpacing(2)
+        self._flow = FlowLayout(h_spacing=16, v_spacing=6)
+        self._vbox.addLayout(self._hint_box)
+        self._vbox.addLayout(self._flow)
+
+    def set_hint_widget(self, widget: QWidget):
+        self._hint_box.addWidget(widget)
+
+    def add_target_widget(self, widget: QWidget):
+        self._flow.addWidget(widget)
 
     def winfo_children(self):
         return [c for c in self.children() if isinstance(c, QWidget)]
 
     def clear_children(self):
-        """Gỡ hoàn toàn toàn bộ widget con khỏi GridLayout để không bị kẹt checkbox cũ."""
-        while self._grid.count():
-            item = self._grid.takeAt(0)
-            w = item.widget() if item else None
-            if w is not None:
-                w.hide()
-                w.setParent(None)
-                w.deleteLater()
+        """Gỡ hoàn toàn toàn bộ widget con khỏi FlowLayout và hint box."""
+        for lay in (self._hint_box, self._flow):
+            while lay.count():
+                item = lay.takeAt(0)
+                w = item.widget() if item else None
+                if w is not None:
+                    w.hide()
+                    w.setParent(None)
+                    w.deleteLater()
         for child in list(self.winfo_children()):
             child.hide()
             child.setParent(None)
@@ -63,7 +103,7 @@ class _TargetContainer(QWidget):
 
 
 class BackupPage(QWidget):
-    """Trang Sao Lưu Phân Vùng & Nhân Bản Đa Bo Mạch Trực Tiếp (v1.8)"""
+    """Trang Sao Lưu Phân Vùng & Nhân Bản Đa Bo Mạch Trực Tiếp (v1.5)"""
 
     source_mode_changed = pyqtSignal(str)
 
@@ -121,7 +161,7 @@ class BackupPage(QWidget):
         )
         row_src.addWidget(make_group(top_card, QLabel("Baud:", top_card), self.cb_backup_baud))
 
-        self.btn_backup_read_chip = _ButtonCompat("Đọc Cấu Trúc Từ Chip Nguồn", top_card)
+        self.btn_backup_read_chip = _ButtonCompat("Đọc chip nguồn", top_card)
         self.btn_backup_read_chip.setProperty("accent", "true")
         bind_themed_icon(self.btn_backup_read_chip, "search", role="on_accent")
         self.btn_backup_read_chip.setStyleSheet("padding: 0 10px;")
@@ -149,13 +189,12 @@ class BackupPage(QWidget):
 
         # 2. Visual Disk Map
         map_card = Card(
-            "Sơ Đồ Phân Vùng Trên Chip Nguồn (Nhấp vào khối để Chọn / Bỏ chọn)",
+            "Sơ Đồ Phân Vùng Trên Chip Nguồn (Nhấp khối để chỉ định dòng)",
             icon_name="save",
             parent=content,
         )
         self.backup_disk_map = DiskMapWidget(map_card)
-        self.backup_disk_map.setMinimumHeight(38)
-        self.backup_disk_map.setMaximumHeight(54)
+        self.backup_disk_map.setFixedHeight(42)
         map_card.body_layout.addWidget(self.backup_disk_map)
 
         self.lbl_backup_chip_summary = _LabelCompat("", map_card)
@@ -175,7 +214,7 @@ class BackupPage(QWidget):
         left_layout.setSpacing(6)
 
         left_card = Card(
-            "Danh Sách Phân Vùng Cần Sao Lưu (Nhấp dòng để [x] / [ ])",
+            "Danh Sách Phân Vùng Cần Sao Lưu (Bấm cột Chọn để tích / bỏ tích)",
             icon_name="folder",
             parent=left_widget,
         )
@@ -183,6 +222,10 @@ class BackupPage(QWidget):
         self.backup_tree = _TreeviewCompat(left_card)
         self.backup_tree.set_columns(cols)
         self.backup_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.backup_tree.setMouseTracking(True)
+        if self.backup_tree.viewport():
+            self.backup_tree.viewport().setMouseTracking(True)
+        self.backup_tree.setItemDelegateForColumn(0, _BackupCheckDelegate(self.backup_tree))
 
         headers = [
             ("checked", "Chọn", 50),
@@ -207,27 +250,47 @@ class BackupPage(QWidget):
         self.backup_tree.setMinimumHeight(60)
         left_card.body_layout.addWidget(self.backup_tree, 1)
 
-        btn_bar = FlowLayout(h_spacing=6, v_spacing=6)
+        btn_bar = FlowLayout(h_spacing=4, v_spacing=6)
 
-        self.btn_backup_to_folder = _ButtonCompat("Sao lưu vùng chọn", left_card)
+        self.btn_backup_to_folder = _ButtonCompat("Sao lưu vùng", left_card)
         self.btn_backup_to_folder.setProperty("accent", "true")
         bind_themed_icon(self.btn_backup_to_folder, "save", role="on_accent")
+        self.btn_backup_to_folder.setToolTip("Sao lưu các phân vùng đã tick [x] ra thư mục")
         btn_bar.addWidget(self.btn_backup_to_folder)
 
-        self.btn_backup_full_chip = _ButtonCompat("Sao lưu Toàn bộ Flash", left_card)
+        self.btn_backup_full_chip = _ButtonCompat("Sao lưu Full Flash", left_card)
         bind_themed_icon(self.btn_backup_full_chip, "save")
+        self.btn_backup_full_chip.setToolTip("Sao lưu toàn bộ Flash (0x0 -> hết dung lượng chip)")
         btn_bar.addWidget(self.btn_backup_full_chip)
 
-        self.btn_backup_to_flasher = _ButtonCompat("Đẩy sang Nạp Flash", left_card)
+        self.btn_backup_to_flasher = _ButtonCompat("Sang Nạp Flash", left_card)
         bind_themed_icon(self.btn_backup_to_flasher, "flash")
+        self.btn_backup_to_flasher.setToolTip("Đẩy tệp/thư mục vừa sao lưu sang Tab Nạp Firmware")
         btn_bar.addWidget(self.btn_backup_to_flasher)
+
+        self.btn_backup_edit_data = _ButtonCompat("Đọc/Sửa dữ liệu", left_card)
+        bind_themed_icon(self.btn_backup_edit_data, "edit")
+        self.btn_backup_edit_data.setToolTip(
+            "Chỉ áp dụng cho phân vùng dữ liệu (NVS, SPIFFS, LittleFS, FATFS...); khóa đối với Bootloader và Firmware App."
+        )
+        btn_bar.addWidget(self.btn_backup_edit_data)
+
+        self.btn_backup_erase_data = _ButtonCompat("Xóa dữ liệu", left_card)
+        self.btn_backup_erase_data.setProperty("danger_outline", "true")
+        bind_themed_icon(self.btn_backup_erase_data, "delete", role="danger")
+        self.btn_backup_erase_data.setToolTip(
+            "Xóa sạch dữ liệu trong phân vùng Non-Firmware đã chọn (không xóa Bootloader hoặc Firmware App)."
+        )
+        btn_bar.addWidget(self.btn_backup_erase_data)
 
         for b_btn in (
             self.btn_backup_to_folder,
             self.btn_backup_full_chip,
             self.btn_backup_to_flasher,
+            self.btn_backup_edit_data,
+            self.btn_backup_erase_data,
         ):
-            b_btn.setStyleSheet("padding: 0 10px;")
+            b_btn.setStyleSheet("padding: 0 7px;")
 
         btn_bar.addStretch(1)
         left_card.body_layout.addLayout(btn_bar)

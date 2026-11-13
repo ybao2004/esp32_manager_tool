@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Hộp thoại Giới thiệu (AboutDialog) và Kiểm tra Cập nhật (UpdateDialog) thuần PyQt6 (v1.4).
+Hộp thoại Giới thiệu (AboutDialog) và Kiểm tra Cập nhật (UpdateDialog) thuần PyQt6 (v1.5).
 Thay thế hoàn toàn modules/dialogs/settings_dialog.py cũ.
 """
 import os

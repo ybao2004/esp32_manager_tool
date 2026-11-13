@@ -5,9 +5,11 @@ ESP Tool & Hardware Inspector v2.0 - Tab 2: Serial Monitor & IoT Control Mixin
 import time
 import threading
 import codecs
+from collections import deque
 from datetime import datetime
 from modules.ui.models import END
 from modules.ui import dialogs_service as messagebox
+from modules.ui import dialogs_service as filedialog
 
 try:
     import serial
@@ -505,3 +507,187 @@ class MonitorTabMixin:
                 self.root.after(0, lambda msg=error_message: self.set_status(msg, "warning"))
 
         threading.Thread(target=trigger_hardware_reset, daemon=True).start()
+
+    # =========================================================================
+    # NHẬT KÝ TẬP TRUNG (SUB-TAB LOG CHO TAB 1, 3, 4, 5)
+    # =========================================================================
+
+    def _ensure_central_log_state(self):
+        if not hasattr(self, "_central_log_lock"):
+            self._central_log_lock = threading.Lock()
+        if not hasattr(self, "_central_log_records"):
+            max_lines = max(200, int(So_dong_serial_toi_da or 5000))
+            self._central_log_records = deque(maxlen=max_lines)
+        if not hasattr(self, "_central_log_source_filter"):
+            self._central_log_source_filter = "Tất cả"
+        if not hasattr(self, "_central_log_timestamps"):
+            self._central_log_timestamps = True
+        if not hasattr(self, "_central_log_autoscroll"):
+            self._central_log_autoscroll = True
+
+    @staticmethod
+    def _resolve_central_log_level(line_text: str, level: str | None = None) -> str:
+        tag_map = {
+            "red": "error",
+            "err": "error",
+            "error": "error",
+            "green": "success",
+            "ok": "success",
+            "success": "success",
+            "warn": "warning",
+            "warning": "warning",
+            "blue": "accent",
+            "accent": "accent",
+            "header": "header",
+            "muted": "muted",
+            "info": "info",
+        }
+        if isinstance(level, str) and level.strip():
+            mapped = tag_map.get(level.strip().lower())
+            if mapped:
+                return mapped
+
+        s = str(line_text or "").strip()
+        s_low = s.lower()
+        if (
+            s.startswith("E (")
+            or "[lỗi]" in s_low
+            or "[ngoại lệ]" in s_low
+            or "ngoại lệ:" in s_low
+            or "thất bại" in s_low
+            or s_low.startswith("lỗi")
+            or "error" in s_low
+            or "fatal" in s_low
+        ):
+            return "error"
+        if s.startswith("W (") or "[cảnh báo]" in s_low or "warning" in s_low:
+            return "warning"
+        if s.startswith("=== ") or s.startswith("--- "):
+            return "header"
+        if "[thành công]" in s_low or "thành công" in s_low or "hoàn tất" in s_low:
+            return "success"
+        if s.startswith("D (") or s.startswith("V ("):
+            return "muted"
+        return "info"
+
+    @staticmethod
+    def _format_central_log_line(ts_str: str, source_tab: str, clean_line: str, include_ts: bool) -> str:
+        if include_ts and ts_str:
+            return f"[{source_tab}] {ts_str} {clean_line}"
+        return f"[{source_tab}] {clean_line}"
+
+    def append_tab_log(self, source_tab: str, text: str, level: str | None = None):
+        """Ghi nhận 1 hoặc nhiều dòng log vào sub-tab Log với tiền tố [Tên Tab] ở đầu dòng."""
+        if text is None:
+            return
+        raw_text = str(text)
+        lines = [ln.rstrip("\r\n") for ln in raw_text.splitlines() if ln.strip()]
+        if not lines:
+            return
+
+        self._ensure_central_log_state()
+        tab_label = str(source_tab or "").strip() or "Hệ thống"
+        ts_str = datetime.now().strftime("[%H:%M:%S.%f")[:-3] + "]"
+
+        lines_to_display: list[tuple[str, str]] = []
+        with self._central_log_lock:
+            active_filter = self._central_log_source_filter or "Tất cả"
+            include_ts = bool(self._central_log_timestamps)
+            matches_filter = active_filter in ("Tất cả", "", tab_label)
+            for clean_line in lines:
+                resolved_lvl = self._resolve_central_log_level(clean_line, level)
+                self._central_log_records.append((ts_str, tab_label, clean_line, resolved_lvl))
+                if matches_filter:
+                    formatted = self._format_central_log_line(ts_str, tab_label, clean_line, include_ts)
+                    lines_to_display.append((formatted, resolved_lvl))
+
+        if lines_to_display:
+            log_widget = getattr(self, "central_log_txt", None)
+            if log_widget is not None:
+                for formatted, resolved_lvl in lines_to_display:
+                    log_widget.append_line(formatted, level=resolved_lvl)
+
+    def rebuild_central_log_view(self):
+        """Dựng lại khung hiển thị Log tổng hợp theo bộ lọc nguồn tab & dấu thời gian hiện tại."""
+        self._ensure_central_log_state()
+        log_widget = getattr(self, "central_log_txt", None)
+        if log_widget is None:
+            return
+        with self._central_log_lock:
+            snapshot = list(self._central_log_records)
+            active_filter = self._central_log_source_filter or "Tất cả"
+            include_ts = bool(self._central_log_timestamps)
+            autoscroll = bool(self._central_log_autoscroll)
+
+        log_widget.clear_log()
+        log_widget.autoscroll = autoscroll
+        for ts_str, source_tab, clean_line, resolved_lvl in snapshot:
+            if active_filter in ("Tất cả", "", source_tab):
+                formatted = self._format_central_log_line(ts_str, source_tab, clean_line, include_ts)
+                log_widget.append_line(formatted, level=resolved_lvl)
+
+    def on_central_log_filter_changed(self, selected: str | None = None):
+        self._ensure_central_log_state()
+        if selected is None and hasattr(self, "cb_log_source_filter"):
+            selected = self.cb_log_source_filter.get()
+        self._central_log_source_filter = str(selected or "Tất cả").strip() or "Tất cả"
+        self.rebuild_central_log_view()
+
+    def on_central_log_timestamp_toggled(self, checked: bool | None = None):
+        self._ensure_central_log_state()
+        if checked is None and hasattr(self, "var_log_timestamp"):
+            checked = self.var_log_timestamp.get()
+        self._central_log_timestamps = bool(checked)
+        self.rebuild_central_log_view()
+
+    def on_central_log_autoscroll_toggled(self, checked: bool | None = None):
+        self._ensure_central_log_state()
+        if checked is None and hasattr(self, "var_log_autoscroll"):
+            checked = self.var_log_autoscroll.get()
+        enabled = bool(checked)
+        self._central_log_autoscroll = enabled
+        log_widget = getattr(self, "central_log_txt", None)
+        if log_widget is not None:
+            log_widget.autoscroll = enabled
+            if enabled:
+                log_widget.see("end")
+
+    def on_clear_central_log(self):
+        self._ensure_central_log_state()
+        with self._central_log_lock:
+            self._central_log_records.clear()
+        log_widget = getattr(self, "central_log_txt", None)
+        if log_widget is not None:
+            log_widget.clear_log()
+        if hasattr(self, "set_status"):
+            self.set_status("Đã xóa nhật ký tổng hợp.", "info")
+
+    def on_save_central_log(self, file_path: str | None = None):
+        log_widget = getattr(self, "central_log_txt", None)
+        content = log_widget.text().strip() if log_widget is not None and hasattr(log_widget, "text") else ""
+        if not content:
+            messagebox.showinfo("Lưu Log", "Chưa có nội dung nhật ký để lưu.", parent=getattr(self, "root", None))
+            return False
+
+        target_path = file_path
+        if not target_path:
+            default_name = f"ESP32_Log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            target_path = filedialog.asksaveasfilename(
+                title="Lưu nhật ký tổng hợp (.txt)",
+                defaultextension=".txt",
+                initialfile=default_name,
+                filetypes=[("Text Files (*.txt)", "*.txt"), ("All Files (*.*)", "*.*")],
+                parent=getattr(self, "root", None),
+            )
+        if not target_path:
+            return False
+
+        try:
+            with open(target_path, "w", encoding="utf-8") as f:
+                f.write(content + "\n")
+            if hasattr(self, "set_status"):
+                self.set_status(f"Đã lưu nhật ký tổng hợp: {target_path}", "success")
+            return True
+        except Exception as e:
+            messagebox.showerror("Lỗi Lưu Log", f"Không thể lưu file log:\n{e}", parent=getattr(self, "root", None))
+            return False
