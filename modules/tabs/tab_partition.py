@@ -463,6 +463,7 @@ class PartitionTabMixin:
             self.part_tree.blockSignals(was_blocked)
 
         # 2. Cập nhật Sơ đồ MiniTool Disk Map
+        self._sync_flash_combo_to_table()
         flash_human = format_bytes_human(self.table.flash_size, compact=True)
         if not self.table.entries:
             self.disk_map.set_data([], self.table.flash_size, self.display_mode, None)
@@ -507,6 +508,35 @@ class PartitionTabMixin:
         # Cập nhật vị trí các nút bấm [+] và [-] trên Treeview
         if hasattr(self, "root") and self.root.winfo_exists():
             self.root.after(10, self._reposition_tree_buttons)
+
+    def _sync_flash_combo_to_table(self):
+        """Bảo đảm combo Flash luôn hiển thị đúng dung lượng thực của bảng (tránh lệch 4 MB vs 16 MB).
+
+        Chỉ cập nhật nhãn hiển thị (chặn signal) – không đẩy undo, không đổi dữ liệu bảng.
+        """
+        combo = getattr(self, "cb_part_flash", None)
+        if combo is None or not hasattr(combo, "count"):
+            return
+        target_mb = int(self.table.flash_size // (1024 * 1024)) if self.table.flash_size else 0
+        if target_mb <= 0:
+            return
+
+        def _mb_of(text: str) -> int:
+            head = str(text).strip().split(" ")[0]
+            return int(head) if head.isdigit() else -1
+
+        if _mb_of(combo.currentText()) == target_mb:
+            return
+        was_blocked = combo.blockSignals(True)
+        try:
+            for i in range(combo.count()):
+                if _mb_of(combo.itemText(i)) == target_mb:
+                    combo.setCurrentIndex(i)
+                    break
+            if hasattr(combo, "_sync_fit_width"):
+                combo._sync_fit_width()
+        finally:
+            combo.blockSignals(was_blocked)
 
     def _next_unique_partition_name(self, prefix: str = "part_") -> str:
         """Sinh tên phân vùng duy nhất không trùng lặp trong bảng hiện tại."""

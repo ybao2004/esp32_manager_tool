@@ -31,11 +31,17 @@ def populate_sample_data(window: InspectorApp):
     """Nạp dữ liệu mẫu chân thực vào giao diện để ảnh chụp có đầy đủ thông tin."""
     # 1. Thanh kết nối toàn cục
     if hasattr(window, "port_cb"):
+        if window.port_cb.findText("COM7") < 0:
+            window.port_cb.addItem("COM7")
         window.port_cb.setCurrentText("COM7")
     if hasattr(window, "baud_cb"):
         window.baud_cb.setCurrentText("115200")
-    if hasattr(window, "chip_badge"):
-        window.chip_badge.setText("ESP32-P4 · 16MB Flash · 32MB PSRAM")
+    if hasattr(window, "lbl_conn"):
+        window.lbl_conn.setText("ĐÃ KẾT NỐI: COM7 @ 115200 bps")
+        if hasattr(window, "_refresh_status_bar_theme"):
+            window._refresh_status_bar_theme()
+    if hasattr(window, "conn_bar"):
+        window.conn_bar.set_chip_badge_info("ESP32-P4 · 16MB Flash · 32MB PSRAM", is_active=True)
 
     # 2. Trang 1: Kiểm tra chip (Inspector - nạp báo cáo thật + 4 thẻ KPI)
     if hasattr(window, "_display_formatted_report"):
@@ -109,10 +115,6 @@ def populate_sample_data(window: InspectorApp):
             if "size_label" in row:
                 row["size_label"].setText(sz_txt)
 
-    if hasattr(window, "flash_prog"):
-        window.flash_prog.config(value=74)
-    if hasattr(window, "flash_pct_lbl"):
-        window.flash_pct_lbl.config(text="74%")
     if hasattr(window, "flasher_txt"):
         flasher_sample = (
             "esptool.py v4.8.1\n"
@@ -128,6 +130,9 @@ def populate_sample_data(window: InspectorApp):
 
     # 5. Trang 4: Bảng phân vùng (Partition Wizard)
     if hasattr(window, "table") and window.table is not None:
+        if hasattr(window, "part_chip_var") and hasattr(window, "_on_chip_changed"):
+            window.part_chip_var.set("ESP32-P4")
+            window._on_chip_changed()
         window.table.flash_size = 16 * 1024 * 1024
         window.table.entries.clear()
         e_nvs = PartitionEntry("nvs", "data", "nvs", 0x9000, 0x6000)

@@ -5,7 +5,7 @@ Tối ưu hiệu năng cao với bộ gom lô (Batch Dispatcher), tô màu phân
 hỗ trợ dấu thời gian và tự động cuộn thông minh.
 """
 from PyQt6.QtWidgets import QPlainTextEdit, QWidget
-from PyQt6.QtGui import QTextCharFormat, QColor, QTextCursor, QFont
+from PyQt6.QtGui import QTextCharFormat, QColor, QTextCursor, QFont, QTextFormat
 from PyQt6.QtCore import QTimer, Qt
 from datetime import datetime
 from collections import deque
@@ -15,6 +15,8 @@ from modules.ui.theme.manager import ThemeManager
 
 
 class LogView(QPlainTextEdit):
+    _ROLE_PROP = QTextFormat.Property.UserProperty + 1
+
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
         self.setProperty("role", "log")
@@ -46,37 +48,50 @@ class LogView(QPlainTextEdit):
         # Định dạng text thông thường (Info - tự động nhận màu QSS theo Light/Dark)
         f_norm = QTextCharFormat()
         f_norm.setFont(font)
+        f_norm.setProperty(self._ROLE_PROP, "info")
         self._formats["info"] = f_norm
+
+        # Định dạng nhấn mạnh (Accent / Blue)
+        f_accent = QTextCharFormat()
+        f_accent.setFont(font)
+        f_accent.setForeground(QColor(tokens.accent))
+        f_accent.setProperty(self._ROLE_PROP, "accent")
+        self._formats["accent"] = f_accent
 
         # Định dạng tiêu đề (Header - In đậm, tự nhận màu QSS theo Light/Dark)
         f_hdr = QTextCharFormat()
         font_bold = QFont(tokens.font_mono, 9)
         font_bold.setBold(True)
         f_hdr.setFont(font_bold)
+        f_hdr.setProperty(self._ROLE_PROP, "header")
         self._formats["header"] = f_hdr
 
         # Định dạng Warning (Vàng / Cam)
         f_warn = QTextCharFormat()
         f_warn.setFont(font)
         f_warn.setForeground(QColor(tokens.warning))
+        f_warn.setProperty(self._ROLE_PROP, "warning")
         self._formats["warning"] = f_warn
 
         # Định dạng Error (Đỏ)
         f_err = QTextCharFormat()
         f_err.setFont(font)
         f_err.setForeground(QColor(tokens.danger))
+        f_err.setProperty(self._ROLE_PROP, "error")
         self._formats["error"] = f_err
 
         # Định dạng Success (Xanh lá)
         f_succ = QTextCharFormat()
         f_succ.setFont(font)
         f_succ.setForeground(QColor(tokens.success))
+        f_succ.setProperty(self._ROLE_PROP, "success")
         self._formats["success"] = f_succ
 
         # Định dạng Mờ / Debug (Xám)
         f_muted = QTextCharFormat()
         f_muted.setFont(font)
         f_muted.setForeground(QColor(tokens.text_secondary))
+        f_muted.setProperty(self._ROLE_PROP, "muted")
         self._formats["muted"] = f_muted
 
     def append_line(self, line: str, level: str | None = None):
@@ -151,7 +166,7 @@ class LogView(QPlainTextEdit):
         level_map = {
             "red": "error",
             "green": "success",
-            "blue": "info",
+            "blue": "accent",
             "warning": "warning",
             "header": "header"
         }
@@ -224,8 +239,43 @@ class LogView(QPlainTextEdit):
         self._flush_queue()
         return self.toPlainText()
 
+    def _recolor_existing_blocks(self):
+        """Áp lại màu sắc mới cho toàn bộ các đoạn log đã hiển thị khi đổi theme."""
+        doc = self.document()
+        if doc is None or doc.isEmpty():
+            return
+        sb = self.verticalScrollBar()
+        saved_scroll = sb.value() if sb is not None else 0
+        was_at_max = sb is not None and sb.value() >= sb.maximum() - 2
+
+        updates: list[tuple[int, int, str]] = []
+        block = doc.begin()
+        while block.isValid():
+            it = block.begin()
+            while not it.atEnd():
+                frag = it.fragment()
+                if frag.isValid():
+                    role = frag.charFormat().property(self._ROLE_PROP)
+                    if isinstance(role, str) and role in self._formats:
+                        updates.append((frag.position(), frag.length(), role))
+                it += 1
+            block = block.next()
+
+        if updates:
+            cursor = QTextCursor(doc)
+            cursor.beginEditBlock()
+            for pos, length, role in updates:
+                cursor.setPosition(pos)
+                cursor.setPosition(pos + length, QTextCursor.MoveMode.KeepAnchor)
+                cursor.setCharFormat(self._formats[role])
+            cursor.endEditBlock()
+
+        if sb is not None:
+            sb.setValue(sb.maximum() if (self.autoscroll and was_at_max) else saved_scroll)
+
     def _on_theme_changed(self, tokens: ThemeTokens):
         self._update_formats(tokens)
+        self._recolor_existing_blocks()
 
     def stop(self):
         """Dừng bộ đếm thời gian flush và xóa hàng đợi log khi đóng ứng dụng."""

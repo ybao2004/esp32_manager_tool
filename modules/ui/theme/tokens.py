@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Hệ thống Design Tokens cho giao diện PyQt6 (v1.8)
+Hệ thống Design Tokens cho giao diện PyQt6 (v1.9)
 Sử dụng duy nhất phong cách Kỹ thuật (Engineering) với 2 chế độ Sáng (Light) & Tối (Dark).
 Đạt chuẩn tương phản khả năng truy cập WCAG 2.2 AA (tối thiểu 4.5:1) trên cả thanh Sidebar và StatusBar.
 """

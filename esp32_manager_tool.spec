@@ -27,6 +27,7 @@ hiddenimports = [
     'modules.ui.widgets.connection_bar',
     'modules.ui.widgets.log_view',
     'modules.ui.widgets.progress_row',
+    'modules.ui.widgets.flow_layout',
     'modules.ui.widgets.sidebar',
     'modules.ui.pages.inspector_page',
     'modules.ui.pages.monitor_page',

@@ -15,6 +15,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 from modules.config import FLASH_CHIP_TARGETS, FLASH_BAUDS
 from modules.ui.widgets.card import Card
+from modules.ui.widgets.flow_layout import FlowLayout, make_group
 from modules.ui.widgets.log_view import LogView
 from modules.ui.icons import get_icon, bind_themed_icon
 
@@ -292,27 +293,23 @@ class FlasherPage(QWidget):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(6)
 
-        # 1. Card Cấu hình Nạp & Thao tác chính (1 hàng ngang cân đối)
+        # 1. Card Cấu hình Nạp & Thao tác chính (tự xuống dòng khi cửa sổ hẹp)
         card_cfg = Card("Cấu hình Nạp Firmware & Công cụ Xóa", icon_name="chip", parent=self)
-        cfg_bar = QHBoxLayout()
-        cfg_bar.setContentsMargins(0, 0, 0, 0)
-        cfg_bar.setSpacing(6)
+        cfg_bar = FlowLayout(h_spacing=6, v_spacing=6)
 
-        cfg_bar.addWidget(QLabel("Chip:", card_cfg))
         self.flash_chip_cb = _ComboCompat(card_cfg, min_fit_width=86)
         self.flash_chip_cb.addItems(FLASH_CHIP_TARGETS)
         self.flash_chip_cb.setCurrentText(
             self.saved_flash_chip if self.saved_flash_chip in FLASH_CHIP_TARGETS else "auto"
         )
-        cfg_bar.addWidget(self.flash_chip_cb)
+        cfg_bar.addWidget(make_group(card_cfg, QLabel("Chip:", card_cfg), self.flash_chip_cb))
 
-        cfg_bar.addWidget(QLabel("Baud:", card_cfg))
         self.flash_baud_cb = _ComboCompat(card_cfg, min_fit_width=82)
         self.flash_baud_cb.addItems(FLASH_BAUDS)
         self.flash_baud_cb.setCurrentText(
             self.saved_flash_baud if self.saved_flash_baud in FLASH_BAUDS else "460800"
         )
-        cfg_bar.addWidget(self.flash_baud_cb)
+        cfg_bar.addWidget(make_group(card_cfg, QLabel("Baud:", card_cfg), self.flash_baud_cb))
 
         self.cb_flash_erase = _CheckBoxCompat(
             "Xóa toàn bộ trước khi nạp", card_cfg
@@ -325,7 +322,7 @@ class FlasherPage(QWidget):
 
         self.btn_flash_write = _ButtonCompat("Bắt đầu nạp", card_cfg)
         self.btn_flash_write.setProperty("accent", "true")
-        self.btn_flash_write.setIcon(get_icon("flash", color="#ffffff"))
+        bind_themed_icon(self.btn_flash_write, "flash", role="on_accent")
         self.btn_flash_write.setToolTip("Bắt đầu nạp các file Firmware đã chọn xuống ESP32")
         cfg_bar.addWidget(self.btn_flash_write)
 
@@ -336,7 +333,7 @@ class FlasherPage(QWidget):
 
         self.btn_erase_flash = _ButtonCompat("Xóa toàn bộ Flash", card_cfg)
         self.btn_erase_flash.setProperty("danger", "true")
-        self.btn_erase_flash.setIcon(get_icon("delete", color="#ffffff"))
+        bind_themed_icon(self.btn_erase_flash, "delete", role="on_accent")
         self.btn_erase_only = self.btn_erase_flash
         cfg_bar.addWidget(self.btn_erase_flash)
 

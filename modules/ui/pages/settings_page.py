@@ -320,7 +320,7 @@ class SettingsPage(QWidget):
 
         btn_save = QPushButton("Lưu Cài Đặt", self)
         btn_save.setProperty("accent", "true")
-        btn_save.setIcon(get_icon("save", color="#ffffff"))
+        bind_themed_icon(btn_save, "save", role="on_accent")
         btn_save.setFixedWidth(155)
         btn_save.clicked.connect(self._on_save_settings)
         btn_bar.addWidget(btn_save)

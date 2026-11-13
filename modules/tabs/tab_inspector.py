@@ -531,6 +531,16 @@ class InspectorTabMixin:
                 )
             except Exception:
                 pass
+        chip_badge_key = info.get("chip_name_key") or info.get("chip_line")
+        if chip_badge_key and hasattr(self, "conn_bar") and self.conn_bar is not None:
+            parts = [str(info.get("chip_name_key") or info.get("chip_line"))]
+            if "flash_mb" in info and info.get("flash_mb"):
+                f_mb = float(info["flash_mb"])
+                f_str = f"{int(f_mb)}MB" if f_mb.is_integer() else f"{f_mb:.1f}MB"
+                parts.append(f"{f_str} Flash")
+            if "psram_mb" in info and info.get("psram_mb"):
+                parts.append(f"{info['psram_mb']}MB PSRAM")
+            self.conn_bar.set_chip_badge_info(" · ".join(parts), is_active=True)
                 
     def detect_baud_rate(self, port):
         test_bauds = ["115200", "74880", "230400", "460800", "921600", "9600"]

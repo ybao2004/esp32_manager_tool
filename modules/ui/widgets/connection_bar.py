@@ -65,6 +65,15 @@ class _ComboCompat(QComboBox):
 
 
 class _ButtonCompat(QPushButton):
+    def __init__(self, *args, on_text_changed=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._on_text_changed = on_text_changed
+
+    def setText(self, text: str):
+        super().setText(text)
+        if callable(self._on_text_changed):
+            self._on_text_changed(text)
+
     def cget(self, prop: str):
         if prop == "text":
             return self.text()
@@ -114,7 +123,7 @@ class ConnectionBar(QFrame):
 
         # Dropdown Cổng COM
         self.port_cb = _ComboCompat(self)
-        self.port_cb.setMinimumWidth(220)
+        self.port_cb.setMinimumWidth(140)
         self.port_cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         layout.addWidget(self.port_cb)
 
@@ -141,17 +150,21 @@ class ConnectionBar(QFrame):
         self.baud_cb.setEditable(True)
         self.baud_cb.addItems(COMMON_BAUDS)
         self.baud_cb.setCurrentText("115200")
-        self.baud_cb.setMinimumWidth(110)
+        self.baud_cb.setMinimumWidth(96)
         layout.addWidget(self.baud_cb)
 
         # Phân cách
         layout.addSpacing(6)
 
         # Nút Kết nối Serial
-        self.serial_toggle_btn = _ButtonCompat("Kết nối", self)
+        self.serial_toggle_btn = _ButtonCompat(
+            "Kết nối",
+            self,
+            on_text_changed=self._sync_serial_toggle_icon,
+        )
         self.serial_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.serial_toggle_btn.setProperty("accent", "true")
-        self.serial_toggle_btn.setIcon(get_icon("plug_disconnected", self._current_tokens.on_accent, 16))
+        self._sync_serial_toggle_icon("Kết nối")
         self.serial_toggle_btn.setIconSize(QSize(16, 16))
         layout.addWidget(self.serial_toggle_btn)
 
@@ -205,12 +218,15 @@ class ConnectionBar(QFrame):
             }}
         """)
 
+    def _sync_serial_toggle_icon(self, text: str):
+        is_conn = "ngắt" in str(text).lower()
+        ico_name = "plug_connected" if is_conn else "plug_disconnected"
+        self.serial_toggle_btn.setIcon(get_icon(ico_name, self._current_tokens.on_accent, 16))
+
     def _on_theme_changed(self, tokens: ThemeTokens):
         self._current_tokens = tokens
         self.refresh_btn.setIcon(get_icon("refresh", tokens.text, 18))
         self._update_refresh_btn_style(tokens)
         # Nút serial accent icon theo on_accent
-        is_conn = (self.serial_toggle_btn.text() == "Ngắt kết nối")
-        ico_name = "plug_connected" if is_conn else "plug_disconnected"
-        self.serial_toggle_btn.setIcon(get_icon(ico_name, tokens.on_accent, 16))
+        self._sync_serial_toggle_icon(self.serial_toggle_btn.text())
         self.set_chip_badge_info(self.chip_badge.text(), "Chưa" not in self.chip_badge.text())

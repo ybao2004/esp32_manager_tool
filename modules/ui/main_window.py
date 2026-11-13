@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Cửa sổ chính của ứng dụng ESP32 Manager Tool (MainWindow) v1.8.
+Cửa sổ chính của ứng dụng ESP32 Manager Tool (MainWindow) v1.9.
 Kiến trúc thuần PyQt6 với Sidebar điều hướng thu gọn, Thanh kết nối toàn cục ConnectionBar,
 QStackedWidget chứa 6 trang giao diện Kỹ thuật (Sáng/Tối) và hệ thống quản lý tiến trình thống nhất.
 """
@@ -265,7 +265,7 @@ class MainWindow(
     BackupCloneTabMixin,
     AboutUpdateMixin
 ):
-    """Cửa sổ chính ứng dụng ESP32 Manager Tool v1.8"""
+    """Cửa sổ chính ứng dụng ESP32 Manager Tool v1.9"""
 
     def __init__(self, root=None, auto_start: bool = True, parent: Optional[QWidget] = None):
         QMainWindow.__init__(self, parent)
@@ -680,6 +680,7 @@ class MainWindow(
 
         # Global status mappings
         self.global_status_lbl = self.lbl_status
+        self.global_com_lbl = self.lbl_conn
         self.global_progress_task_lbl = self.lbl_progress_task
         self.global_progress_bar = self.status_prog
         self.global_progress_pct_lbl = self.lbl_progress_pct
@@ -801,7 +802,12 @@ class MainWindow(
             self.update_global_progress(progress, task_label=task_label)
         elif task_label is not None and hasattr(self, "lbl_progress_task"):
             txt = str(task_label).strip()
-            self.lbl_progress_task.setText(txt if txt else "Tiến trình: Sẵn sàng")
+            resolved = txt if txt else "Tiến trình: Sẵn sàng"
+            self.lbl_progress_task.setText(resolved)
+            if resolved == "Tiến trình: Sẵn sàng":
+                self.status_prog["value"] = 0
+                if hasattr(self, "lbl_progress_pct"):
+                    self.lbl_progress_pct.setText("0%")
         self._apply_status_colors(tokens=ThemeManager.instance().tokens)
 
     def _apply_status_colors(self, tokens: Optional[ThemeTokens] = None):
@@ -825,8 +831,11 @@ class MainWindow(
         tokens = tokens or ThemeManager.instance().tokens
         self._apply_status_colors(tokens=tokens)
         if hasattr(self, "lbl_conn") and self.lbl_conn is not None:
+            conn_txt = self.lbl_conn.text()
+            conn_active = ("ĐÃ KẾT NỐI" in conn_txt) or ("@" in conn_txt and "Chưa" not in conn_txt)
+            conn_col = tokens.success if conn_active else tokens.text_secondary
             self.lbl_conn.setStyleSheet(
-                f"font-size: 8.5pt; color: {tokens.text_secondary}; padding-right: 10px; background-color: transparent;"
+                f"font-size: 8.5pt; color: {conn_col}; padding-right: 10px; background-color: transparent;"
             )
         if hasattr(self, "lbl_progress_task") and self.lbl_progress_task is not None:
             self.lbl_progress_task.setStyleSheet(

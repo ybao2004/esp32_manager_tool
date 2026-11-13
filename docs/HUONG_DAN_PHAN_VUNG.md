@@ -1,4 +1,4 @@
-# HƯỚNG DẪN QUẢN LÝ PHÂN VÙNG (ESP32 PARTITION WIZARD - v1.8)
+# HƯỚNG DẪN QUẢN LÝ PHÂN VÙNG (ESP32 PARTITION WIZARD - v1.9)
 
 Tab **Phân vùng** tích hợp bộ biên soạn & chẩn đoán phân vùng Flash ESP32 theo chuẩn **ESP-IDF (`gen_esp32part.py`)** với sơ đồ trực quan phong cách MiniTool Partition Wizard.
 
@@ -7,7 +7,8 @@ Tab **Phân vùng** tích hợp bộ biên soạn & chẩn đoán phân vùng Fl
 ## 1. KHỞI TẠO & CẤU HÌNH DÒNG CHIP
 
 - **Trạng thái khởi đầu trống:** Khi vừa mở ứng dụng, bảng phân vùng và sơ đồ thanh ổ đĩa được giữ trống hoàn toàn để tránh nhầm lẫn dữ liệu mẫu cũ với chip đang thao tác.
-- **Chọn Chip tự chọn Flash cao nhất:** Khi chọn một dòng chip tại mục **Chip** (ví dụ `ESP32`, `ESP32-S3`, `ESP32-C3`, `ESP32-P4`), ứng dụng tự động cập nhật danh sách mức Flash hợp lệ của họ chip đó và tự chọn dung lượng **Flash lớn nhất** hỗ trợ.
+- **Chọn Chip tự chọn Flash cao nhất:** Khi chọn một dòng chip tại mục **Chip** (ví dụ `ESP32`, `ESP32-S3`, `ESP32-C3`, `ESP32-P4`), ứng dụng tự động cập nhật danh sách mức Flash hợp lệ của họ chip đó và tự chọn dung lượng **Flash lớn nhất** hỗ trợ; khi mở tệp CSV/BIN hoặc đọc từ chip, hộp chọn **Flash** cũng tự đồng bộ theo tổng dung lượng của bảng.
+- **Thanh công cụ Responsive & Nút gọn:** Các nhóm nút công cụ trên đầu trang tự xuống dòng thông minh khi thu hẹp cửa sổ; nút **Hướng dẫn**, **Hoàn tác** và **Làm lại** hiển thị biểu tượng SVG sắc nét kèm chú giải (`tooltip`).
 - **Đơn vị hiển thị:** Chuyển đổi qua lại giữa **Thập phân (KB/MB)** và **Thập lục phân (Hex)** tức thì.
 - **Tự căn 4K/64K (`Auto-Align`):** Khi bật, ứng dụng tự căn lề mỗi phân vùng theo sector vật lý:
   - Phân vùng `app` (`factory`, `ota_0`, `ota_1`, `test`,...): Bắt buộc căn lề bội số **64 KB (`0x10000`)**.

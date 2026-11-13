@@ -29,14 +29,12 @@ class Card(QFrame):
             if icon_name:
                 from modules.ui.icons import bind_themed_icon
                 icon_lbl = QLabel(self)
-                bind_themed_icon(icon_lbl, icon_name, size=16)
+                bind_themed_icon(icon_lbl, icon_name, size=16, role="danger" if danger else "text")
                 self._header_layout.addWidget(icon_lbl)
 
             if title:
                 self._title_lbl = QLabel(title, self)
-                self._title_lbl.setProperty("role", "section")
-                if danger:
-                    self._title_lbl.setStyleSheet("color: #D32F2F; font-weight: bold;")
+                self._title_lbl.setProperty("role", "section_danger" if danger else "section")
                 self._header_layout.addWidget(self._title_lbl)
 
             self._header_layout.addStretch()

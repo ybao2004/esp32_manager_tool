@@ -1,6 +1,6 @@
-# HƯỚNG DẪN SỬ DỤNG ESP32 MANAGER TOOL (v1.8)
+# HƯỚNG DẪN SỬ DỤNG ESP32 MANAGER TOOL (v1.9)
 
-> **Cập nhật theo phiên bản:** `v1.8` (Giao diện thuần PyQt6 — Phong cách Kỹ thuật Chuyên sâu, Đơn thực thể & Đóng an toàn)
+> **Cập nhật theo phiên bản:** `v1.9` (Giao diện thuần PyQt6 — Bố cục Responsive FlowLayout, Chuẩn tương phản WCAG AA & Đồng bộ Trạng thái Thời gian Thực)
 
 ---
 
@@ -18,9 +18,9 @@
 ## 1. GIAO DIỆN TỔNG QUAN & THANH TRẠNG THÁI HỢP NHẤT
 
 - **Sidebar bên trái:** Thu gọn / mở rộng nhanh để chuyển giữa 6 trang làm việc chính (`Kiểm tra Chip`, `Serial Monitor`, `Nạp Firmware`, `Phân vùng`, `Sao lưu & Chép`, `Cài đặt`).
-- **Thanh kết nối chung phía trên:** Chọn **Cổng COM**, **Baudrate**, làm mới danh sách cổng hoặc bấm **Kết nối** / **Ngắt kết nối** Serial bất cứ lúc nào.
+- **Thanh kết nối chung phía trên:** Chọn **Cổng COM**, **Baudrate**, làm mới danh sách cổng, bấm **Kết nối** / **Ngắt kết nối** Serial bất cứ lúc nào (tự đổi biểu tượng kết nối/ngắt), và theo dõi huy hiệu **Chip Badge** tự cập nhật thông tin dòng chip + Flash/PSRAM sau khi quét ở Tab 1 hoặc kết nối Serial ở Tab 2.
 - **Thanh tiến trình hợp nhất ở đáy màn hình:**
-  - Hiển thị trạng thái kết nối Serial, tên tiến trình đang thực thi ở bên trái thanh tiến trình, thanh tiến trình (0% -> 100%) và tỷ lệ `%` ở bên phải.
+  - Hiển thị trạng thái kết nối Serial (`Đã kết nối COM...` / `Chưa kết nối Serial`), tên tiến trình đang thực thi ở bên trái thanh tiến trình, thanh tiến trình (tự đưa về `0%` khi ở trạng thái `Sẵn sàng`) và tỷ lệ `%` ở bên phải.
   - Phục vụ chung cho cả Tab 1 (Kiểm tra Chip), Tab 3 (Nạp Firmware / Xóa Flash), Tab 4 (Đọc / Nạp / Dump / Ghi / Xóa phân vùng) và Tab 5 (Đọc cấu trúc / Sao lưu / Nhân bản).
 
 ---
@@ -95,7 +95,7 @@
    - Chọn chế độ **Giao diện Kỹ thuật**: **Giao diện Tối (Dark)** hoặc **Giao diện Sáng (Light)** áp dụng tức thì không cần khởi động lại (Sidebar và thanh trạng thái đáy tự động cân chỉnh độ tương phản).
    - Cấu hình **Quản lý cổng COM** (quét định kỳ 2 giây, tự ưu tiên cổng mới cắm, lọc Bluetooth, ẩn danh sách cổng COM chỉ định) và **Tùy chọn ẩn nháy LED 5s (Tab 5)**.
    - Cấu hình **IP Server** & **Cổng TCP** mặc định.
-   - Xem thông tin phiên bản `v1.8`, tác giả, giấy phép GPL-3.0 và bấm **Kiểm Tra Cập Nhật** từ GitHub Releases.
+   - Xem thông tin phiên bản `v1.9`, tác giả, giấy phép GPL-3.0 và bấm **Kiểm Tra Cập Nhật** từ GitHub Releases.
 2. **Phím chức năng F1 - F15:** Tùy biến nhãn hiển thị và chuỗi lệnh UART gửi đi cho 15 phím điều khiển.
 3. **Khôi phục gốc / Lưu Cài Đặt:** Áp dụng thay đổi và lưu xuống tệp cấu hình cục bộ.
 4. **Đóng ứng dụng & Chống mở trùng cửa sổ:** Ứng dụng chỉ cho phép chạy một phiên bản duy nhất tại một thời điểm (mở lại file `.exe` sẽ tự bật cửa sổ đang chạy lên phía trước) và tự động thu hồi an toàn cổng COM, luồng nền, tiến trình con khi đóng cửa sổ.

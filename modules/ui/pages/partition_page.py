@@ -20,6 +20,7 @@ from modules.ui.widgets.card import Card
 from modules.ui.widgets.disk_map import DiskMapWidget
 from modules.ui.widgets.log_view import LogView
 from modules.ui.widgets.collapsible import CollapsiblePanel
+from modules.ui.widgets.flow_layout import FlowLayout, make_group
 from modules.ui.icons import get_icon, bind_themed_icon
 
 
@@ -99,11 +100,11 @@ class _ComboCompat(QComboBox):
         fm = self.fontMetrics()
         curr_txt = self.currentText() or ""
         # 8px padding trái + 18px drop-down + khoảng thở đầy đủ để không cắt tên chip dài (ví dụ ESP32-P4)
-        target_w = max(self._min_fit_width, fm.horizontalAdvance(curr_txt) + 56)
+        target_w = max(self._min_fit_width, fm.horizontalAdvance(curr_txt) + 42)
         self.setFixedWidth(target_w)
         max_item_w = target_w
         for i in range(self.count()):
-            iw = fm.horizontalAdvance(self.itemText(i)) + 44
+            iw = fm.horizontalAdvance(self.itemText(i)) + 38
             if iw > max_item_w:
                 max_item_w = iw
         if self.view():
@@ -482,54 +483,40 @@ class PartitionPage(QWidget):
         h_vbox.setSpacing(6)
 
         # Dòng 1: Cấu hình Chip, Flash, Đơn vị, Tự căn chỉnh + Hoàn tác / Làm lại / Hướng dẫn
-        row_top = QHBoxLayout()
-        row_top.setSpacing(6)
+        # FlowLayout: tự xuống dòng khi cửa sổ hẹp thay vì cắt chữ / chồng nút
+        row_top = FlowLayout(h_spacing=6, v_spacing=6)
 
-        row_top.addWidget(QLabel("Chip:", header_card))
-        self.cb_part_chip = _ComboCompat(header_card, min_fit_width=105)
+        self.cb_part_chip = _ComboCompat(header_card, min_fit_width=95)
         chip_names = ["(Chưa chọn)"] + [c.name for c in CHIP_FAMILY_DATABASE.values()]
         self.cb_part_chip.addItems(chip_names)
-        row_top.addWidget(self.cb_part_chip)
+        row_top.addWidget(make_group(header_card, QLabel("Chip:", header_card), self.cb_part_chip))
 
-        row_top.addSpacing(4)
-        row_top.addWidget(QLabel("Flash:", header_card))
         self.cb_part_flash = _ComboCompat(header_card, min_fit_width=76)
         self.cb_part_flash.addItems([opt[0] for opt in FLASH_SIZE_OPTIONS])
         self.cb_part_flash.setCurrentText("4 MB (Chuẩn)")
-        row_top.addWidget(self.cb_part_flash)
+        row_top.addWidget(make_group(header_card, QLabel("Flash:", header_card), self.cb_part_flash))
 
-        row_top.addSpacing(4)
-        row_top.addWidget(QLabel("Đơn vị:", header_card))
-        self.cb_part_mode = _ComboCompat(header_card, min_fit_width=130)
+        self.cb_part_mode = _ComboCompat(header_card, min_fit_width=115)
         self.cb_part_mode.addItems(["Thập phân (KB/MB)", "Hệ HEX (0x...)", "Song song (HEX + KB)"])
-        row_top.addWidget(self.cb_part_mode)
+        row_top.addWidget(make_group(header_card, QLabel("Đơn vị:", header_card), self.cb_part_mode))
 
-        row_top.addSpacing(4)
         self.chk_auto_align = QCheckBox("Tự căn 4K/64K", header_card)
         self.var_auto_align = _TkVarCompat(self.chk_auto_align, default=True)
         row_top.addWidget(self.chk_auto_align)
 
         row_top.addStretch(1)
 
-        self.btn_part_undo = _ButtonCompat("Hoàn tác", header_card)
-        bind_themed_icon(self.btn_part_undo, "arrow_undo")
-        self.btn_part_undo.setEnabled(False)
-        row_top.addWidget(self.btn_part_undo)
-
-        self.btn_part_redo = _ButtonCompat("Làm lại", header_card)
-        bind_themed_icon(self.btn_part_redo, "arrow_redo")
-        self.btn_part_redo.setEnabled(False)
-        row_top.addWidget(self.btn_part_redo)
-
-        self.btn_part_help = _ButtonCompat("Sổ tay", header_card)
+        # Nút công cụ nhỏ dạng biểu tượng (có tooltip) để tiết kiệm chiều ngang khi cửa sổ hẹp
+        self.btn_part_help = _ButtonCompat("", header_card)
         bind_themed_icon(self.btn_part_help, "info")
+        self.btn_part_help.setToolTip("Sổ tay hướng dẫn & tra cứu bảng phân vùng")
+        self.btn_part_help.setAccessibleName("Sổ tay")
         row_top.addWidget(self.btn_part_help)
 
         h_vbox.addLayout(row_top)
 
-        # Dòng 2: Các công cụ Mẫu, Dự án, Mở/Lưu CSV, Dồn và Căn
-        row_tools = QHBoxLayout()
-        row_tools.setSpacing(6)
+        # Dòng 2: Các công cụ Mẫu, Dự án, Mở/Lưu CSV, Dồn và Căn | Hoàn tác / Làm lại
+        row_tools = FlowLayout(h_spacing=6, v_spacing=6)
 
         self.btn_presets = _ButtonCompat("Mẫu Chuẩn...", header_card)
         bind_themed_icon(self.btn_presets, "folder")
@@ -552,10 +539,23 @@ class PartitionPage(QWidget):
         bind_themed_icon(self.btn_autopack, "checkmark")
         row_tools.addWidget(self.btn_autopack)
 
+        row_tools.addStretch(1)
+
+        self.btn_part_undo = _ButtonCompat("", header_card)
+        bind_themed_icon(self.btn_part_undo, "arrow_undo")
+        self.btn_part_undo.setToolTip("Hoàn tác (Ctrl+Z)")
+        self.btn_part_undo.setAccessibleName("Hoàn tác")
+        self.btn_part_undo.setEnabled(False)
+        row_tools.addWidget(self.btn_part_undo)
+
+        self.btn_part_redo = _ButtonCompat("", header_card)
+        bind_themed_icon(self.btn_part_redo, "arrow_redo")
+        self.btn_part_redo.setToolTip("Làm lại (Ctrl+Y)")
+        self.btn_part_redo.setAccessibleName("Làm lại")
+        self.btn_part_redo.setEnabled(False)
+        row_tools.addWidget(self.btn_part_redo)
+
         for hdr_btn in (
-            self.btn_part_undo,
-            self.btn_part_redo,
-            self.btn_part_help,
             self.btn_presets,
             self.btn_part_scan,
             self.btn_open_csv,
@@ -563,8 +563,9 @@ class PartitionPage(QWidget):
             self.btn_autopack,
         ):
             hdr_btn.setStyleSheet("padding: 0 10px;")
+        for icon_btn in (self.btn_part_undo, self.btn_part_redo, self.btn_part_help):
+            icon_btn.setStyleSheet("padding: 0 8px;")
 
-        row_tools.addStretch(1)
         h_vbox.addLayout(row_tools)
 
         header_card.body_layout.addLayout(h_vbox)
@@ -615,8 +616,7 @@ class PartitionPage(QWidget):
         t_layout.addWidget(self.part_tree, 1)
 
         # Thanh nút dưới bảng: Chia 2 nhóm Trái (Chỉnh sửa bảng) | Phải (Thao tác Phần cứng Chip)
-        tbl_actions = QHBoxLayout()
-        tbl_actions.setSpacing(4)
+        tbl_actions = FlowLayout(h_spacing=4, v_spacing=4)
 
         self.btn_add_part = _ButtonCompat("Thêm dòng", table_card)
         bind_themed_icon(self.btn_add_part, "add")
@@ -638,7 +638,7 @@ class PartitionPage(QWidget):
 
         self.btn_part_read_hw = _ButtonCompat("Đọc bảng từ Chip", table_card)
         self.btn_part_read_hw.setProperty("accent", "true")
-        self.btn_part_read_hw.setIcon(get_icon("chip", color="#ffffff"))
+        bind_themed_icon(self.btn_part_read_hw, "chip", role="on_accent")
         tbl_actions.addWidget(self.btn_part_read_hw)
 
         self.btn_part_flash_hw = _ButtonCompat("Nạp bảng vào Chip", table_card)

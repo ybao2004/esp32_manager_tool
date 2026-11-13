@@ -95,9 +95,14 @@ class MonitorTabMixin:
                 self.serial_toggle_btn.config(text="Ngắt kết nối", state="normal")
                 self.monitor_txt.config(state="normal")
                 self._set_mcu_dependent_ui_state("normal")
-                if hasattr(self, 'global_com_lbl') and self.global_com_lbl.winfo_exists():
-                    p_theme = DARK_PALETTE if self.is_dark_mode else LIGHT_PALETTE
-                    self.global_com_lbl.config(text=f"{p} @ {b} bps | ĐÃ KẾT NỐI", foreground=p_theme.get("success", "#00aa00"))
+                if hasattr(self, 'lbl_conn') and self.lbl_conn is not None:
+                    self.lbl_conn.setText(f"ĐÃ KẾT NỐI: {p} @ {b} bps")
+                    if hasattr(self, '_refresh_status_bar_theme'):
+                        self._refresh_status_bar_theme()
+                if hasattr(self, 'conn_bar') and self.conn_bar is not None:
+                    badge_txt = self.conn_bar.chip_badge.text()
+                    if "Chưa" in badge_txt or "@" in badge_txt:
+                        self.conn_bar.set_chip_badge_info(f"{p} @ {b} bps", is_active=True)
                 self.save_config()
 
             self.root.after(0, _on_conn_success)
@@ -147,9 +152,14 @@ class MonitorTabMixin:
         self.detect_btn.config(state="normal")
         self.serial_toggle_btn.config(text="Kết nối")
         self._set_mcu_dependent_ui_state("disabled")
-        if hasattr(self, 'global_com_lbl') and self.global_com_lbl.winfo_exists():
-            p_theme = DARK_PALETTE if self.is_dark_mode else LIGHT_PALETTE
-            self.global_com_lbl.config(text="COM: Chưa kết nối", foreground=p_theme.get("disabled_fg", ""))
+        if hasattr(self, 'lbl_conn') and self.lbl_conn is not None:
+            self.lbl_conn.setText("Chưa kết nối")
+            if hasattr(self, '_refresh_status_bar_theme'):
+                self._refresh_status_bar_theme()
+        if hasattr(self, 'conn_bar') and self.conn_bar is not None:
+            badge_txt = self.conn_bar.chip_badge.text()
+            if "@" in badge_txt and "Flash" not in badge_txt:
+                self.conn_bar.set_chip_badge_info("Chưa kết nối chip", is_active=False)
         
     def _reset_monitor_line_state(self):
         self.is_new_line = True

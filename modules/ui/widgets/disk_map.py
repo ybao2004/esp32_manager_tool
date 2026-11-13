@@ -16,35 +16,35 @@ from modules.ui.theme.manager import ThemeManager
 
 
 def get_entry_color(entry: PartitionEntry, is_dark: bool = False) -> tuple[str, str]:
-    """Trả về (màu nền, màu chữ) cho từng loại phân vùng."""
+    """Trả về (màu nền, màu chữ) đạt chuẩn tương phản WCAG AA (>= 4.5:1)."""
     if entry.is_unallocated:
-        return ("#374151" if is_dark else "#E2E8F0", "#9CA3AF" if is_dark else "#64748B")
+        return ("#374151" if is_dark else "#E2E8F0", "#D1D5DB" if is_dark else "#334155")
     if entry.is_system:
         if entry.type_str == "bootloader":
-            return ("#475569" if is_dark else "#94A3B8", "#FFFFFF")
-        return ("#334155" if is_dark else "#64748B", "#FFFFFF")
+            return ("#475569", "#FFFFFF")
+        return ("#334155", "#FFFFFF")
 
     t = entry.type_str.lower()
     st = entry.subtype_str.lower()
 
     if t == "app":
         if st == "factory":
-            return ("#2563EB" if is_dark else "#3B82F6", "#FFFFFF")
+            return ("#2563EB" if is_dark else "#1D4ED8", "#FFFFFF")
         elif st.startswith("ota_"):
-            return ("#7C3AED" if is_dark else "#8B5CF6", "#FFFFFF")
-        return ("#4F46E5" if is_dark else "#6366F1", "#FFFFFF")
+            return ("#6D28D9", "#FFFFFF")
+        return ("#4338CA", "#FFFFFF")
     else:  # data
         if st == "nvs":
-            return ("#D97706" if is_dark else "#F59E0B", "#FFFFFF")
+            return ("#B45309", "#FFFFFF")
         elif st in ("ota", "otadata"):
-            return ("#0D9488" if is_dark else "#14B8A6", "#FFFFFF")
+            return ("#0F766E", "#FFFFFF")
         elif st in ("spiffs", "littlefs", "fat"):
-            return ("#059669" if is_dark else "#10B981", "#FFFFFF")
+            return ("#047857", "#FFFFFF")
         elif st == "phy":
-            return ("#B45309" if is_dark else "#D97706", "#FFFFFF")
+            return ("#92400E", "#FFFFFF")
         elif st == "coredump":
-            return ("#BE185D" if is_dark else "#EC4899", "#FFFFFF")
-        return ("#0891B2" if is_dark else "#06B6D4", "#FFFFFF")
+            return ("#BE185D", "#FFFFFF")
+        return ("#0E7490", "#FFFFFF")
 
 
 def build_detailed_tooltip_text(entry: PartitionEntry) -> str:

@@ -13,6 +13,7 @@ from PyQt6.QtCore import Qt, QEvent
 from PyQt6.QtGui import QKeyEvent
 from modules.config import CONTROL_CONFIG
 from modules.ui.widgets.card import Card
+from modules.ui.widgets.flow_layout import FlowLayout
 from modules.ui.widgets.log_view import LogView
 from modules.ui.icons import get_icon, bind_themed_icon
 
@@ -195,10 +196,8 @@ class MonitorPage(QWidget):
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(6)
 
-        # Hàng 1: Thanh công cụ phía trên Terminal
-        top_bar = QHBoxLayout()
-        top_bar.setContentsMargins(0, 0, 0, 0)
-        top_bar.setSpacing(8)
+        # Hàng 1: Thanh công cụ phía trên Terminal (tự xuống dòng khi hẹp)
+        top_bar = FlowLayout(h_spacing=8, v_spacing=6)
 
         self.cb_autoscroll = QCheckBox("Tự động cuộn", left_card)
         self.var_autoscroll = _TkVarCompat(self.cb_autoscroll, default=True)
@@ -221,7 +220,7 @@ class MonitorPage(QWidget):
         self.btn_toggle_right_panel = QPushButton("Ẩn Bảng Điều Khiển", left_card)
         self.btn_toggle_right_panel.setCheckable(True)
         self.btn_toggle_right_panel.setChecked(True)
-        self.btn_toggle_right_panel.setMinimumWidth(160)
+        self.btn_toggle_right_panel.setMinimumWidth(136)
         self.btn_toggle_right_panel.toggled.connect(self._on_toggle_right_panel)
         top_bar.addWidget(self.btn_toggle_right_panel)
 
@@ -249,7 +248,7 @@ class MonitorPage(QWidget):
 
         self.send_btn = _ButtonCompat("Gửi", left_card)
         self.send_btn.setProperty("accent", "true")
-        self.send_btn.setIcon(get_icon("send", color="#ffffff"))
+        bind_themed_icon(self.send_btn, "send", role="on_accent")
         self.send_btn.setMinimumWidth(85)
         cmd_bar.addWidget(self.send_btn)
 

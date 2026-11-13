@@ -18,6 +18,7 @@ from modules.ui.icons import get_icon
 from modules.mac_database import is_espressif_oui
 from modules.ui.theme.manager import ThemeManager
 from modules.ui.widgets.card import Card
+from modules.ui.widgets.flow_layout import FlowLayout
 from modules.ui.widgets.key_value_table import KeyValueTable
 from modules.ui.widgets.log_view import LogView
 
@@ -105,11 +106,9 @@ class InspectorPage(QWidget):
         main_layout.setSpacing(6)
 
         # =====================================================================
-        # 1. THANH CÔNG CỤ TRÊN CÙNG (ACTION BAR)
+        # 1. THANH CÔNG CỤ TRÊN CÙNG (ACTION BAR - RESPONSIVE FLOWLAYOUT)
         # =====================================================================
-        top_bar = QHBoxLayout()
-        top_bar.setContentsMargins(0, 0, 0, 0)
-        top_bar.setSpacing(6)
+        top_bar = FlowLayout(h_spacing=6, v_spacing=6)
 
         self.detect_btn = _ButtonCompat(qt_text("Kiểm tra Chip"), self)
         self.detect_btn.setProperty("accent", "true")

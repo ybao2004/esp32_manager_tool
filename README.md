@@ -1,18 +1,17 @@
-# ESP32 Manager Tool (v1.8)
+# ESP32 Manager Tool (v1.9)
 
 > **Tác giả:** `@ybao04` | **Bản quyền:** GNU General Public License v3.0 (GPL-3.0) | **Kho lưu trữ:** [github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
 
-**ESP32 Manager Tool v1.8** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / nhân bản trực tiếp đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
+**ESP32 Manager Tool v1.9** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / nhân bản trực tiếp đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
 
 ---
 
-## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.8
+## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.9
 
-- **Chế độ Đơn Thực Thể (Single-Instance Guard):** Ngăn mở đồng thời nhiều cửa sổ ứng dụng (`Win32 Mutex` + kênh IPC `QLocalServer/QLocalSocket`); khi khởi chạy bản thứ hai, ứng dụng tự đưa cửa sổ đang mở lên phía trước và thoát bản mới sạch sẽ.
-- **Đóng Ứng Dụng & Giải Phóng Tài Nguyên An Toàn:** Khi thoát, ứng dụng dừng đồng bộ các luồng nền (tự quét COM, đọc Serial, nháy LED 5s), đóng toàn bộ cổng COM/Serial/`esptool`, ngắt tác vụ tải cập nhật, dừng các `QTimer`/`LogView`, giải phóng handle icon GDI Win32 và dọn các tiến trình con (`terminate_child_processes`) trước khi trả tài nguyên về hệ điều hành; hỗ trợ xác nhận dừng cưỡng bức khi đóng bằng nút `X` lúc phần cứng đang bận.
-- **Hoàn thiện tương phản Chủ đề Sáng (Light Mode):** Chuyển nền thanh điều hướng `Sidebar` ở chế độ Sáng sang bảng màu kỹ thuật sáng sắc nét (`#E6EDF5` nền / `#0F172A` chữ) và đồng bộ màu chữ thanh trạng thái đáy (`QStatusBar`) tự động khi chuyển đổi Sáng/Tối.
-- **Sửa lỗi lọc cổng `Board Đích` trên Tab 5:** Loại bỏ hoàn toàn tình trạng kẹt widget checkbox cũ trong `QGridLayout` khiến cổng `Board Gốc` xuất hiện trùng ở danh sách `Board Đích` khi rút/đổi cổng ở chế độ *Board Gốc trực tiếp*, đồng thời đồng bộ lại tức thì khi chuyển qua lại với chế độ *Thư mục đã lưu*.
-- **Kế thừa nền tảng v1.7 (100% PyQt6):** Giữ nguyên phong cách Engineering Sáng/Tối, thanh tiến trình đáy hợp nhất (Tabs 1, 3, 4, 5), Tab 4 & 5 khởi tạo sạch, nút **Lưu CSV**, `+ Thêm dòng` chèn ngay sau dòng chọn và tùy chọn ẩn **Nháy LED 5s**.
+- **Bố cục Tự động Cuống Dòng Responsive (`FlowLayout`):** Thay thế các thanh công cụ cố định trên Tab 1, Tab 2, Tab 3, Tab 4 và Tab 5 bằng `FlowLayout` tự xuống dòng gọn gàng và mở rộng chiều cao chính xác, loại bỏ hoàn toàn lỗi cắt xén nút/dropdown ở cửa sổ hẹp (960x580 trở lên) và chuẩn hóa thanh `ConnectionBar`.
+- **Đồng bộ Trạng thái Thời gian Thực:** Đồng bộ tức thì `global_com_lbl` / `lbl_conn`, huy hiệu `chip_badge` trên thanh kết nối ngay sau khi dò chip hoặc mở/ngắt Serial, tự động đồng bộ `cb_part_flash` theo bảng phân vùng, và tự đưa thanh tiến trình về `0%` khi quay lại trạng thái `Sẵn sàng`.
+- **Nâng cấp Tương phản WCAG 2.2 AA & Đổi Theme Sống:** Tinh chỉnh toàn bộ bảng màu `DiskMapWidget` đạt độ tương phản >= 4.5:1 ở cả hai chế độ Sáng/Tối, tô lại màu các dòng log hiện hữu trong `LogView` tức thì khi chuyển theme, chuẩn hóa `Card(danger=True)` qua QSS/role (`danger` / `section_danger`) và tăng độ nổi bật mục Sidebar đang chọn ở Dark Mode.
+- **Bổ sung Icon Vector & Kế thừa Nền tảng v1.8:** Bổ sung `arrow_undo.svg` / `arrow_redo.svg` chuyên biệt cho Tab 4; kế thừa trọn vẹn khóa đơn thực thể (`SingleInstanceGuard`), đóng an toàn cổng COM/tiến trình con và hệ thống Engineering Sáng/Tối thuần PyQt6.
 
 ---
 
@@ -63,7 +62,7 @@ esp32_manager_tool/
 ├── modules/
 │   ├── app_core.py                 # Lớp InspectorApp, vòng đời Single-Instance & thu hồi GDI icon
 │   ├── single_instance.py          # Khóa đơn thực thể (Mutex/IPC) & dừng tiến trình con hệ điều hành
-│   ├── config.py                   # Cấu hình hệ thống, phiên bản (v1.8) và hằng số mặc định
+│   ├── config.py                   # Cấu hình hệ thống, phiên bản (v1.9) và hằng số mặc định
 │   ├── esptool_util.py             # Đóng gói tiến trình con esptool đa nền tảng & parse Output
 │   ├── backup_utils.py             # Tính băm SHA-256/MD5, cắt 0xFF và đọc viết manifest sao lưu
 │   ├── binary_scanner.py           # Bộ quét tệp .bin và gợi ý offset chuẩn
@@ -106,7 +105,7 @@ esp32_manager_tool/
 
 ## TÀI LIỆU DỰ ÁN
 
-- [Hướng dẫn sử dụng toàn diện](docs/HUONG_DAN_SU_DUNG.md) - Chi tiết từng Tab và Hộp thoại trong phiên bản v1.8.
+- [Hướng dẫn sử dụng toàn diện](docs/HUONG_DAN_SU_DUNG.md) - Chi tiết từng Tab và Hộp thoại trong phiên bản v1.9.
 - [Hướng dẫn Quản lý Phân vùng (Partition Wizard)](docs/HUONG_DAN_PHAN_VUNG.md) - Kiến trúc phân vùng ESP32, MiniTool Disk Map, Thêm dòng, Lưu CSV và thao tác Chip.
 - [Kiến trúc hệ thống & Thiết kế phần mềm](docs/KIEN_TRUC_HE_THONG.md) - Kiến trúc thuần PyQt6, Mixin Controller, Theme Engine & An toàn đa luồng.
 - [Báo cáo rà soát mã nguồn & Kiểm thử](docs/AUDIT_2026-09-05.md) - Lịch sử rà soát an toàn và kiểm thử hồi quy.

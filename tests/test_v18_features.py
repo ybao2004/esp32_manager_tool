@@ -40,8 +40,9 @@ def qapp():
 
 
 def test_app_version_is_v18_and_pure_pyqt6():
-    """Xác nhận phiên bản v1.8 và không có bất kỳ lệnh import tkinter nào."""
-    assert APP_VERSION == "1.8"
+    """Xác nhận phiên bản >= v1.8 và không có bất kỳ lệnh import tkinter nào."""
+    ver_tuple = tuple(int(x) for x in APP_VERSION.split(".")[:2])
+    assert ver_tuple >= (1, 8)
     root_dir = Path(__file__).resolve().parent.parent
     py_files = [root_dir / "main.py"] + list((root_dir / "modules").rglob("*.py"))
     for fpath in py_files:

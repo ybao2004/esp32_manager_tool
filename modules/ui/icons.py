@@ -18,8 +18,6 @@ _ICON_ALIASES: dict[str, str] = {
     "trash": "delete",
     "folder": "open",
     "window_console": "monitor",
-    "arrow_undo": "chevron_left",
-    "arrow_redo": "chevron_right",
     "checkmark": "success",
     "router": "server",
 }
@@ -143,6 +141,8 @@ class _IconThemeBinder(QObject):
             color = tokens.on_accent
         elif self._role == "muted":
             color = tokens.text_secondary
+        elif self._role == "danger":
+            color = tokens.danger
         else:
             color = tokens.text
         ic = get_icon(self._icon_name, color=color, size=self._size)
