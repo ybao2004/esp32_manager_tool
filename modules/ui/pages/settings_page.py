@@ -40,7 +40,7 @@ from modules.ui import dialogs_service as dlg
 
 
 class SettingsPage(QWidget):
-    """Trang Cài Đặt Hệ Thống ESP32 Manager Tool (v1.11)"""
+    """Trang Cài Đặt Hệ Thống ESP32 Manager Tool (v1.2)"""
 
     def __init__(self, core_app=None, parent: QWidget = None):
         super().__init__(parent)

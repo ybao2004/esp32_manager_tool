@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Esp32 manager tool v1.11 - Update Checker & Downloader Utility
+Esp32 manager tool v1.2 - Update Checker & Downloader Utility
 Kiểm tra phiên bản mới từ GitHub Releases API và tải trực tiếp file cập nhật.
 """
 from __future__ import annotations

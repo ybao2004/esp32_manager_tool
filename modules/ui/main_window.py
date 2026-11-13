@@ -265,7 +265,7 @@ class MainWindow(
     BackupCloneTabMixin,
     AboutUpdateMixin
 ):
-    """Cửa sổ chính ứng dụng ESP32 Manager Tool v1.11"""
+    """Cửa sổ chính ứng dụng ESP32 Manager Tool v1.2"""
 
     def __init__(self, root=None, auto_start: bool = True, parent: Optional[QWidget] = None, progress_callback=None):
         QMainWindow.__init__(self, parent)

@@ -1,12 +1,12 @@
-# ESP32 Manager Tool (v1.11)
+# ESP32 Manager Tool (v1.2)
 
 > **Tác giả:** `@ybao04` | **Bản quyền:** GNU General Public License v3.0 (GPL-3.0) | **Kho lưu trữ:** [github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
 
-**ESP32 Manager Tool v1.11** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / nhân bản trực tiếp đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
+**ESP32 Manager Tool v1.2** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / nhân bản trực tiếp đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
 
 ---
 
-## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.11
+## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.2
 
 - **Cập nhật trực tiếp không đổi tên hậu tố & không bật cửa sổ Terminal:** Gỡ bỏ việc tự chèn hậu tố phiên bản (`_vX.Y`) vào tên file tải về; chạy script tự thay thế `.exe` hoàn toàn ẩn nền (`CREATE_NO_WINDOW` + `STARTF_USESHOWWINDOW`, bỏ `DETACHED_PROCESS` để Windows Terminal không tự mở); sắp xếp lại khung cập nhật trong *Cài đặt* để thanh tiến trình và trạng thái tải không bao giờ đè lên khung Release Notes ở mọi kích thước cửa sổ.
 - **Kế thừa toàn bộ cải tiến từ v1.10:** Màn hình khởi động `StartupSplash` thuần `QWidget` hiện ngay trên Taskbar ở lớp cửa sổ thường, lazy-load `esptool` hỗ trợ cả v4 & v5, Tab 5 gọn 1 hàng với Baudrate độc lập và đồng bộ Board Gốc từ Cổng COM trên cùng.
@@ -59,7 +59,7 @@ esp32_manager_tool/
 ├── modules/
 │   ├── app_core.py                 # Lớp InspectorApp, vòng đời Single-Instance & thu hồi GDI icon
 │   ├── single_instance.py          # Khóa đơn thực thể (Mutex/IPC) & dừng tiến trình con hệ điều hành
-│   ├── config.py                   # Cấu hình hệ thống, phiên bản (v1.11) và hằng số mặc định
+│   ├── config.py                   # Cấu hình hệ thống, phiên bản (v1.2) và hằng số mặc định
 │   ├── esptool_util.py             # Đóng gói tiến trình con esptool đa nền tảng & parse Output
 │   ├── backup_utils.py             # Tính băm SHA-256/MD5, cắt 0xFF và đọc viết manifest sao lưu
 │   ├── binary_scanner.py           # Bộ quét tệp .bin và gợi ý offset chuẩn
