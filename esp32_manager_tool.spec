@@ -83,20 +83,9 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
-splash = Splash(
-    'icons/splash_v110.png',
-    binaries=a.binaries,
-    datas=a.datas,
-    text_pos=None,
-    minify_script=True,
-    always_on_top=False,
-)
-
 exe = EXE(
     pyz,
     a.scripts,
-    splash,
-    splash.binaries,
     a.binaries,
     a.datas,
     [],

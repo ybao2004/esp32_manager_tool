@@ -5,7 +5,7 @@ Kiểm thử toàn diện cho phiên bản v1.10:
 - Lazy-load esptool để tăng tốc khởi động.
 - Bỏ popup thừa sau khi Đọc bảng phân vùng từ chip ở Tab 4.
 - Tab 5: gom 1 hàng, Board Gốc dùng chung Cổng COM trên cùng, lọc khỏi Board Đích, Baudrate độc lập.
-- Màn hình khởi động StartupSplash (không tác giả/giấy phép) và handoff pyi_splash.
+- Màn hình khởi động StartupSplash thuần QWidget (không dùng ảnh tĩnh pyi_splash, hiện trên Taskbar, không luôn-trên-cùng).
 """
 import ast
 import subprocess
@@ -16,14 +16,14 @@ from unittest.mock import patch
 import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
-from PyQt6.QtWidgets import QApplication, QCheckBox, QPushButton
+from PyQt6.QtWidgets import QApplication, QCheckBox, QPushButton, QSplashScreen, QWidget
 
 from modules.config import APP_NAME, APP_VERSION
 from modules.esptool_util import (
     abort_active_esptool,
     parse_esptool_progress_percent,
 )
-from modules.ui.splash import StartupSplash, close_pyi_splash
+from modules.ui.splash import StartupSplash
 
 
 def test_app_version_is_v110_and_zero_tkinter():
@@ -86,10 +86,16 @@ def test_abort_active_esptool_noop_when_unloaded():
 
 
 def test_startup_splash_stages_without_author_or_license(headless_app):
-    """StartupSplash cập nhật tiến độ, mô tả bước khởi động và không hiển thị tác giả/giấy phép."""
+    """StartupSplash thuần QWidget cập nhật tiến độ, hiện trên Taskbar và không dùng ảnh splash tĩnh."""
     _harness, _app = headless_app
+    root_dir = Path(__file__).resolve().parent.parent
+    assert not (root_dir / "icons" / "splash_v110.png").exists()
+
     splash = StartupSplash()
     try:
+        assert isinstance(splash, QWidget)
+        assert not isinstance(splash, QSplashScreen)
+
         splash.set_stage(35, "Đang nạp phân hệ công cụ...")
         assert splash.progress_bar.value() == 35
         assert splash.lbl_pct.text() == "35%"
@@ -111,11 +117,36 @@ def test_startup_splash_stages_without_author_or_license(headless_app):
 
         # Click vào splash không làm ẩn màn hình khởi động đột ngột
         splash.show()
+        splash.set_stage(12, "Khởi tạo...")
+        baseline = (
+            splash.geometry().getRect(),
+            splash.card.geometry().getRect(),
+            splash.lbl_title.geometry().getRect(),
+            splash.lbl_version.geometry().getRect(),
+            splash.lbl_stage.geometry().getRect(),
+            splash.lbl_pct.geometry().getRect(),
+            splash.progress_bar.geometry().getRect(),
+        )
+        splash.set_stage(
+            48,
+            "Đang nạp chuỗi trạng thái rất dài để kiểm tra cắt gọn không làm nhảy kích thước hay vị trí...",
+        )
+        splash.set_stage(100, "Sẵn sàng!")
+        assert baseline == (
+            splash.geometry().getRect(),
+            splash.card.geometry().getRect(),
+            splash.lbl_title.geometry().getRect(),
+            splash.lbl_version.geometry().getRect(),
+            splash.lbl_stage.geometry().getRect(),
+            splash.lbl_pct.geometry().getRect(),
+            splash.progress_bar.geometry().getRect(),
+        )
+
         QTest.mouseClick(splash, Qt.MouseButton.LeftButton)
         assert splash.isVisible()
 
-        # pyi_splash fallback an toàn khi không đóng gói
-        assert isinstance(close_pyi_splash(), bool)
+        splash.finish()
+        assert not splash.isVisible()
     finally:
         splash.close()
 

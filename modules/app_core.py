@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 ESP Tool & Hardware Inspector v1.10 - Core Application Controller (PyQt6 Edition)
-Đơn giản hóa kiến trúc, khởi động mượt với StartupSplash (kết hợp pyi_splash),
+Đơn giản hóa kiến trúc, khởi động mượt với StartupSplash thuần QWidget trên Taskbar,
 hỗ trợ đầy đủ icon Windows Taskbar ở cả source & .exe, khóa đơn thực thể (Single-Instance)
 và giải phóng tiến trình / tài nguyên an toàn khi thoát.
 """
@@ -168,7 +168,7 @@ def set_window_icon_native(window, base_dir=None):
 
 def main():
     from modules.single_instance import SingleInstanceGuard, terminate_child_processes
-    from modules.ui.splash import StartupSplash, close_pyi_splash
+    from modules.ui.splash import StartupSplash
 
     app = QApplication.instance()
     if not app:
@@ -177,7 +177,6 @@ def main():
     guard = SingleInstanceGuard(app_id="esp32_manager_tool_single_instance_v1")
     if not guard.acquire():
         guard.notify_existing_instance()
-        close_pyi_splash()
         sys.exit(0)
 
     icon_path = resolve_app_icon_path()
@@ -191,8 +190,9 @@ def main():
             splash.setWindowIcon(QIcon(icon_path))
         splash.show()
         set_window_icon_native(splash)
+        splash.raise_()
+        splash.activateWindow()
         splash.set_stage(12, "Đang khởi tạo lõi ứng dụng PyQt6...")
-    close_pyi_splash()
 
     def _report_stage(pct: int, msg: str):
         if splash is not None:
@@ -232,6 +232,8 @@ def main():
         _report_stage(94, "Đang hiển thị cửa sổ làm việc chính...")
         window.showMaximized()
         set_window_icon_native(window)
+        window.raise_()
+        window.activateWindow()
         if splash is not None:
             _report_stage(100, "Sẵn sàng!")
             splash.finish(window)

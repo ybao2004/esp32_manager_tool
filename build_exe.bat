@@ -46,8 +46,7 @@ echo [2/4] Don dep thu muc build tam cu...
 if exist "build" rmdir /s /q "build"
 if exist "dist\Esp32_manager_tool.exe" del /f /q "dist\Esp32_manager_tool.exe"
 
-echo [3/4] Dang tao banner Splash va dong goi file .exe (One-File GUI)...
-%PY_CMD% -c "from PyQt6.QtWidgets import QApplication; app=QApplication([]); from modules.ui.splash import generate_pyi_splash_image; generate_pyi_splash_image('icons/splash_v110.png')" >nul 2>&1
+echo [3/4] Dang dong goi file .exe (One-File GUI)...
 %PY_CMD% -m PyInstaller --noconfirm --clean esp32_manager_tool.spec
 if %ERRORLEVEL% NEQ 0 (
     echo [LOI] Qua trinh dong goi PyInstaller that bai!

@@ -1,36 +1,28 @@
 # -*- coding: utf-8 -*-
 """
-Màn hình khởi động (Startup Splash Screen) cho ESP32 Manager Tool.
-- Hiển thị ngay logo ứng dụng, tên phần mềm, phiên bản, thanh tiến độ và bước đang nạp.
-- Hỗ trợ chuyển tiếp mượt mà từ PyInstaller native splash (`pyi_splash`) sang Qt `StartupSplash`.
-- Cung cấp hàm tạo ảnh banner PNG đồng bộ cho `pyi_splash` trong bản đóng gói `--onefile`.
+Màn hình khởi động (Startup Splash Screen) thuần QWidget cho ESP32 Manager Tool.
+- Hiển thị logo ứng dụng, tên phần mềm, phiên bản, thanh tiến độ và bước đang nạp bằng giao diện QSS thuần (không dùng ảnh tĩnh làm nền splash).
+- Khóa chặt kích thước, vị trí và stylesheet cục bộ để không dịch chuyển hoặc đổi cỡ khi ThemeManager áp dụng theme toàn cục.
+- Hiển thị ngay trên Windows Taskbar khi mở ứng dụng, nằm ở lớp cửa sổ bình thường (không ghim luôn-trên-cùng và không tự đẩy xuống cuối cùng).
 """
 import os
 import sys
-from PyQt6.QtCore import Qt, QRectF
-from PyQt6.QtGui import (
-    QColor,
-    QFont,
-    QIcon,
-    QLinearGradient,
-    QPainter,
-    QPainterPath,
-    QPen,
-    QPixmap,
-)
+from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon, QPixmap
 from PyQt6.QtWidgets import (
     QApplication,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QProgressBar,
-    QSplashScreen,
     QVBoxLayout,
+    QWidget,
 )
 from modules.config import APP_NAME, APP_VERSION
 
 
 def resolve_splash_logo_path(base_dir: str | None = None) -> str:
-    """Tìm ảnh logo PNG độ phân giải cao dùng cho màn hình khởi động."""
+    """Tìm ảnh logo ứng dụng PNG/ICO để gắn lên màn hình khởi động và biểu tượng cửa sổ."""
     candidates = []
     search_roots = []
     if base_dir:
@@ -50,122 +42,12 @@ def resolve_splash_logo_path(base_dir: str | None = None) -> str:
     return ""
 
 
-def close_pyi_splash() -> bool:
-    """Đóng màn hình chờ giải nén PyInstaller (pyi_splash) nếu đang chạy ở chế độ frozen."""
-    try:
-        import pyi_splash  # type: ignore[import-not-found]
-        if getattr(pyi_splash, "is_alive", lambda: True)():
-            pyi_splash.close()
-        return True
-    except Exception:
-        return False
+class StartupSplash(QWidget):
+    """Màn hình khởi động QWidget thuần có kích thước/bố cục bất biến qua mọi mốc tiến độ."""
 
-
-def _render_card_pixmap(width: int = 520, height: int = 300, include_unpack_footer: bool = False) -> QPixmap:
-    """Vẽ nền thẻ splash sắc nét phong cách Engineering cho cả QSplashScreen và banner PNG pyi_splash."""
-    pixmap = QPixmap(width, height)
-    if include_unpack_footer:
-        pixmap.fill(QColor("#0F172A"))
-    else:
-        pixmap.fill(Qt.GlobalColor.transparent)
-
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
-
-    radius = 0.0 if include_unpack_footer else 14.0
-    rect = QRectF(1.0, 1.0, width - 2.0, height - 2.0)
-    path = QPainterPath()
-    if radius > 0:
-        path.addRoundedRect(rect, radius, radius)
-    else:
-        path.addRect(rect)
-
-    bg_grad = QLinearGradient(0, 0, width, height)
-    bg_grad.setColorAt(0.0, QColor("#0F172A"))
-    bg_grad.setColorAt(1.0, QColor("#162238"))
-    painter.fillPath(path, bg_grad)
-
-    # Viền mảnh và dải nhấn trên cùng
-    painter.setPen(QPen(QColor("#2A3B58"), 1.5))
-    painter.drawPath(path)
-
-    painter.save()
-    painter.setClipPath(path)
-    accent_grad = QLinearGradient(0, 0, width, 0)
-    accent_grad.setColorAt(0.0, QColor("#0284C7"))
-    accent_grad.setColorAt(0.65, QColor("#0EA5E9"))
-    accent_grad.setColorAt(1.0, QColor("#38BDF8"))
-    painter.fillRect(QRectF(0, 0, width, 4.0), accent_grad)
-
-    if include_unpack_footer:
-        logo_path = resolve_splash_logo_path()
-        if logo_path:
-            logo_pix = QPixmap(logo_path)
-            if not logo_pix.isNull():
-                scaled = logo_pix.scaled(
-                    84, 84, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation
-                )
-                painter.drawPixmap(34, 42, scaled)
-
-        painter.setPen(QColor("#F8FAFC"))
-        painter.setFont(QFont("Segoe UI", 19, QFont.Weight.Bold))
-        painter.drawText(QRectF(138, 42, width - 168, 36), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "ESP32 Manager Tool")
-
-        painter.setPen(QColor("#38BDF8"))
-        painter.setFont(QFont("Segoe UI", 10, QFont.Weight.DemiBold))
-        painter.drawText(
-            QRectF(138, 80, width - 168, 24),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            f"Phiên bản v{APP_VERSION}  |  Bộ công cụ phần cứng Espressif",
-        )
-
-        painter.setPen(QColor("#94A3B8"))
-        painter.setFont(QFont("Segoe UI", 9))
-        painter.drawText(
-            QRectF(138, 108, width - 168, 24),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            "Inspector · Serial · Flasher · Partition · Direct Clone",
-        )
-
-        # Dải thông báo giải nén trước khi Qt khởi chạy
-        painter.setPen(QColor("#CBD5E1"))
-        painter.setFont(QFont("Segoe UI", 9, QFont.Weight.Medium))
-        painter.drawText(
-            QRectF(34, height - 66, width - 68, 22),
-            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-            "Đang giải nén tài nguyên thực thi...",
-        )
-
-        bar_bg = QPainterPath()
-        bar_bg.addRoundedRect(QRectF(34, height - 38, width - 68, 8), 4.0, 4.0)
-        painter.fillPath(bar_bg, QColor("#22324D"))
-
-        bar_fg = QPainterPath()
-        bar_fg.addRoundedRect(QRectF(34, height - 38, (width - 68) * 0.28, 8), 4.0, 4.0)
-        painter.fillPath(bar_fg, QColor("#0EA5E9"))
-
-    painter.restore()
-    painter.end()
-    return pixmap
-
-
-def generate_pyi_splash_image(output_path: str) -> str:
-    """Sinh file ảnh PNG banner cho PyInstaller native splash (`pyi_splash`)."""
-    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
-    pix = _render_card_pixmap(520, 300, include_unpack_footer=True)
-    pix.save(output_path, "PNG")
-    return output_path
-
-
-class StartupSplash(QSplashScreen):
-    """Màn hình khởi động có logo, tên ứng dụng, phiên bản, thanh tiến độ và bước khởi tạo."""
-
-    def __init__(self, width: int = 520, height: int = 300):
-        base_pix = _render_card_pixmap(width, height, include_unpack_footer=False)
-        super().__init__(base_pix)
-        # Dùng cờ Window (không dùng SplashScreen / WindowStaysOnTopHint) để hiện ngay trên Taskbar
-        # và cho phép các cửa sổ khác che lên bình thường trong lúc khởi động.
+    def __init__(self, width: int = 520, height: int = 290):
+        super().__init__()
+        self.setObjectName("startupSplash")
         self.setWindowFlags(
             Qt.WindowType.Window
             | Qt.WindowType.FramelessWindowHint
@@ -188,18 +70,145 @@ class StartupSplash(QSplashScreen):
         self._current_progress = 0
         self._current_stage = "Đang khởi tạo..."
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(30, 28, 30, 30)
-        root.setSpacing(12)
+        # Khóa toàn bộ stylesheet cục bộ theo ID để ThemeManager.apply_theme() không làm xê dịch font/padding giữa chừng.
+        self.setStyleSheet("""
+            QWidget#startupSplash {
+                background: transparent;
+                font-family: "Segoe UI", Arial, sans-serif;
+            }
+            QFrame#splashCard {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #0F172A, stop:1 #162238
+                );
+                border: 1px solid #2A3B58;
+                border-radius: 14px;
+            }
+            QFrame#splashAccentBar {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #0284C7, stop:0.65 #0EA5E9, stop:1 #38BDF8
+                );
+                border: none;
+                border-radius: 2px;
+            }
+            QLabel#splashLogo {
+                background: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
+            }
+            QLabel#splashTitle {
+                color: #F8FAFC;
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 19pt;
+                font-weight: 700;
+                background: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
+            }
+            QLabel#splashVersion {
+                color: #38BDF8;
+                background-color: #16304B;
+                border: 1px solid #0284C7;
+                border-radius: 9px;
+                padding: 0px;
+                margin: 0px;
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 9pt;
+                font-weight: 700;
+            }
+            QLabel#splashSubtitle {
+                color: #CBD5E1;
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 9.5pt;
+                font-weight: 500;
+                background: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
+            }
+            QLabel#splashModules {
+                color: #94A3B8;
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 8.5pt;
+                font-weight: 400;
+                background: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
+            }
+            QLabel#splashStage {
+                color: #E2E8F0;
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 9pt;
+                font-weight: 500;
+                background: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
+            }
+            QLabel#splashPct {
+                color: #38BDF8;
+                font-family: "Segoe UI", Arial, sans-serif;
+                font-size: 9pt;
+                font-weight: 700;
+                background: transparent;
+                border: none;
+                padding: 0px;
+                margin: 0px;
+            }
+            QProgressBar#splashProgressBar {
+                background-color: #22324D;
+                border: none;
+                border-radius: 4px;
+                min-height: 8px;
+                max-height: 8px;
+                padding: 0px;
+                margin: 0px;
+            }
+            QProgressBar#splashProgressBar::chunk {
+                background-color: qlineargradient(
+                    x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #0284C7, stop:1 #38BDF8
+                );
+                border: none;
+                border-radius: 4px;
+            }
+        """)
 
-        # Hàng đầu: Logo + Tên app + Phiên bản + Mô tả
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self.card = QFrame(self)
+        self.card.setObjectName("splashCard")
+        self.card.setFixedSize(width, height)
+        outer.addWidget(self.card)
+
+        card_layout = QVBoxLayout(self.card)
+        card_layout.setContentsMargins(22, 16, 22, 24)
+        card_layout.setSpacing(12)
+
+        self.accent_bar = QFrame(self.card)
+        self.accent_bar.setObjectName("splashAccentBar")
+        self.accent_bar.setFixedHeight(4)
+        card_layout.addWidget(self.accent_bar)
+
+        body = QVBoxLayout()
+        body.setContentsMargins(8, 8, 8, 0)
+        body.setSpacing(10)
+
+        # Hàng đầu: Logo + Tên app + Phiên bản + Mô tả (tất cả khóa cố định chiều cao)
         top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
         top_row.setSpacing(18)
 
-        self.lbl_logo = QLabel(self)
+        self.lbl_logo = QLabel(self.card)
+        self.lbl_logo.setObjectName("splashLogo")
         self.lbl_logo.setFixedSize(84, 84)
         self.lbl_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.lbl_logo.setStyleSheet("background: transparent;")
         logo_path = resolve_splash_logo_path()
         if logo_path:
             logo_pix = QPixmap(logo_path)
@@ -207,79 +216,89 @@ class StartupSplash(QSplashScreen):
                 self.lbl_logo.setPixmap(
                     logo_pix.scaled(80, 80, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
                 )
-        top_row.addWidget(self.lbl_logo)
+        top_row.addWidget(self.lbl_logo, 0, Qt.AlignmentFlag.AlignTop)
 
         title_col = QVBoxLayout()
-        title_col.setSpacing(4)
+        title_col.setContentsMargins(0, 0, 0, 0)
+        title_col.setSpacing(5)
 
         title_line = QHBoxLayout()
+        title_line.setContentsMargins(0, 0, 0, 0)
         title_line.setSpacing(10)
-        self.lbl_title = QLabel("ESP32 Manager Tool", self)
-        self.lbl_title.setStyleSheet(
-            "color: #F8FAFC; font-size: 19pt; font-weight: 700; background: transparent;"
-        )
+        self.lbl_title = QLabel("ESP32 Manager Tool", self.card)
+        self.lbl_title.setObjectName("splashTitle")
+        self.lbl_title.setFixedHeight(34)
+        self.lbl_title.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         title_line.addWidget(self.lbl_title)
 
-        self.lbl_version = QLabel(f"v{APP_VERSION}", self)
-        self.lbl_version.setStyleSheet(
-            "color: #38BDF8; background-color: #16304B; border: 1px solid #0284C7;"
-            "border-radius: 9px; padding: 2px 9px; font-size: 9pt; font-weight: 700;"
-        )
-        title_line.addWidget(self.lbl_version)
+        self.lbl_version = QLabel(f"v{APP_VERSION}", self.card)
+        self.lbl_version.setObjectName("splashVersion")
+        self.lbl_version.setFixedSize(58, 22)
+        self.lbl_version.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_line.addWidget(self.lbl_version, 0, Qt.AlignmentFlag.AlignVCenter)
         title_line.addStretch(1)
         title_col.addLayout(title_line)
 
-        self.lbl_subtitle = QLabel("Bộ công cụ Kỹ thuật & Quản lý Phần cứng Espressif", self)
-        self.lbl_subtitle.setStyleSheet("color: #CBD5E1; font-size: 9.5pt; font-weight: 500; background: transparent;")
+        self.lbl_subtitle = QLabel("Bộ công cụ Kỹ thuật & Quản lý Phần cứng Espressif", self.card)
+        self.lbl_subtitle.setObjectName("splashSubtitle")
+        self.lbl_subtitle.setFixedHeight(22)
+        self.lbl_subtitle.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         title_col.addWidget(self.lbl_subtitle)
 
-        self.lbl_modules = QLabel("Chip Inspector · Serial Monitor · Flasher · Partition · Direct Clone", self)
-        self.lbl_modules.setStyleSheet("color: #94A3B8; font-size: 8.5pt; background: transparent;")
+        self.lbl_modules = QLabel("Chip Inspector · Serial Monitor · Flasher · Partition · Direct Clone", self.card)
+        self.lbl_modules.setObjectName("splashModules")
+        self.lbl_modules.setFixedHeight(20)
+        self.lbl_modules.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         title_col.addWidget(self.lbl_modules)
 
         title_col.addStretch(1)
         top_row.addLayout(title_col, 1)
-        root.addLayout(top_row)
+        body.addLayout(top_row)
 
-        root.addStretch(1)
+        body.addStretch(1)
 
-        # Khối tiến trình hiện tại + %
+        # Khối tiến trình hiện tại + % (khóa cố định chiều cao & độ rộng cột %)
         stage_row = QHBoxLayout()
+        stage_row.setContentsMargins(0, 0, 0, 0)
         stage_row.setSpacing(8)
-        self.lbl_stage = QLabel(self._current_stage, self)
-        self.lbl_stage.setStyleSheet("color: #E2E8F0; font-size: 9pt; font-weight: 500; background: transparent;")
+        self.lbl_stage = QLabel(self._current_stage, self.card)
+        self.lbl_stage.setObjectName("splashStage")
+        self.lbl_stage.setFixedHeight(22)
+        self.lbl_stage.setWordWrap(False)
+        self.lbl_stage.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         stage_row.addWidget(self.lbl_stage, 1)
 
-        self.lbl_pct = QLabel("0%", self)
-        self.lbl_pct.setStyleSheet("color: #38BDF8; font-size: 9pt; font-weight: 700; background: transparent;")
+        self.lbl_pct = QLabel("0%", self.card)
+        self.lbl_pct.setObjectName("splashPct")
+        self.lbl_pct.setFixedSize(48, 22)
         self.lbl_pct.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        stage_row.addWidget(self.lbl_pct)
-        root.addLayout(stage_row)
+        stage_row.addWidget(self.lbl_pct, 0)
+        body.addLayout(stage_row)
 
-        self.progress_bar = QProgressBar(self)
+        self.progress_bar = QProgressBar(self.card)
+        self.progress_bar.setObjectName("splashProgressBar")
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setFixedHeight(8)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                background-color: #22324D;
-                border: none;
-                border-radius: 4px;
-            }
-            QProgressBar::chunk {
-                background-color: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #0284C7, stop:1 #38BDF8
-                );
-                border-radius: 4px;
-            }
-        """)
-        root.addWidget(self.progress_bar)
+        body.addWidget(self.progress_bar)
+        card_layout.addLayout(body, 1)
+
+        self._center_on_screen()
         self._apply_taskbar_window_style()
 
+    def _center_on_screen(self) -> None:
+        """Căn giữa màn hình khởi động đúng một lần trên vùng làm việc của màn hình chính."""
+        app = QApplication.instance()
+        screen = self.screen() or (app.primaryScreen() if app is not None else None)
+        if screen is not None:
+            avail = screen.availableGeometry()
+            x = avail.x() + max(0, (avail.width() - self.width()) // 2)
+            y = avail.y() + max(0, (avail.height() - self.height()) // 2)
+            self.setGeometry(x, y, self.width(), self.height())
+
     def _apply_taskbar_window_style(self) -> None:
-        """Bảo đảm cửa sổ splash hiện ngay trên Windows Taskbar và không bị khóa luôn-trên-cùng."""
+        """Đưa cửa sổ splash lên Windows Taskbar (WS_EX_APPWINDOW) mà không đổi Z-order hiện tại."""
         if os.name != "nt" or os.environ.get("QT_QPA_PLATFORM", "").lower() == "offscreen":
             return
         try:
@@ -294,9 +313,9 @@ class StartupSplash(QSplashScreen):
             WS_EX_TOOLWINDOW = 0x00000080
             WS_EX_APPWINDOW = 0x00040000
             WS_EX_TOPMOST = 0x00000008
-            HWND_NOTOPMOST = -2
-            SWP_NOMOVE = 0x0002
             SWP_NOSIZE = 0x0001
+            SWP_NOMOVE = 0x0002
+            SWP_NOZORDER = 0x0004
             SWP_NOACTIVATE = 0x0010
             SWP_FRAMECHANGED = 0x0020
 
@@ -316,15 +335,16 @@ class StartupSplash(QSplashScreen):
             new_ex_style = (ex_style & ~WS_EX_TOOLWINDOW & ~WS_EX_TOPMOST) | WS_EX_APPWINDOW
             if new_ex_style != ex_style:
                 user32.SetWindowLongW(hwnd, GWL_EXSTYLE, new_ex_style)
-            user32.SetWindowPos(
-                hwnd,
-                HWND_NOTOPMOST,
-                0,
-                0,
-                0,
-                0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-            )
+                # Giữ SWP_NOZORDER để tuyệt đối không tự đẩy màn hình khởi động xuống đáy Z-order.
+                user32.SetWindowPos(
+                    hwnd,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+                )
         except Exception:
             pass
 
@@ -333,8 +353,6 @@ class StartupSplash(QSplashScreen):
         super().showEvent(event)
 
     def mousePressEvent(self, event) -> None:
-        # Không gọi super().mousePressEvent (mặc định của QSplashScreen sẽ ẩn splash khi click);
-        # thay vào đó cho phép kéo di chuyển nhẹ màn hình khởi động.
         if event.button() == Qt.MouseButton.LeftButton:
             self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
             event.accept()
@@ -348,17 +366,30 @@ class StartupSplash(QSplashScreen):
         self._drag_pos = None
         event.accept()
 
-    def set_stage(self, progress: int | float, stage_text: str = "", process_events: bool = True):
-        """Cập nhật tiến độ (0-100) và mô tả bước khởi động đang thực thi."""
+    def set_stage(self, progress: int | float, stage_text: str = "", process_events: bool = True) -> None:
+        """Cập nhật tiến độ (0-100) và mô tả bước khởi động mà không làm thay đổi kích thước/vị trí."""
         clamped = max(0, min(100, int(round(float(progress)))))
         self._current_progress = clamped
         self.progress_bar.setValue(clamped)
         self.lbl_pct.setText(f"{clamped}%")
         if stage_text:
             self._current_stage = str(stage_text)
-            self.lbl_stage.setText(self._current_stage)
+            fallback_w = max(200, self.width() - 120)
+            avail_w = self.lbl_stage.width() if self.isVisible() and self.lbl_stage.width() >= fallback_w else fallback_w
+            elided = self.lbl_stage.fontMetrics().elidedText(
+                self._current_stage, Qt.TextElideMode.ElideRight, avail_w
+            )
+            self.lbl_stage.setText(elided)
         if process_events:
             app = QApplication.instance()
             if app is not None:
                 self.repaint()
                 app.processEvents()
+
+    def finish(self, main_window=None) -> None:
+        """Đóng màn hình khởi động sau khi cửa sổ chính đã hiển thị xong."""
+        if main_window is not None:
+            app = QApplication.instance()
+            if app is not None:
+                app.processEvents()
+        self.close()

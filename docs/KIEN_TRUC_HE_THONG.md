@@ -1,12 +1,12 @@
 # KIẾN TRÚC HỆ THỐNG & THIẾT KẾ PHẦN MỀM (v1.10)
 
-> Tài liệu mô tả kiến trúc thuần PyQt6 của **ESP32 Manager Tool v1.10**, cơ chế khởi động tối ưu kèm Splash 2 tầng (`pyi_splash` + `StartupSplash`), cập nhật nội tuyến trong Cài đặt kèm self-updater Windows, chuẩn tương phản WCAG AA, đơn thực thể và giải phóng tài nguyên an toàn.
+> Tài liệu mô tả kiến trúc thuần PyQt6 của **ESP32 Manager Tool v1.10**, cơ chế khởi động tối ưu kèm màn hình `StartupSplash` thuần `QWidget` trên Taskbar, cập nhật nội tuyến trong Cài đặt kèm self-updater Windows, chuẩn tương phản WCAG AA, đơn thực thể và giải phóng tài nguyên an toàn.
 
 ---
 
 ## 1. TỔNG QUAN KIẾN TRÚC TỔNG THỂ
 
-Từ phiên bản v1.7 trở đi (hiện tại v1.10), **ESP32 Manager Tool** chạy hoàn toàn trên **PyQt6** (đã loại bỏ 100% thư viện `tkinter` và `ttk`). Điểm vào `main.py` khởi tạo `QApplication` và kiểm tra đơn thực thể sớm, hiển thị ngay `StartupSplash` (tiếp nối `pyi_splash` ở bản `.exe`), nạp lazy `MainWindow` cùng `esptool` để rút ngắn độ trễ hiển thị ban đầu, rồi vận hành `InspectorApp` (`modules/app_core.py`) với 5 lớp Mixin nghiệp vụ chuyên biệt:
+Từ phiên bản v1.7 trở đi (hiện tại v1.10), **ESP32 Manager Tool** chạy hoàn toàn trên **PyQt6** (đã loại bỏ 100% thư viện `tkinter` và `ttk`). Điểm vào `main.py` khởi tạo `QApplication` và kiểm tra đơn thực thể sớm, hiển thị ngay `StartupSplash` thuần `QWidget`, nạp lazy `MainWindow` cùng `esptool` để rút ngắn độ trễ hiển thị ban đầu, rồi vận hành `InspectorApp` (`modules/app_core.py`) với 5 lớp Mixin nghiệp vụ chuyên biệt:
 
 ```text
 InspectorApp (modules/app_core.py)
@@ -40,7 +40,7 @@ InspectorApp (modules/app_core.py)
 - `card.py`: Khung thẻ với icon và tiêu đề (`section` / `section_danger`) đồng bộ hoàn toàn theo theme.
 - `disk_map.py`: `DiskMapWidget` vẽ phân vùng tỷ lệ Flash theo 2 lượt với bảng màu đạt chuẩn tương phản WCAG 2.2 AA (>= 4.5:1) trên cả hai nền Sáng/Tối và khung viền chọn đôi tương phản cao.
 - `log_view.py`: Gắn thuộc tính `_ROLE_PROP` cho từng đoạn văn bản log và tự động tô lại toàn bộ khối log đã hiển thị khi người dùng đổi Sáng/Tối.
-- `splash.py`: `StartupSplash` (kết hợp `close_pyi_splash()` và trình sinh banner `icons/splash_v110.png`) hiển thị logo, tên app, thanh tiến độ và bước khởi tạo thực tế ngay trên Taskbar Windows (không khóa luôn-trên-cùng).
+- `splash.py`: `StartupSplash` thuần `QWidget` (QSS gradient, không dùng `QSplashScreen`/ảnh `pyi_splash`) hiển thị logo, tên app, thanh tiến độ và bước khởi tạo thực tế ngay trên Taskbar Windows (nằm ở lớp cửa sổ thường, không khóa luôn-trên-cùng và không tự đẩy xuống đáy Z-order).
 - `update_badge.py`: `UpdateDotBadge` vẽ chấm đỏ hướng dẫn xuyên suốt Sidebar -> Tab Cài đặt -> nút cập nhật khi có phiên bản mới.
 - `connection_bar.py`, `collapsible.py`, `key_value_table.py`, `info_bar.py`, `progress_row.py`.
 

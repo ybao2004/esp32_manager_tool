@@ -9,7 +9,7 @@
 ## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.10
 
 - **Cập nhật nội tuyến trong Cài đặt & Tự thay thế `.exe` an toàn:** Gộp kiểm tra phiên bản, Release Notes và thanh tiến trình tải thẳng vào trang Cài đặt (không mở thêm cửa sổ); thêm tùy chọn *Tự động kiểm tra cập nhật khi khởi động* (mặc định tắt), chuỗi chấm đỏ điều hướng `UpdateDotBadge` từ Sidebar -> Tab Cài đặt -> nút cập nhật, và cơ chế staging vào `%TEMP%` + tự thay thế khi người dùng tải đè lên file `.exe` đang chạy.
-- **Màn hình khởi động Splash 2 tầng & Tối ưu tốc độ mở app:** Tích hợp `pyi_splash` (banner `icons/splash_v110.png` ngay khi giải nén `.exe` `--onefile`) nối tiếp `StartupSplash` (hiển thị logo, tên app, thanh tiến độ và bước đang nạp), kết hợp lazy-load `esptool` và kiểm tra đơn thực thể sớm để mở giao diện nhanh hơn.
+- **Màn hình khởi động QWidget thuần & Tối ưu tốc độ mở app:** Hiển thị `StartupSplash` (cửa sổ `QWidget` thuần QSS, không dùng ảnh tĩnh `pyi_splash`, hiện ngay trên Windows Taskbar ở lớp cửa sổ thường với logo, tên app, thanh tiến độ và bước đang nạp), kết hợp lazy-load `esptool` và kiểm tra đơn thực thể sớm để mở giao diện nhanh hơn.
 - **Tab 5 gọn 1 hàng, đồng bộ Cổng COM trên cùng & Baudrate độc lập:** Gom toàn bộ cụm điều khiển đầu trang về 1 hàng ngang; `Board Gốc` tự dùng chung Cổng COM ở thanh trên cùng và được loại trừ khỏi danh sách `Board Đích`, trong khi Baudrate Tab 5 hoạt động độc lập.
 - **Sửa chuẩn xác tiến trình `esptool` v4/v5 & Tối giản thông báo Tab 4:** Hỗ trợ trích xuất `%` của `esptool v5.x`, cập nhật nhãn bước thực tế (`Bước 1/2`, `Bước 2/2`), tự dọn trạng thái `Đang...` khi tác vụ lỗi/hoàn tất, và bỏ hộp thoại thông báo thừa sau khi Đọc bảng phân vùng từ chip ở Tab 4.
 
