@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QCheckBox, QFrame, QTableWidget,
     QTableWidgetItem, QHeaderView, QRadioButton, QTabWidget,
-    QPlainTextEdit, QProgressBar, QApplication
+    QPlainTextEdit, QProgressBar, QApplication, QSizePolicy, QScrollArea
 )
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
@@ -40,7 +40,7 @@ from modules.ui import dialogs_service as dlg
 
 
 class SettingsPage(QWidget):
-    """Trang Cài Đặt Hệ Thống ESP32 Manager Tool (v1.9)"""
+    """Trang Cài Đặt Hệ Thống ESP32 Manager Tool (v1.11)"""
 
     def __init__(self, core_app=None, parent: QWidget = None):
         super().__init__(parent)
@@ -75,11 +75,19 @@ class SettingsPage(QWidget):
         gen_hbox.setSpacing(12)
 
         # --- CỘT TRÁI: Giao diện & Chủ đề + Cấu hình Server + Bản quyền ---
-        left_col = QVBoxLayout()
+        # Đặt trong QScrollArea không viền để ở màn hình nhỏ (960x580) vẫn không bị ép chồng lấn
+        left_scroll = QScrollArea(tab_general)
+        left_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        left_scroll.setStyleSheet("QScrollArea, QScrollArea > QWidget > QWidget { background: transparent; border: none; }")
+        left_container = QWidget(left_scroll)
+        left_col = QVBoxLayout(left_container)
+        left_col.setContentsMargins(0, 0, 4, 0)
         left_col.setSpacing(10)
 
         # 1. Card Giao diện & Chủ đề (Tự động áp dụng tức thì - Chỉ phong cách Kỹ thuật)
-        card_theme = Card("Giao diện Kỹ thuật (Tự động áp dụng)", icon_name="edit", parent=tab_general)
+        card_theme = Card("Giao diện Kỹ thuật (Tự động áp dụng)", icon_name="edit", parent=left_container)
         t_grid = QGridLayout()
         t_grid.setContentsMargins(0, 0, 0, 0)
         t_grid.setHorizontalSpacing(10)
@@ -118,7 +126,7 @@ class SettingsPage(QWidget):
         self.rb_dark.toggled.connect(self._on_live_theme_changed)
 
         # 2. Card Cấu hình Server TCP Mặc định
-        card_server = Card("Cấu hình Server TCP Mặc định", icon_name="wifi", parent=tab_general)
+        card_server = Card("Cấu hình Server TCP Mặc định", icon_name="wifi", parent=left_container)
         srv_grid = QGridLayout()
         srv_grid.setContentsMargins(0, 0, 0, 0)
         srv_grid.setHorizontalSpacing(10)
@@ -143,7 +151,7 @@ class SettingsPage(QWidget):
         left_col.addWidget(card_server)
 
         # 3. Card Thông tin Phiên bản & Bản quyền + Cập nhật trực tiếp (Inline)
-        card_about = Card("Thông tin Phiên bản & Bản quyền", icon_name="info", parent=tab_general)
+        card_about = Card("Thông tin Phiên bản & Bản quyền", icon_name="info", parent=left_container)
         abt_layout = QVBoxLayout()
         abt_layout.setContentsMargins(0, 0, 0, 0)
         abt_layout.setSpacing(6)
@@ -152,8 +160,9 @@ class SettingsPage(QWidget):
         lbl_app.setStyleSheet("font-size: 10.5pt; font-weight: 700;")
         abt_layout.addWidget(lbl_app)
 
-        abt_layout.addWidget(QLabel("Tác giả: @ybao04", card_about))
-        abt_layout.addWidget(QLabel("Giấy phép: GNU General Public License v3.0 (GPL-3.0)", card_about))
+        lbl_meta = QLabel("Tác giả: @ybao04  |  Giấy phép: GPL-3.0", card_about)
+        lbl_meta.setProperty("role", "muted")
+        abt_layout.addWidget(lbl_meta)
         abt_layout.addWidget(
             QLabel(f"Mã nguồn: https://github.com/{GITHUB_REPO}.git", card_about)
         )
@@ -183,21 +192,21 @@ class SettingsPage(QWidget):
         abt_btn_row.setSpacing(8)
         self.btn_chk_update = QPushButton("Kiểm Tra Cập Nhật", card_about)
         bind_themed_icon(self.btn_chk_update, "refresh")
-        self.btn_chk_update.setMinimumWidth(165)
+        self.btn_chk_update.setMinimumWidth(148)
         self.btn_chk_update.clicked.connect(self._on_check_update)
         abt_btn_row.addWidget(self.btn_chk_update)
 
         self.btn_update_now = QPushButton("Cập nhật ngay", card_about)
         self.btn_update_now.setProperty("accent", "true")
         bind_themed_icon(self.btn_update_now, "arrow_download", role="on_accent")
-        self.btn_update_now.setMinimumWidth(140)
+        self.btn_update_now.setMinimumWidth(132)
         self.btn_update_now.clicked.connect(self._on_update_now_click)
         self.btn_update_now.setVisible(False)
         abt_btn_row.addWidget(self.btn_update_now)
 
-        self.btn_save_update = QPushButton("Lưu về máy...", card_about)
+        self.btn_save_update = QPushButton("Tải về máy...", card_about)
         bind_themed_icon(self.btn_save_update, "save")
-        self.btn_save_update.setMinimumWidth(130)
+        self.btn_save_update.setMinimumWidth(122)
         self.btn_save_update.clicked.connect(self._on_save_update_click)
         self.btn_save_update.setVisible(False)
         abt_btn_row.addWidget(self.btn_save_update)
@@ -205,7 +214,7 @@ class SettingsPage(QWidget):
         self.btn_cancel_update = QPushButton("Hủy tải", card_about)
         self.btn_cancel_update.setProperty("danger_outline", "true")
         bind_themed_icon(self.btn_cancel_update, "stop", role="danger")
-        self.btn_cancel_update.setMinimumWidth(95)
+        self.btn_cancel_update.setMinimumWidth(90)
         self.btn_cancel_update.clicked.connect(self._on_cancel_update_click)
         self.btn_cancel_update.setVisible(False)
         abt_btn_row.addWidget(self.btn_cancel_update)
@@ -213,32 +222,41 @@ class SettingsPage(QWidget):
         abt_btn_row.addStretch(1)
         abt_layout.addLayout(abt_btn_row)
 
-        # Khung chi tiết bản phát hành & tiến trình tải (hiện trực tiếp ngay trong card)
+        # Khung chi tiết bản phát hành & tiến trình tải (đặt tiến trình phía trên để không đè lên ghi chú)
         self.update_details_panel = QWidget(card_about)
         upd_det_layout = QVBoxLayout(self.update_details_panel)
         upd_det_layout.setContentsMargins(0, 4, 0, 0)
         upd_det_layout.setSpacing(6)
 
-        self.txt_release_notes = QPlainTextEdit(self.update_details_panel)
-        self.txt_release_notes.setReadOnly(True)
-        self.txt_release_notes.setProperty("role", "log")
-        self.txt_release_notes.setFixedHeight(105)
-        upd_det_layout.addWidget(self.txt_release_notes)
+        self.lbl_download_status = QLabel("", self.update_details_panel)
+        self.lbl_download_status.setProperty("role", "muted")
+        self.lbl_download_status.setWordWrap(True)
+        self.lbl_download_status.setMinimumHeight(18)
+        self.lbl_download_status.setVisible(False)
+        upd_det_layout.addWidget(self.lbl_download_status)
 
         self.pb_update_download = QProgressBar(self.update_details_panel)
         self.pb_update_download.setRange(0, 100)
         self.pb_update_download.setValue(0)
+        self.pb_update_download.setTextVisible(False)
+        self.pb_update_download.setMinimumHeight(10)
+        self.pb_update_download.setMaximumHeight(12)
         self.pb_update_download.setVisible(False)
         upd_det_layout.addWidget(self.pb_update_download)
 
-        self.lbl_download_status = QLabel("", self.update_details_panel)
-        self.lbl_download_status.setProperty("role", "muted")
-        self.lbl_download_status.setWordWrap(True)
-        self.lbl_download_status.setVisible(False)
-        upd_det_layout.addWidget(self.lbl_download_status)
+        self.txt_release_notes = QPlainTextEdit(self.update_details_panel)
+        self.txt_release_notes.setReadOnly(True)
+        self.txt_release_notes.setProperty("role", "log")
+        self.txt_release_notes.setMinimumHeight(76)
+        self.txt_release_notes.setMaximumHeight(110)
+        self.txt_release_notes.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+        upd_det_layout.addWidget(self.txt_release_notes, 1)
 
         self.update_details_panel.setVisible(False)
-        abt_layout.addWidget(self.update_details_panel)
+        abt_layout.addWidget(self.update_details_panel, 1)
 
         self._btn_chk_badge = UpdateDotBadge(self.btn_chk_update, margin_right=5, margin_top=4)
         self._btn_update_now_badge = UpdateDotBadge(self.btn_update_now, margin_right=5, margin_top=4)
@@ -248,7 +266,8 @@ class SettingsPage(QWidget):
         left_col.addWidget(card_about)
         left_col.addStretch(1)
 
-        gen_hbox.addLayout(left_col, 1)
+        left_scroll.setWidget(left_container)
+        gen_hbox.addWidget(left_scroll, 1)
 
         # --- CỘT PHẢI: Quản lý Cổng COM & Bộ lọc Bluetooth ---
         right_col = QVBoxLayout()
@@ -601,7 +620,7 @@ class SettingsPage(QWidget):
                 f"[ BẢN PHÁT HÀNH: {rel_name} ({tag}) ]",
                 f"Ngày phát hành: {pub_date}",
                 f"File tải về: {asset_name if asset_name else 'Mã nguồn (.zip)'}{size_str}",
-                "-" * 60,
+                "-" * 36,
                 "Nội dung cập nhật & cải tiến:",
                 notes if notes else "(Không có ghi chú phát hành).",
             ]
@@ -621,8 +640,10 @@ class SettingsPage(QWidget):
                 self.update_details_panel.setVisible(True)
                 self.btn_update_now.setVisible(can_self_update)
                 self.btn_update_now.setEnabled(can_self_update)
-                self.btn_save_update.setVisible(bool(download_url))
-                self.btn_save_update.setEnabled(bool(download_url))
+                # Khi hỗ trợ tự cập nhật .exe trên Windows thì tải trực tiếp qua 'Cập nhật ngay',
+                # tránh nút thừa gây chật hàng; các trường hợp khác mới hiện nút lưu file.
+                self.btn_save_update.setVisible(bool(download_url) and not can_self_update)
+                self.btn_save_update.setEnabled(bool(download_url) and not can_self_update)
             else:
                 self.lbl_update_status.setText(
                     f"Bạn đang sử dụng phiên bản mới nhất (v{APP_VERSION})."
@@ -673,19 +694,14 @@ class SettingsPage(QWidget):
             dlg.show_info("Thông báo", "Không tìm thấy đường dẫn tải file cập nhật trực tiếp.", self)
             return
 
-        raw_name = self.latest_update_info.get("asset_name", "Esp32_manager_tool_update.exe")
-        tag = str(self.latest_update_info.get("latest_version", "") or "").strip()
-        stem, ext = os.path.splitext(raw_name)
+        raw_name = self.latest_update_info.get("asset_name", "Esp32_manager_tool.exe")
+        _, ext = os.path.splitext(raw_name)
         ext = ext or ".exe"
-
-        # Gợi ý tên kèm phiên bản nếu trùng tên file .exe đang chạy để tránh ghi nhầm vị trí đang chạy
-        running_exe = get_running_executable_path()
+        # Giữ nguyên tên gốc từ bản phát hành, không chèn hậu tố phiên bản (_vX.Y)
         default_name = raw_name
-        if running_exe and raw_name.lower() == os.path.basename(running_exe).lower() and tag:
-            safe_tag = "".join(c for c in tag if c.isalnum() or c in (".", "_", "-"))
-            if safe_tag and safe_tag not in stem:
-                default_name = f"{stem}_{safe_tag}{ext}"
 
+        # Nếu đang chạy .exe trên Windows và asset là .exe -> cho phép chọn nhanh vị trí
+        # hoặc tự thay thế an toàn khi trùng file đang chạy mà không đổi tên có hậu tố.
         dest_path = dlg.asksaveasfilename(
             title="Chọn vị trí lưu file cập nhật",
             defaultextension=ext,
@@ -696,7 +712,7 @@ class SettingsPage(QWidget):
         if not dest_path:
             return
 
-        # Nếu người dùng vẫn chọn đúng file .exe đang chạy -> tự chuyển sang luồng tải tạm & tự thay thế khi đóng app
+        # Nếu người dùng chọn đúng file .exe đang chạy -> tự chuyển sang luồng tải tạm & tự thay thế khi đóng app
         if is_same_target_as_running_exe(dest_path):
             staged_path = get_staged_update_path(raw_name)
             self._start_update_download(download_url, staged_path, self_update_target=os.path.abspath(dest_path))

@@ -68,5 +68,4 @@ Chọn đúng chip, COM, baudrate và tối đa 4 file .bin với offset tương
 Trong trang Cài đặt:
 - Cài đặt Chung và Cổng COM: Chọn chế độ Engineering Sáng / Tối đồng bộ tức thì, lọc ẩn cổng COM Bluetooth hoặc cổng tùy chọn, cấu hình IP/Port mặc định, bật/tắt tự kiểm tra cập nhật khi mở app (mặc định tắt) và tùy chọn ẩn nháy LED 5s ở Tab 5.
 - Phím chức năng F1 - F15: Tùy biến nhãn và lệnh cho 15 nút điều khiển.
-- Kiểm Tra Cập Nhật nội tuyến: Kiểm tra phiên bản mới từ GitHub Releases ngay trong trang Cài đặt (hiển thị dấu chấm đỏ hướng dẫn khi có bản mới), xem Release Notes, tải lưu file hoặc tự động thay thế file `.exe` đang chạy qua staging an toàn tại `{GITHUB_REPO}`.
-Tài liệu chi tiết đi kèm dự án nằm trong thư mục docs/."""
+- Kiểm Tra Cập Nhật nội tuyến: Kiểm tra phiên bản mới từ GitHub Releases ngay trong trang Cài đặt (hiển thị dấu chấm đỏ hướng dẫn khi có bản mới), xem Release Notes, tải và tự cập nhật trực tiếp không mở cửa sổ terminal phụ tại `{GITHUB_REPO}`."""

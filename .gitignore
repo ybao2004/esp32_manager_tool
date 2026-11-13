@@ -30,17 +30,29 @@ ENV/
 *.swp
 *.swo
 
-# Temporary and archive files
+# Temporary, OS junk and archive files
 *.rar
 *.zip
 *.7z
 *.tar.gz
 *.downloading
 *.log
+*.tmp
+*.temp
+*.bak
+*.old
+*.orig
 tmp.bin
 test_tmp.bin
+esp32_self_update_*.cmd
+Thumbs.db
+desktop.ini
+.DS_Store
 
-# Local AI agent & knowledge graph workspace files
+# Internal info docs, dev helper scripts, master artwork & AI workspace files
+docs/
+tools/
+icons/esp_icon_v3_master.png
 .agents/
 graphify-out/
 PROJECT.md

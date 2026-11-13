@@ -14,6 +14,7 @@ from modules.update_util import (
     is_same_target_as_running_exe,
     get_staged_update_path,
     build_windows_self_update_script,
+    launch_windows_self_updater,
 )
 
 
@@ -143,6 +144,36 @@ class UpdateUtilTests(unittest.TestCase):
         self.assertIn("4242", script)
         self.assertIn('move /Y "%SRC_EXE%" "%DST_EXE%"', script)
         self.assertIn('start ""', script)
+
+    def test_launch_windows_self_updater_runs_hidden_without_detached_process(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            staged = os.path.join(tmp_dir, "staged.exe")
+            target = os.path.join(tmp_dir, "Esp32_manager_tool.exe")
+            with open(staged, "wb") as fp:
+                fp.write(b"new")
+
+            fake_proc = MagicMock(pid=9999)
+            with patch("modules.update_util.os.name", "nt"), \
+                 patch("modules.update_util.subprocess.Popen", return_value=fake_proc) as mock_popen:
+                ok, script_path = launch_windows_self_updater(staged, target, current_pid=1234, relaunch=True)
+                self.assertTrue(ok)
+                self.assertTrue(os.path.isfile(script_path))
+                mock_popen.assert_called_once()
+                _, kwargs = mock_popen.call_args
+                flags = kwargs["creationflags"]
+                import subprocess as _sp
+                self.assertEqual(flags & getattr(_sp, "DETACHED_PROCESS", 0), 0)
+                if hasattr(_sp, "CREATE_NO_WINDOW"):
+                    self.assertNotEqual(flags & _sp.CREATE_NO_WINDOW, 0)
+                si = kwargs.get("startupinfo")
+                if hasattr(_sp, "STARTUPINFO"):
+                    self.assertIsNotNone(si)
+                    self.assertNotEqual(si.dwFlags & _sp.STARTF_USESHOWWINDOW, 0)
+                    self.assertEqual(si.wShowWindow, 0)
+                try:
+                    os.remove(script_path)
+                except OSError:
+                    pass
 
 
 if __name__ == "__main__":

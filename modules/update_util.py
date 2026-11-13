@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Esp32 manager tool v1.0 - Update Checker & Downloader Utility
+Esp32 manager tool v1.11 - Update Checker & Downloader Utility
 Kiểm tra phiên bản mới từ GitHub Releases API và tải trực tiếp file cập nhật.
 """
 from __future__ import annotations
@@ -325,17 +325,25 @@ def launch_windows_self_updater(
         with open(script_path, "w", encoding="utf-8", newline="") as fp:
             fp.write(script_content)
 
+        # Không kết hợp DETACHED_PROCESS với CREATE_NO_WINDOW vì trên Windows 11
+        # điều đó khiến findstr/tasklist con mở cửa sổ Windows Terminal mới.
         creation_flags = (
-            getattr(subprocess, "DETACHED_PROCESS", 0)
+            getattr(subprocess, "CREATE_NO_WINDOW", 0)
             | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
         )
+        startupinfo = None
+        if hasattr(subprocess, "STARTUPINFO"):
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= getattr(subprocess, "STARTF_USESHOWWINDOW", 0)
+            startupinfo.wShowWindow = 0  # SW_HIDE
+
         proc = subprocess.Popen(
             ["cmd.exe", "/c", script_path],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             close_fds=True,
+            startupinfo=startupinfo,
             creationflags=creation_flags,
         )
         try:

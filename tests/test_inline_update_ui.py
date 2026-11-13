@@ -180,16 +180,66 @@ def test_save_as_same_running_exe_redirects_to_staged_self_update(qapp, tmp_path
                 "download_url": "https://example.com/Esp32_manager_tool.exe",
                 "asset_name": "Esp32_manager_tool.exe",
             }
-            with patch("modules.ui.pages.settings_page.dlg.asksaveasfilename", return_value=running_exe), \
+            with patch("modules.ui.pages.settings_page.dlg.asksaveasfilename", return_value=running_exe) as mock_save, \
                  patch("modules.ui.pages.settings_page.is_same_target_as_running_exe", return_value=True), \
                  patch("modules.ui.pages.settings_page.get_running_executable_path", return_value=running_exe), \
                  patch.object(win.page_settings, "_start_update_download") as mock_dl:
                 win.page_settings._on_save_update_click()
+                # Không thêm hậu tố phiên bản (_v2.0) vào tên file gợi ý
+                assert mock_save.call_args.kwargs.get("initialfile") == "Esp32_manager_tool.exe"
                 mock_dl.assert_called_once()
                 args, kwargs = mock_dl.call_args
                 # File tải về phải là đường dẫn tạm khác với running_exe, còn self_update_target là running_exe
                 assert args[1] != running_exe
                 assert kwargs.get("self_update_target") == os.path.abspath(running_exe)
+        finally:
+            win.cleanup_resources(force=True)
+            UiDispatcher.instance().reset()
+
+
+def test_update_details_panel_has_zero_overlap_across_window_sizes(qapp, tmp_path):
+    cfg_path = tmp_path / "settings_update_geom.json"
+    with patch("modules.ui.main_window.CONFIG_FILE", str(cfg_path), create=True), \
+         patch("modules.app_core.set_window_icon_native"), \
+         patch("modules.ui.pages.settings_page.is_running_frozen", return_value=True), \
+         patch("modules.ui.pages.settings_page.os.name", "nt"):
+        win = MainWindow(auto_start=False)
+        try:
+            for w_size in [(1280, 720), (960, 580)]:
+                win.resize(*w_size)
+                win.show()
+                win.notebook.select(5)
+                page = win.page_settings
+                page._apply_update_check_result(
+                    {
+                        "status": "success",
+                        "has_update": True,
+                        "latest_version": "v2.0",
+                        "release_name": "Esp32 Manager Tool v2.0",
+                        "published_at": "2026-11-13",
+                        "release_notes": "Line 1\nLine 2\nLine 3",
+                        "asset_name": "Esp32_manager_tool.exe",
+                        "asset_size": 67170000,
+                        "download_url": "https://example.com/Esp32_manager_tool.exe",
+                    },
+                    silent=False,
+                )
+                assert not page.btn_update_now.isHidden()
+                assert page.btn_save_update.isHidden()
+
+                page.pb_update_download.setVisible(True)
+                page.lbl_download_status.setVisible(True)
+                page.lbl_download_status.setText("Đang tải: 0.09 MB / 67.17 MB (0.1%)")
+                page.btn_cancel_update.setVisible(True)
+                qapp.processEvents()
+
+                r_lbl = page.lbl_download_status.geometry()
+                r_pb = page.pb_update_download.geometry()
+                r_txt = page.txt_release_notes.geometry()
+                assert not r_lbl.intersects(r_pb)
+                assert not r_pb.intersects(r_txt)
+                assert not r_lbl.intersects(r_txt)
+                assert r_pb.bottom() < r_txt.top()
         finally:
             win.cleanup_resources(force=True)
             UiDispatcher.instance().reset()

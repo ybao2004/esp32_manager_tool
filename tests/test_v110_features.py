@@ -26,9 +26,9 @@ from modules.esptool_util import (
 from modules.ui.splash import StartupSplash
 
 
-def test_app_version_is_v110_and_zero_tkinter():
-    """Phiên bản là 1.10 và không có import tkinter trong mã nguồn."""
-    assert APP_VERSION == "1.10"
+def test_app_version_is_v111_and_zero_tkinter():
+    """Phiên bản là 1.11 và không có import tkinter trong mã nguồn."""
+    assert APP_VERSION == "1.11"
     root_dir = Path(__file__).resolve().parent.parent
     py_files = [root_dir / "main.py"] + list((root_dir / "modules").rglob("*.py"))
     for fpath in py_files:
