@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Bộ sinh QSS Stylesheet cho PyQt6 từ ThemeTokens (v1.7).
+Bộ sinh QSS Stylesheet cho PyQt6 từ ThemeTokens (v1.8).
 Tối ưu hiển thị duy nhất cho phong cách Kỹ thuật (Engineering) với 2 chế độ Sáng (Light) & Tối (Dark).
-Loại bỏ viền focus xanh gắt trên ô nhập liệu/dropdown và đồng bộ tương phản Sidebar.
+Loại bỏ viền focus xanh gắt trên ô nhập liệu/dropdown và đồng bộ tương phản Sidebar & StatusBar.
 """
 from modules.ui.icons import _get_icons_dir
 from modules.ui.theme.tokens import ThemeTokens
@@ -17,8 +17,8 @@ def build_qss(t: ThemeTokens) -> str:
         else f"{icons_dir}/chevron_down_light.svg"
     )
     neutral_focus_border = "#52637A" if t.is_dark else "#94A3B8"
-    sidebar_hover_bg = "#1A222E" if t.is_dark else "#2B3A4E"
-    sidebar_checked_bg = "#1D3557" if t.is_dark else "#294B75"
+    sidebar_hover_bg = "#1A222E" if t.is_dark else "#D6E1ED"
+    sidebar_checked_bg = "#1D3557" if t.is_dark else t.accent
     sidebar_checked_border = t.accent
 
     return f"""
@@ -377,7 +377,12 @@ def build_qss(t: ThemeTokens) -> str:
     }}
     QStatusBar {{
         background-color: {t.surface};
+        color: {t.text};
         border-top: 1px solid {t.border};
+    }}
+    QStatusBar QLabel {{
+        background-color: transparent;
+        color: {t.text};
     }}
     QToolTip {{
         background-color: {t.surface};

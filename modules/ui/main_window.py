@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Cửa sổ chính của ứng dụng ESP32 Manager Tool (MainWindow) v1.7.
+Cửa sổ chính của ứng dụng ESP32 Manager Tool (MainWindow) v1.8.
 Kiến trúc thuần PyQt6 với Sidebar điều hướng thu gọn, Thanh kết nối toàn cục ConnectionBar,
 QStackedWidget chứa 6 trang giao diện Kỹ thuật (Sáng/Tối) và hệ thống quản lý tiến trình thống nhất.
 """
@@ -265,13 +265,16 @@ class MainWindow(
     BackupCloneTabMixin,
     AboutUpdateMixin
 ):
-    """Cửa sổ chính ứng dụng ESP32 Manager Tool v1.7"""
+    """Cửa sổ chính ứng dụng ESP32 Manager Tool v1.8"""
 
     def __init__(self, root=None, auto_start: bool = True, parent: Optional[QWidget] = None):
         QMainWindow.__init__(self, parent)
         self.root = root if root is not None else self
         self._closing = False
+        self._resources_cleaned = False
         self._native_icon_applied = False
+        self._native_hicons = []
+        self._scan_thread = None
         self._auto_start = False if root is not None else auto_start
 
         self.setWindowTitle(f"{APP_NAME} v{APP_VERSION}")
@@ -295,8 +298,10 @@ class MainWindow(
             if qapp is not None:
                 qapp.setWindowIcon(app_icon)
 
-        # Khởi tạo Dispatcher chuyển luồng thread-safe
+        # Khởi tạo Dispatcher chuyển luồng thread-safe (bảo đảm nhận lệnh mới kể cả sau khi đóng cửa sổ test trước đó)
         self._dispatcher = UiDispatcher.instance()
+        if hasattr(self._dispatcher, "reset"):
+            self._dispatcher.reset()
 
         # Luồng & Biến điều khiển phần cứng
         self.stop_scan = threading.Event()
@@ -431,15 +436,12 @@ class MainWindow(
         # 3. Thanh trạng thái StatusBar dưới cùng (Dùng chung tiến trình cho Tab 1, 3, 4, 5)
         status_bar = self.statusBar()
         self.lbl_status = _StatusLabelCompat("Sẵn sàng.", self)
-        self.lbl_status.setStyleSheet("font-size: 9pt;")
         status_bar.addWidget(self.lbl_status, 1)
 
         self.lbl_conn = _StatusLabelCompat("Chưa kết nối", self)
-        self.lbl_conn.setStyleSheet("font-size: 8.5pt; color: gray; padding-right: 10px;")
         status_bar.addPermanentWidget(self.lbl_conn)
 
         self.lbl_progress_task = _StatusLabelCompat("Tiến trình: Sẵn sàng", self)
-        self.lbl_progress_task.setStyleSheet("font-size: 8.5pt; padding-right: 6px;")
         status_bar.addPermanentWidget(self.lbl_progress_task)
 
         self.status_prog = _ProgressBarCompat(self)
@@ -453,7 +455,6 @@ class MainWindow(
         self.lbl_progress_pct = _StatusLabelCompat("0%", self)
         self.lbl_progress_pct.setFixedWidth(38)
         self.lbl_progress_pct.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.lbl_progress_pct.setStyleSheet("font-size: 8.5pt; font-weight: 700; font-family: Consolas; padding-right: 6px;")
         status_bar.addPermanentWidget(self.lbl_progress_pct)
 
         # 4. Gắn kết nối chuyển trang
@@ -467,6 +468,10 @@ class MainWindow(
             self.create_partition_tab()
         if hasattr(self, "create_backup_tab"):
             self.create_backup_tab()
+
+        # 7. Gắn đồng bộ Theme cho StatusBar & các widget vẽ trực tiếp
+        ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
+        self._refresh_status_bar_theme(ThemeManager.instance().tokens)
 
     def _setup_attribute_delegations(self):
         # Tabs
@@ -652,6 +657,11 @@ class MainWindow(
         self.btn_direct_clone = self.page_backup.btn_direct_clone
         self.backup_log_txt = self.page_backup.backup_log_txt
 
+        # Kết nối đồng bộ chế độ nguồn (Board Gốc trực tiếp / Thư mục đã lưu) với danh sách Board Đích
+        if hasattr(self.page_backup, "source_mode_changed"):
+            self.page_backup.source_mode_changed.connect(
+                lambda _m: self._refresh_clone_target_checkboxes()
+            )
         self.cb_backup_src_port.currentTextChanged.connect(self._on_backup_src_port_selected_by_user)
         self.cb_backup_src_port.activated.connect(
             lambda _idx: self._on_backup_src_port_selected_by_user(self.cb_backup_src_port.currentText())
@@ -705,7 +715,7 @@ class MainWindow(
             if icon_path:
                 try:
                     from modules.app_core import set_window_icon_native
-                    set_window_icon_native(int(self.winId()), icon_path)
+                    set_window_icon_native(self, icon_path)
                 except Exception:
                     pass
 
@@ -792,17 +802,52 @@ class MainWindow(
         elif task_label is not None and hasattr(self, "lbl_progress_task"):
             txt = str(task_label).strip()
             self.lbl_progress_task.setText(txt if txt else "Tiến trình: Sẵn sàng")
-        tokens = ThemeManager.instance().tokens
+        self._apply_status_colors(tokens=ThemeManager.instance().tokens)
+
+    def _apply_status_colors(self, tokens: Optional[ThemeTokens] = None):
+        """Đồng bộ màu chữ thanh StatusBar và nhãn trạng thái theo theme Sáng/Tối hiện tại."""
+        tokens = tokens or ThemeManager.instance().tokens
+        level = getattr(self, "current_status_level", "info")
         color_map = {
             "error": tokens.danger,
             "warning": tokens.warning,
             "success": tokens.success,
-            "info": tokens.text
+            "info": tokens.text,
         }
         col = color_map.get(level, tokens.text)
-        self.lbl_status.setStyleSheet(f"font-size: 9pt; color: {col};")
+        if hasattr(self, "lbl_status") and self.lbl_status is not None:
+            self.lbl_status.setStyleSheet(f"font-size: 9pt; color: {col}; background-color: transparent;")
         if hasattr(self, "req_status_lbl") and self.req_status_lbl is not None:
-            self.req_status_lbl.setStyleSheet(f"font-size: 8.5pt; color: {col}; font-style: italic;")
+            self.req_status_lbl.setStyleSheet(f"font-size: 8.5pt; color: {col}; font-style: italic; background-color: transparent;")
+
+    def _refresh_status_bar_theme(self, tokens: Optional[ThemeTokens] = None):
+        """Làm mới màu chữ tất cả thành phần trên StatusBar khi chuyển Sáng/Tối."""
+        tokens = tokens or ThemeManager.instance().tokens
+        self._apply_status_colors(tokens=tokens)
+        if hasattr(self, "lbl_conn") and self.lbl_conn is not None:
+            self.lbl_conn.setStyleSheet(
+                f"font-size: 8.5pt; color: {tokens.text_secondary}; padding-right: 10px; background-color: transparent;"
+            )
+        if hasattr(self, "lbl_progress_task") and self.lbl_progress_task is not None:
+            self.lbl_progress_task.setStyleSheet(
+                f"font-size: 8.5pt; color: {tokens.text}; padding-right: 6px; background-color: transparent;"
+            )
+        if hasattr(self, "lbl_progress_pct") and self.lbl_progress_pct is not None:
+            self.lbl_progress_pct.setStyleSheet(
+                f"font-size: 8.5pt; font-weight: 700; font-family: Consolas; color: {tokens.text}; padding-right: 6px; background-color: transparent;"
+            )
+
+    def _on_theme_changed(self, tokens: Optional[ThemeTokens] = None):
+        """Cập nhật toàn bộ nhãn StatusBar & DiskMap khi Theme thay đổi từ bất kỳ nguồn nào."""
+        if getattr(self, "_closing", False):
+            return
+        tok = tokens or ThemeManager.instance().tokens
+        self.is_dark_mode = bool(tok.is_dark)
+        self._refresh_status_bar_theme(tok)
+        if hasattr(self, "disk_map") and hasattr(self.disk_map, "set_theme_mode"):
+            self.disk_map.set_theme_mode(self.is_dark_mode)
+        if hasattr(self, "backup_disk_map") and hasattr(self.backup_disk_map, "set_theme_mode"):
+            self.backup_disk_map.set_theme_mode(self.is_dark_mode)
 
     def update_global_status(self, text: str, is_active: bool = False, progress: Optional[float] = None, task_label: Optional[str] = None):
         prog_num = None
@@ -994,22 +1039,27 @@ class MainWindow(
         return False
 
     def start_background_tasks(self):
-        threading.Thread(target=self._auto_scan_ports, daemon=True).start()
+        if hasattr(self, "stop_scan") and self.stop_scan.is_set():
+            return
+        if self._scan_thread is not None and self._scan_thread.is_alive():
+            return
+        self._scan_thread = threading.Thread(target=self._auto_scan_ports, daemon=True)
+        self._scan_thread.start()
         self.set_status("Sẵn sàng.", "info", progress=0)
 
     def _auto_scan_ports(self):
         from modules.serial_util import list_com_ports_local
-        import time
-        while not self.stop_scan.is_set():
+        while not self.stop_scan.is_set() and not self._closing:
             try:
                 if getattr(self, "saved_auto_scan", True):
                     new_ports = list_com_ports_local()
-                    if self.stop_scan.is_set():
+                    if self.stop_scan.is_set() or self._closing:
                         break
                     self.ui_call(self._check_and_update_ports, new_ports)
             except Exception:
                 pass
-            time.sleep(2)
+            if self.stop_scan.wait(2.0):
+                break
 
     def filter_ignored_ports(self, raw_ports):
         import modules.app_core as app_core_mod
@@ -1191,11 +1241,8 @@ class MainWindow(
     def _apply_theme_selection(self, preset: str, is_dark: bool):
         self.saved_theme_preset = "engineering"
         self.is_dark_mode = bool(is_dark)
-        ThemeManager.instance().apply_theme("engineering", self.is_dark_mode)
-        if hasattr(self, "disk_map") and hasattr(self.disk_map, "set_theme_mode"):
-            self.disk_map.set_theme_mode(self.is_dark_mode)
-        if hasattr(self, "backup_disk_map") and hasattr(self.backup_disk_map, "set_theme_mode"):
-            self.backup_disk_map.set_theme_mode(self.is_dark_mode)
+        tokens = ThemeManager.instance().apply_theme("engineering", self.is_dark_mode)
+        self._on_theme_changed(tokens)
 
     def toggle_theme(self):
         self.is_dark_mode = not self.is_dark_mode
@@ -1203,6 +1250,142 @@ class MainWindow(
 
     def apply_theme(self):
         self._apply_theme_selection(self.saved_theme_preset, self.is_dark_mode)
+
+    def bring_to_front(self):
+        """Đưa cửa sổ đang mở lên phía trước khi người dùng mở thêm phiên bản ứng dụng thứ hai."""
+        if getattr(self, "_closing", False):
+            return
+        try:
+            if self.isMinimized():
+                self.showNormal()
+            elif not self.isVisible():
+                self.show()
+            self.raise_()
+            self.activateWindow()
+            if os.name == "nt" and os.environ.get("QT_QPA_PLATFORM", "").lower() != "offscreen":
+                import ctypes
+                hwnd = int(self.winId())
+                if hwnd:
+                    ctypes.windll.user32.SetForegroundWindow(hwnd)
+        except Exception:
+            pass
+
+    def cleanup_resources(self, force: bool = False):
+        """
+        Giải phóng an toàn toàn bộ luồng nền, cổng Serial/COM, kết nối đang chạy,
+        bộ đếm thời gian Qt, handle icon GDI và các tiến trình con của hệ điều hành.
+        """
+        if getattr(self, "_resources_cleaned", False) and not force:
+            return
+        self._resources_cleaned = True
+        self._closing = True
+
+        # 1. Dừng luồng quét cổng COM định kỳ
+        stop_scan = getattr(self, "stop_scan", None)
+        if stop_scan is not None and hasattr(stop_scan, "set"):
+            stop_scan.set()
+        scan_t = getattr(self, "_scan_thread", None)
+        if scan_t is not None and scan_t.is_alive() and threading.current_thread() is not scan_t:
+            try:
+                scan_t.join(timeout=0.35)
+            except Exception:
+                pass
+
+        # 2. Dừng nháy LED nhận diện Board Gốc (Tab 5) & trả cổng COM
+        if hasattr(self, "_stop_board_led_blink"):
+            try:
+                self._stop_board_led_blink(join_timeout=0.35)
+            except Exception:
+                pass
+
+        # 3. Đóng Serial Monitor & luồng đọc Serial
+        stop_ser = getattr(self, "stop_serial_thread", None)
+        if stop_ser is not None and hasattr(stop_ser, "set"):
+            stop_ser.set()
+        ser = getattr(self, "serial_connection", None)
+        if ser is not None:
+            for m_name in ("cancel_read", "cancel_write"):
+                fn = getattr(ser, m_name, None)
+                if callable(fn):
+                    try:
+                        fn()
+                    except Exception:
+                        pass
+            try:
+                if getattr(ser, "is_open", True) and hasattr(ser, "close"):
+                    ser.close()
+            except Exception:
+                pass
+            self.serial_connection = None
+        ser_t = getattr(self, "serial_thread", None)
+        if ser_t is not None and ser_t.is_alive() and threading.current_thread() is not ser_t:
+            try:
+                ser_t.join(timeout=0.35)
+            except Exception:
+                pass
+
+        # 4. Ngắt tác vụ esptool đang mở cổng (khi force hoặc khi thoát)
+        try:
+            from modules.esptool_util import abort_active_esptool
+            abort_active_esptool()
+        except Exception:
+            pass
+
+        if force:
+            for ev_name in ("is_detecting", "is_flashing"):
+                ev = getattr(self, ev_name, None)
+                if ev is not None and hasattr(ev, "clear"):
+                    try:
+                        ev.clear()
+                    except Exception:
+                        pass
+            for flag_name in ("is_connecting", "_is_partition_hw_running", "_is_backup_hw_running"):
+                if hasattr(self, flag_name):
+                    setattr(self, flag_name, False)
+            for t_name in ("detect_thread", "flash_thread", "partition_hw_thread", "backup_hw_thread"):
+                th = getattr(self, t_name, None)
+                if th is not None and th.is_alive() and threading.current_thread() is not th:
+                    try:
+                        th.join(timeout=0.25)
+                    except Exception:
+                        pass
+
+        # 5. Dừng toàn bộ QTimer (LogView flush & các QTimer con)
+        for attr in ("inspector_txt", "raw_log_view", "monitor_txt", "flasher_txt", "part_log_txt", "backup_log_txt"):
+            lv = getattr(self, attr, None)
+            if lv is not None and hasattr(lv, "stop"):
+                try:
+                    lv.stop()
+                except Exception:
+                    pass
+        try:
+            for timer in self.findChildren(QTimer):
+                try:
+                    timer.stop()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        # 6. Ngừng dispatcher để callback luồng nền không chạm widget đã hủy
+        disp = getattr(self, "_dispatcher", None)
+        if disp is not None and hasattr(disp, "shutdown"):
+            try:
+                disp.shutdown()
+            except Exception:
+                pass
+
+        # 7. Thu hồi handle GDI icon & dọn mọi tiến trình con hệ điều hành
+        try:
+            from modules.app_core import destroy_window_icons_native
+            destroy_window_icons_native(self)
+        except Exception:
+            pass
+        try:
+            from modules.single_instance import terminate_child_processes
+            terminate_child_processes()
+        except Exception:
+            pass
 
     def on_closing(self) -> bool:
         is_flashing = getattr(self, "is_flashing", None)
@@ -1225,17 +1408,13 @@ class MainWindow(
             return False
 
         self._closing = True
-        if hasattr(self, "_stop_board_led_blink"):
-            try:
-                self._stop_board_led_blink()
-            except Exception:
-                pass
         if hasattr(self, "stop_scan") and hasattr(self.stop_scan, "set"):
             self.stop_scan.set()
         if hasattr(self, "stop_serial_thread") and hasattr(self.stop_serial_thread, "set"):
             self.stop_serial_thread.set()
         if hasattr(self, "save_config") and callable(self.save_config):
             self.save_config()
+        self.cleanup_resources(force=False)
         root_obj = getattr(self, "root", None)
         if root_obj and hasattr(root_obj, "destroy") and callable(root_obj.destroy):
             root_obj.destroy()
@@ -1244,19 +1423,43 @@ class MainWindow(
         return True
 
     def closeEvent(self, event: QCloseEvent):
+        if getattr(self, "_closing", False):
+            self.cleanup_resources(force=False)
+            event.accept()
+            return
+
         if hasattr(self, "is_device_busy") and self.is_device_busy():
-            from modules.ui import dialogs_service as dlg_srv
-            dlg_srv.show_warning("Thiết bị bận", "Thiết bị đang thực hiện tác vụ phần cứng. Vui lòng dừng tác vụ trước khi thoát.", parent=self)
-            event.ignore()
+            from PyQt6.QtWidgets import QMessageBox
+            ans = QMessageBox.question(
+                self,
+                "Xác nhận thoát khi đang bận",
+                "Thiết bị đang thực hiện tác vụ phần cứng (Nạp Flash / Đọc chip / Nhân bản).\n"
+                "Bạn có chắc chắn muốn dừng cưỡng bức tất cả tiến trình và thoát ngay không?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if ans != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            self._closing = True
+            try:
+                if hasattr(self, "save_config") and callable(self.save_config):
+                    self.save_config()
+            except Exception:
+                pass
+            self.cleanup_resources(force=True)
+            event.accept()
             return
 
         self._closing = True
-        if hasattr(self, "_stop_board_led_blink"):
-            try:
-                self._stop_board_led_blink()
-            except Exception:
-                pass
-        self.stop_scan.set()
-        self.stop_serial_thread.set()
-        self.save_config()
+        if hasattr(self, "stop_scan") and hasattr(self.stop_scan, "set"):
+            self.stop_scan.set()
+        if hasattr(self, "stop_serial_thread") and hasattr(self.stop_serial_thread, "set"):
+            self.stop_serial_thread.set()
+        try:
+            if hasattr(self, "save_config") and callable(self.save_config):
+                self.save_config()
+        except Exception:
+            pass
+        self.cleanup_resources(force=False)
         event.accept()

@@ -19,9 +19,9 @@ Tác giả: {APP_AUTHOR}  |  Bản quyền: GNU General Public License v3.0 ({AP
 - Serial Monitor thời gian thực, tự động cuộn, thêm timestamp, {len(CONTROL_CONFIG)} phím điều khiển IoT tùy biến nhãn/lệnh và điều khiển Wi-Fi/TCP.
 - Nạp Flash đồng thời tối đa 4 file .bin với offset tùy chọn, thanh tiến trình thống nhất ở đáy màn hình (0% -> 100%) kèm tên tiến trình, kiểm tra chồng lấn địa chỉ.
 - Quản lý Phân vùng Bộ nhớ (ESP32 Partition Wizard): sơ đồ trực quan MiniTool, chọn chip tự đặt dung lượng Flash tối đa hỗ trợ, tự động dồn biên 4K/64K, chèn phân vùng ngay sau dòng đang chọn, mở CSV/BIN và lưu toàn bảng ra CSV (Lưu CSV), đọc/nạp/dump/erase qua chip.
-- Sao lưu & Nhân bản Trực tiếp (Backup & Direct Multi-Board Clone): đọc sơ đồ phân vùng từ board gốc, sao lưu từng vùng hoặc toàn bộ kèm hồ sơ băm SHA-256 / MD5 / MAC gốc, hỗ trợ tùy chọn nháy LED 5 giây nhận diện Board Gốc tại Tab 5, và nhân bản trực tiếp từ 1 board gốc sang nhiều board đích cùng lúc.
+- Sao lưu & Nhân bản Trực tiếp (Backup & Direct Multi-Board Clone): đọc sơ đồ phân vùng từ board gốc, sao lưu từng vùng hoặc toàn bộ kèm hồ sơ băm SHA-256 / MD5 / MAC gốc, hỗ trợ tùy chọn nháy LED 5 giây nhận diện Board Gốc tại Tab 5, loại trừ tuyệt đối cổng Board Gốc khỏi danh sách Board Đích khi nhân bản trực tiếp.
 - Tự động Kiểm tra & Tải Cập nhật: Tích hợp kết nối GitHub Releases API, tải trực tiếp file cập nhật kèm thanh tiến trình download thời gian thực.
-- Giao diện thuần PyQt6 phong cách Kỹ thuật Chuyên sâu (Engineering Sáng / Tối), biểu tượng Vector QSvgRenderer tự đổi màu theo chủ đề và icon chuẩn trên thanh tác vụ Windows.
+- Giao diện thuần PyQt6 phong cách Kỹ thuật Chuyên sâu (Engineering Sáng / Tối), Sidebar Sáng/Tối tương phản chuẩn, chế độ Đơn thực thể (Single-Instance) và giải phóng an toàn mọi luồng/cổng/tiến trình con khi thoát.
 - Nền tảng: Python, PyQt6, esptool, PySerial."""
 
 

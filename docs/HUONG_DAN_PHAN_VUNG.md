@@ -1,4 +1,4 @@
-# HƯỚNG DẪN QUẢN LÝ PHÂN VÙNG (ESP32 PARTITION WIZARD - v1.7)
+# HƯỚNG DẪN QUẢN LÝ PHÂN VÙNG (ESP32 PARTITION WIZARD - v1.8)
 
 Tab **Phân vùng** tích hợp bộ biên soạn & chẩn đoán phân vùng Flash ESP32 theo chuẩn **ESP-IDF (`gen_esp32part.py`)** với sơ đồ trực quan phong cách MiniTool Partition Wizard.
 

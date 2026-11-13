@@ -1,12 +1,12 @@
-# KIẾN TRÚC HỆ THỐNG & THIẾT KẾ PHẦN MỀM (v1.7)
+# KIẾN TRÚC HỆ THỐNG & THIẾT KẾ PHẦN MỀM (v1.8)
 
-> Tài liệu mô tả kiến trúc thuần PyQt6 của **ESP32 Manager Tool v1.7**, cấu trúc module, quản lý chủ đề Engineering và cơ chế an toàn đa luồng.
+> Tài liệu mô tả kiến trúc thuần PyQt6 của **ESP32 Manager Tool v1.8**, cấu trúc module, quản lý chủ đề Engineering, đơn thực thể và cơ chế giải phóng tài nguyên an toàn.
 
 ---
 
 ## 1. TỔNG QUAN KIẾN TRÚC TỔNG THỂ
 
-Từ phiên bản v1.7, **ESP32 Manager Tool** chạy hoàn toàn trên **PyQt6** (đã loại bỏ 100% thư viện `tkinter` và `ttk`). Lớp điều phối chính `InspectorApp` (`modules/app_core.py`) kết hợp lớp cửa sổ gốc `MainWindow` (`modules/ui/main_window.py`) cùng 5 lớp Mixin nghiệp vụ chuyên biệt theo mô hình:
+Từ phiên bản v1.7 trở đi (hiện tại v1.8), **ESP32 Manager Tool** chạy hoàn toàn trên **PyQt6** (đã loại bỏ 100% thư viện `tkinter` và `ttk`). Lớp điều phối chính `InspectorApp` (`modules/app_core.py`) kết hợp lớp cửa sổ gốc `MainWindow` (`modules/ui/main_window.py`) cùng 5 lớp Mixin nghiệp vụ chuyên biệt theo mô hình:
 
 ```text
 InspectorApp (modules/app_core.py)
@@ -66,4 +66,14 @@ InspectorApp (modules/app_core.py)
 Bộ kiểm thử sử dụng `pytest` với môi trường offscreen PyQt6 (`tests/mock_hardware/app_harness.py`) và thiết bị giả lập (`mock_serial.py`, `mock_esptool.py`, `mock_registry.py`):
 - Kiểm thử lõi & phân vùng: `test_core_utils.py`, `test_partition_wizard.py`, `test_update_util.py`, `test_audit_regressions.py`, `test_release_safety.py`.
 - Kiểm thử tích hợp End-to-End giả lập & đối kháng: `test_e2e_mock_tier1..4.py`, `test_challenger_m1_verification.py`, `test_tier5_adversarial_core.py`, `test_tier5_adversarial_hardware.py`.
-- Kiểm thử giao diện & tính năng v1.7: `test_app_tabs.py`, `test_ui_foundation.py`, `test_ui_widgets.py`, `test_ui_v15.py`, `test_v17_features.py`.
+- **Kiểm thử giao diện & tính năng v1.7 / v1.8:** `test_app_tabs.py`, `test_ui_foundation.py`, `test_ui_widgets.py`, `test_ui_v15.py`, `test_v17_features.py`, `test_v18_features.py`.
+
+---
+
+## 5. ĐƠN THỰC THỂ & GIẢI PHÓNG TÀI NGUYÊN KHI THOÁT (`modules/single_instance.py`)
+
+1. **Khóa đơn thực thể (`SingleInstanceGuard`):**
+   - Dùng Win32 `CreateMutexW` (`Local\esp32_manager_tool_single_instance_v1`) trên Windows hoặc khóa file `fcntl.flock` trên POSIX kết hợp máy chủ IPC cục bộ `QLocalServer` / `QLocalSocket`.
+   - Khi khởi chạy phiên bản thứ 2, bản mới gửi thông điệp `ACTIVATE` đánh thức cửa sổ đang mở (`bring_to_front`) rồi thoát ngay (`sys.exit(0)`), không tạo luồng nền hay chiếm cổng COM.
+2. **Đóng ứng dụng & thu hồi tài nguyên (`MainWindow.cleanup_resources` + `terminate_child_processes`):**
+   - Dừng các luồng nền với cờ đánh thức tức thì (`stop_scan.wait(2.0)`, `_stop_board_led_blink`, `stop_serial_thread`), đóng cưỡng bức cổng COM/Serial/nháy LED/`esptool` đang mở (`abort_active_esptool`), dừng bộ đếm `QTimer` của `LogView`, ngừng nhận callback trên `UiDispatcher`, giải phóng GDI icon (`DestroyIcon`) và dừng mọi tiến trình con trực tiếp của tiến trình chính qua Win32 Toolhelp32 snapshot.

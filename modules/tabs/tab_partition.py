@@ -656,7 +656,9 @@ class PartitionTabMixin:
         try:
             for w in getattr(self, "_tree_buttons", []):
                 try:
-                    w.destroy()
+                    w.hide()
+                    w.setParent(None)
+                    w.deleteLater()
                 except Exception:
                     pass
             self._tree_buttons = []

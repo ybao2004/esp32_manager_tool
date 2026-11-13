@@ -23,6 +23,47 @@ from modules.stream_util import StreamInterceptor
 
 esptool_lock = threading.Lock()
 _deep_inspection_state = threading.local()
+_active_esp_lock = threading.Lock()
+_active_esp_instances: set = set()
+
+
+def _register_active_esp(esp_obj) -> None:
+    if esp_obj is None:
+        return
+    with _active_esp_lock:
+        _active_esp_instances.add(esp_obj)
+
+
+def _unregister_active_esp(esp_obj) -> None:
+    if esp_obj is None:
+        return
+    with _active_esp_lock:
+        _active_esp_instances.discard(esp_obj)
+
+
+def abort_active_esptool() -> int:
+    """Đóng khẩn cấp các cổng Serial đang do esptool nắm giữ để thoát tiến trình an toàn."""
+    closed = 0
+    with _active_esp_lock:
+        snapshot = list(_active_esp_instances)
+        _active_esp_instances.clear()
+    for esp_obj in snapshot:
+        port_obj = getattr(esp_obj, "_port", None)
+        if port_obj is not None:
+            for m_name in ("cancel_read", "cancel_write"):
+                fn = getattr(port_obj, m_name, None)
+                if callable(fn):
+                    try:
+                        fn()
+                    except Exception:
+                        pass
+            try:
+                if getattr(port_obj, "is_open", True) and hasattr(port_obj, "close"):
+                    port_obj.close()
+                    closed += 1
+            except Exception:
+                pass
+    return closed
 
 _ESPTOOL_V4_ARGUMENTS = {
     "flash-id": "flash_id",
@@ -602,11 +643,25 @@ def run_esptool_command(args, progress_callback=None):
         target = interceptor if interceptor else output_capture
 
         orig_esptool_flash_id = getattr(esptool, "flash_id", None)
+        orig_get_dev = getattr(esptool, "get_default_connected_device", None)
         esp_cmds_mod = sys.modules.get("esptool.cmds")
         orig_cmds_flash_id = getattr(esp_cmds_mod, "flash_id", None) if esp_cmds_mod else None
+        captured_esp = []
+
+        if callable(orig_get_dev):
+            def _wrapped_get_dev(*d_args, **d_kwargs):
+                esp_obj = orig_get_dev(*d_args, **d_kwargs)
+                if esp_obj is not None:
+                    _register_active_esp(esp_obj)
+                    captured_esp.append(esp_obj)
+                return esp_obj
+
+            esptool.get_default_connected_device = _wrapped_get_dev
 
         if is_deep and callable(orig_esptool_flash_id):
             def _wrapped_flash_id(esp_obj, *f_args, **f_kwargs):
+                _register_active_esp(esp_obj)
+                captured_esp.append(esp_obj)
                 res_fid = orig_esptool_flash_id(esp_obj, *f_args, **f_kwargs)
                 try:
                     _probe_esp_deep_details(esp_obj)
@@ -630,6 +685,10 @@ def run_esptool_command(args, progress_callback=None):
         except Exception:
             raise
         finally:
+            for e_obj in captured_esp:
+                _unregister_active_esp(e_obj)
+            if callable(orig_get_dev):
+                esptool.get_default_connected_device = orig_get_dev
             if is_deep and callable(orig_esptool_flash_id):
                 esptool.flash_id = orig_esptool_flash_id
                 if esp_cmds_mod and callable(orig_cmds_flash_id):

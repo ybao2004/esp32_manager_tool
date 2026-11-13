@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import QApplication, QProgressBar
 
 from modules.app_core import resolve_app_icon_path
 from modules.config import APP_VERSION
+from modules.update_util import parse_version_tuple
 from modules.partition.chip_database import CHIP_FAMILY_DATABASE
 from modules.partition.partition_model import PartitionEntry
 from modules.ui.theme.manager import EngineeringProxyStyle, ThemeManager
@@ -27,8 +28,8 @@ from modules.ui.theme.tokens import get_tokens
 
 
 def test_app_version_v17_and_zero_tkinter_imports():
-    """Phải là v1.7 và không tồn tại bất kỳ lệnh import tkinter nào trong mã nguồn."""
-    assert APP_VERSION == "1.7"
+    """Phiên bản >= v1.7 và không tồn tại bất kỳ lệnh import tkinter nào trong mã nguồn."""
+    assert parse_version_tuple(APP_VERSION) >= (1, 7)
 
     root_dir = Path(__file__).resolve().parent.parent
     py_files = [root_dir / "main.py"] + list((root_dir / "modules").rglob("*.py"))

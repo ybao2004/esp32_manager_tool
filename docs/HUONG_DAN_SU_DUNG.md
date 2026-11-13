@@ -1,6 +1,6 @@
-# HƯỚNG DẪN SỬ DỤNG ESP32 MANAGER TOOL (v1.7)
+# HƯỚNG DẪN SỬ DỤNG ESP32 MANAGER TOOL (v1.8)
 
-> **Cập nhật theo phiên bản:** `v1.7` (Giao diện thuần PyQt6 — Phong cách Kỹ thuật Chuyên sâu)
+> **Cập nhật theo phiên bản:** `v1.8` (Giao diện thuần PyQt6 — Phong cách Kỹ thuật Chuyên sâu, Đơn thực thể & Đóng an toàn)
 
 ---
 
@@ -85,16 +85,17 @@
   - Khi đã bật và đang ở trong **Tab 5**, chọn cổng **Board Gốc** sẽ tự động nháy LED TX trong 5 giây (qua luồng UART TX không xung DTR/RTS) để dễ nhận biết board đang cắm trên máy tính; nút **Nháy LED** cũng xuất hiện ngay bên cạnh ô `Board Gốc`.
   - Việc nháy LED tự động dừng ngay khi hết 5 giây, khi chuyển khỏi Tab 5, hoặc khi chạy thao tác phần cứng.
 - **Sao lưu & Hồ sơ xác thực:** Tích chọn các phân vùng cần sao lưu (bật/tắt **Cắt trống 0xFF** tùy chọn), bấm **Sao lưu vùng chọn** hoặc **Sao lưu Toàn bộ Flash** để lưu tệp `.bin` kèm `backup_info.txt`, `backup_manifest.json` (chứa SHA-256 & MD5) và `partitions.csv`.
-- **Sao Chép Trực Tiếp Đa Mạch:** Chọn nguồn (Board Gốc trực tiếp hoặc Thư mục đã lưu), tích chọn các **Board Đích**, rồi bấm **Bắt đầu Sao Chép Đa Mạch**.
+- **Sao Chép Trực Tiếp Đa Mạch:** Chọn nguồn (Board Gốc trực tiếp hoặc Thư mục đã lưu), tích chọn các **Board Đích**, rồi bấm **Bắt đầu Sao Chép Đa Mạch**. Khi dùng nguồn *Board Gốc trực tiếp*, danh sách Board Đích tự động loại trừ cổng của Board Gốc; khi chuyển sang *Thư mục đã lưu*, tất cả cổng đang cắm đều có thể chọn làm Board Đích.
 
 ---
 
 ## 7. TAB 6: CÀI ĐẶT & CẬP NHẬT
 
 1. **Cài đặt Chung và Cổng COM:**
-   - Chọn chế độ **Giao diện Kỹ thuật**: **Giao diện Tối (Dark)** hoặc **Giao diện Sáng (Light)** áp dụng tức thì không cần khởi động lại.
+   - Chọn chế độ **Giao diện Kỹ thuật**: **Giao diện Tối (Dark)** hoặc **Giao diện Sáng (Light)** áp dụng tức thì không cần khởi động lại (Sidebar và thanh trạng thái đáy tự động cân chỉnh độ tương phản).
    - Cấu hình **Quản lý cổng COM** (quét định kỳ 2 giây, tự ưu tiên cổng mới cắm, lọc Bluetooth, ẩn danh sách cổng COM chỉ định) và **Tùy chọn ẩn nháy LED 5s (Tab 5)**.
    - Cấu hình **IP Server** & **Cổng TCP** mặc định.
-   - Xem thông tin phiên bản `v1.7`, tác giả, giấy phép GPL-3.0 và bấm **Kiểm Tra Cập Nhật** từ GitHub Releases.
+   - Xem thông tin phiên bản `v1.8`, tác giả, giấy phép GPL-3.0 và bấm **Kiểm Tra Cập Nhật** từ GitHub Releases.
 2. **Phím chức năng F1 - F15:** Tùy biến nhãn hiển thị và chuỗi lệnh UART gửi đi cho 15 phím điều khiển.
 3. **Khôi phục gốc / Lưu Cài Đặt:** Áp dụng thay đổi và lưu xuống tệp cấu hình cục bộ.
+4. **Đóng ứng dụng & Chống mở trùng cửa sổ:** Ứng dụng chỉ cho phép chạy một phiên bản duy nhất tại một thời điểm (mở lại file `.exe` sẽ tự bật cửa sổ đang chạy lên phía trước) và tự động thu hồi an toàn cổng COM, luồng nền, tiến trình con khi đóng cửa sổ.

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Hộp thoại Giới thiệu (AboutDialog) và Kiểm tra Cập nhật (UpdateDialog) thuần PyQt6 (v1.7).
+Hộp thoại Giới thiệu (AboutDialog) và Kiểm tra Cập nhật (UpdateDialog) thuần PyQt6 (v1.8).
 Thay thế hoàn toàn modules/dialogs/settings_dialog.py cũ.
 """
 import os
@@ -74,6 +74,7 @@ class UpdateDialog(QDialog):
 
         self.latest_update_info = {}
         self.download_in_progress = threading.Event()
+        self._cancel_event = threading.Event()
         self._dispatcher = UiDispatcher.instance()
 
         layout = QVBoxLayout(self)
@@ -208,6 +209,7 @@ class UpdateDialog(QDialog):
         if not dest_path:
             return
 
+        self._cancel_event.clear()
         self.download_in_progress.set()
         self.btn_download.setEnabled(False)
         self.btn_check.setEnabled(False)
@@ -216,6 +218,8 @@ class UpdateDialog(QDialog):
 
         def worker():
             def progress_cb(percent, downloaded, total):
+                if self._cancel_event.is_set():
+                    return
                 def update_progress():
                     self.pb_download.setValue(int(round(percent)))
                     if total > 0:
@@ -226,10 +230,17 @@ class UpdateDialog(QDialog):
                         self.lbl_download_status.setText(f"Đang tải: {downloaded / (1024*1024):.2f} MB...")
                 self._dispatcher.post(update_progress)
 
-            success, msg = download_update_asset(download_url, dest_path, progress_callback=progress_cb)
+            success, msg = download_update_asset(
+                download_url,
+                dest_path,
+                progress_callback=progress_cb,
+                cancel_event=self._cancel_event,
+            )
 
             def download_finished():
                 self.download_in_progress.clear()
+                if self._cancel_event.is_set() or not self.isVisible():
+                    return
                 self.btn_download.setEnabled(True)
                 self.btn_check.setEnabled(True)
                 if success:
@@ -248,6 +259,14 @@ class UpdateDialog(QDialog):
             self._dispatcher.post(download_finished)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def reject(self):
+        self._cancel_event.set()
+        super().reject()
+
+    def closeEvent(self, event):
+        self._cancel_event.set()
+        super().closeEvent(event)
 
 
 class AboutUpdateMixin:

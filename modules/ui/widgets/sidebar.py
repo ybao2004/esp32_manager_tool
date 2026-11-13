@@ -101,6 +101,17 @@ class Sidebar(QFrame):
         # Mặc định chọn mục đầu tiên (Kiểm tra phần cứng)
         if self._buttons:
             self._buttons[0].setChecked(True)
+        self._btn_group.buttonToggled.connect(lambda _b, _c: self._sync_icons())
+        self._sync_icons()
+
+    def _sync_icons(self):
+        tokens = self._current_tokens
+        self.btn_toggle_sidebar.setIcon(get_icon("menu", tokens.sidebar_text, 20))
+        for b in self._buttons:
+            ico_name = b.property("nav_icon")
+            if ico_name:
+                ico_col = "#FFFFFF" if b.isChecked() else tokens.sidebar_text
+                b.setIcon(get_icon(str(ico_name), ico_col, 20))
 
     @property
     def is_collapsed(self) -> bool:
@@ -130,12 +141,8 @@ class Sidebar(QFrame):
 
     def _on_theme_changed(self, tokens: ThemeTokens):
         self._current_tokens = tokens
-        # Cập nhật lại màu các icon trên sidebar
-        self.btn_toggle_sidebar.setIcon(get_icon("menu", tokens.sidebar_text, 20))
-        for b in self._buttons:
-            ico_name = b.property("nav_icon")
-            if ico_name:
-                b.setIcon(get_icon(str(ico_name), tokens.sidebar_text, 20))
+        # Cập nhật lại màu các icon trên sidebar theo trạng thái chọn & theme
+        self._sync_icons()
 
         # Cập nhật kích thước nếu preset thay đổi
         if self._is_collapsed:

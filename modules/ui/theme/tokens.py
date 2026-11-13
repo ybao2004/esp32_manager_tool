@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Hệ thống Design Tokens cho giao diện PyQt6 (v1.7)
+Hệ thống Design Tokens cho giao diện PyQt6 (v1.8)
 Sử dụng duy nhất phong cách Kỹ thuật (Engineering) với 2 chế độ Sáng (Light) & Tối (Dark).
-Đạt chuẩn tương phản khả năng truy cập WCAG 2.2 AA (tối thiểu 4.5:1).
+Đạt chuẩn tương phản khả năng truy cập WCAG 2.2 AA (tối thiểu 4.5:1) trên cả thanh Sidebar và StatusBar.
 """
 from dataclasses import dataclass
 
@@ -52,7 +52,7 @@ _TOKENS_MAP = {
         text="#0F172A", text_secondary="#475569",
         accent="#1565C0", accent_hover="#0D47A1", on_accent="#FFFFFF",
         danger="#C62828", success="#1B7F3A", warning="#D97706",
-        sidebar_bg="#1E293B", sidebar_text="#F1F5F9",
+        sidebar_bg="#E6EDF5", sidebar_text="#0F172A",
         selection="#DBEAFE", log_bg="#F8FAFC",
         radius_card=5, radius_control=4, control_height=30,
         font_ui="Segoe UI", font_size_pt=9,

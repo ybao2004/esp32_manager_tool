@@ -3,7 +3,7 @@ chcp 65001 >nul
 setlocal EnableDelayedExpansion
 
 echo ============================================================================
-echo   CONG CU DONG GOI ESP32 MANAGER TOOL v1.7 THANH FILE .EXE DOC LAP
+echo   CONG CU DONG GOI ESP32 MANAGER TOOL v1.8 THANH FILE .EXE DOC LAP
 echo ============================================================================
 echo.
 

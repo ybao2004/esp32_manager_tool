@@ -27,17 +27,30 @@ class UiDispatcher(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._accepting = True
         self._sig.connect(self._run, Qt.ConnectionType.QueuedConnection)
         UiDispatcher._instance = self
 
+    def shutdown(self):
+        """Ngừng nhận và thực thi callback mới khi ứng dụng đang thoát."""
+        self._accepting = False
+
+    def reset(self):
+        """Khôi phục trạng thái nhận callback khi khởi tạo cửa sổ mới."""
+        self._accepting = True
+
     def _run(self, fn, args, delay_ms: int):
+        if not getattr(self, "_accepting", True):
+            return
         if delay_ms > 0:
-            QTimer.singleShot(delay_ms, lambda: _safe_call(fn, args))
+            QTimer.singleShot(delay_ms, lambda: _safe_call(fn, args) if getattr(self, "_accepting", True) else None)
         else:
             _safe_call(fn, args)
 
     def post(self, fn, *args, delay_ms: int = 0):
         """Đẩy hàm fn(*args) vào hàng đợi thực thi trên luồng chính."""
+        if not getattr(self, "_accepting", True):
+            return
         self._sig.emit(fn, args, int(delay_ms))
 
     def drain(self):

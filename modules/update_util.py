@@ -12,6 +12,7 @@ import threading
 import urllib.error
 import urllib.request
 from typing import Callable, Dict, Any, Tuple
+from modules.config import APP_VERSION
 
 
 DEFAULT_REPO = "ybao2004/esp32_manager_tool"
@@ -147,7 +148,7 @@ def download_update_asset(
         return False, "Không có đường dẫn tải file cập nhật."
 
     headers = {
-        "User-Agent": "Esp32ManagerTool/1.0"
+        "User-Agent": f"Esp32ManagerTool/{APP_VERSION}"
     }
     req = urllib.request.Request(download_url, headers=headers)
     temp_dest = dest_path + ".downloading"

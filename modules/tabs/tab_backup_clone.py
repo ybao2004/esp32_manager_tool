@@ -177,8 +177,12 @@ class BackupCloneTabMixin:
                     chosen = top_port
                 elif filtered:
                     chosen = filtered[0]
-                self.cb_backup_src_port.setCurrentText(chosen)
-                self.backup_src_port_var.set(chosen)
+                if chosen:
+                    self.cb_backup_src_port.setCurrentText(chosen)
+                    self.backup_src_port_var.set(chosen)
+                else:
+                    self.cb_backup_src_port.setCurrentIndex(-1)
+                    self.backup_src_port_var.set("")
                 self.cb_backup_src_port.blockSignals(False)
                 if hasattr(self.cb_backup_src_port, "_sync_fit_width"):
                     self.cb_backup_src_port._sync_fit_width()
@@ -364,7 +368,7 @@ class BackupCloneTabMixin:
         self._start_board_led_blink(port, duration=5.0)
 
     def _refresh_clone_target_checkboxes(self, available_ports: list[str] | None = None):
-        """Hiển thị danh sách các cổng COM Đích (loại trừ cổng COM đang làm Board Gốc)."""
+        """Hiển thị danh sách các cổng COM Đích (loại trừ cổng COM đang làm Board Gốc ở chế độ Board Gốc trực tiếp)."""
         if not hasattr(self, "clone_target_ports_frame") or not self.clone_target_ports_frame.winfo_exists():
             return
 
@@ -372,19 +376,52 @@ class BackupCloneTabMixin:
             raw_ports = list_com_ports_local()
             available_ports = self.filter_ignored_ports(raw_ports) if hasattr(self, "filter_ignored_ports") else raw_ports
 
-        src_port = self.backup_src_port_var.get().strip().upper()
-        prev_states = {k: v.get() for k, v in self.clone_target_vars.items()}
+        # Lấy Board Gốc ưu tiên trực tiếp từ ComboBox để tránh lệch trạng thái với biến StringVar
+        combo_src = ""
+        if hasattr(self, "cb_backup_src_port") and self.cb_backup_src_port is not None:
+            try:
+                combo_src = self.cb_backup_src_port.currentText().strip()
+            except Exception:
+                combo_src = ""
+        var_src = self.backup_src_port_var.get().strip() if hasattr(self, "backup_src_port_var") else ""
+        effective_src = combo_src or var_src
+        if combo_src and var_src != combo_src and hasattr(self, "backup_src_port_var"):
+            self.backup_src_port_var.set(combo_src)
+        src_port = effective_src.upper()
 
-        for w in self.clone_target_ports_frame.winfo_children():
-            w.destroy()
+        source_mode = "live_board"
+        if hasattr(self, "var_clone_source_mode") and self.var_clone_source_mode is not None:
+            source_mode = str(self.var_clone_source_mode.get() or "live_board").strip()
+
+        prev_states = {k: v.get() for k, v in self.clone_target_vars.items()}
+        if src_port and source_mode == "live_board":
+            prev_states = {k: v for k, v in prev_states.items() if k.strip().upper() != src_port}
+
+        if hasattr(self.clone_target_ports_frame, "clear_children"):
+            self.clone_target_ports_frame.clear_children()
+        else:
+            for w in self.clone_target_ports_frame.winfo_children():
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
         self.clone_target_vars.clear()
 
-        target_candidates = [p for p in available_ports if p.strip().upper() != src_port]
+        if source_mode == "live_board":
+            target_candidates = [p for p in available_ports if p.strip() and p.strip().upper() != src_port]
+        else:
+            target_candidates = [p for p in available_ports if p.strip()]
+
         if not target_candidates:
             from PyQt6.QtWidgets import QLabel
-            lbl = QLabel("(Chưa phát hiện thêm cổng COM đích nào khác ngoài cổng Board gốc. Hãy cắm thêm mạch đích và bấm 'Quét COM')", self.clone_target_ports_frame)
+            hint = (
+                "(Chưa phát hiện thêm cổng COM đích nào khác ngoài cổng Board gốc. Hãy cắm thêm mạch đích và bấm 'Quét COM')"
+                if source_mode == "live_board"
+                else "(Chưa phát hiện cổng COM mạch đích nào đang cắm trên máy tính.)"
+            )
+            lbl = QLabel(hint, self.clone_target_ports_frame)
             lbl.setWordWrap(True)
-            lbl.setStyleSheet("font-style: italic; color: gray;")
+            lbl.setProperty("role", "subtitle")
+            lbl.setStyleSheet("font-style: italic;")
             if hasattr(self.clone_target_ports_frame, "_grid"):
                 self.clone_target_ports_frame._grid.addWidget(lbl, 0, 0)
             return

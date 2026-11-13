@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Bộ quản lý Theme tập trung (ThemeManager) cho PyQt6 (v1.7).
+Bộ quản lý Theme tập trung (ThemeManager) cho PyQt6 (v1.8).
 Sử dụng duy nhất phong cách Kỹ thuật (Engineering) với chế độ Sáng / Tối mượt mà.
 Bao gồm EngineeringProxyStyle kết xuất Checkbox & RadioButton vector chống cắt mép trên mọi DPI.
 """

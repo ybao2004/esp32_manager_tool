@@ -226,3 +226,17 @@ class LogView(QPlainTextEdit):
 
     def _on_theme_changed(self, tokens: ThemeTokens):
         self._update_formats(tokens)
+
+    def stop(self):
+        """Dừng bộ đếm thời gian flush và xóa hàng đợi log khi đóng ứng dụng."""
+        if hasattr(self, "_flush_timer") and self._flush_timer is not None:
+            try:
+                self._flush_timer.stop()
+            except Exception:
+                pass
+        if hasattr(self, "_queue"):
+            self._queue.clear()
+
+    def closeEvent(self, event):
+        self.stop()
+        super().closeEvent(event)

@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel,
     QPushButton, QCheckBox, QRadioButton, QSplitter, QFrame, QHeaderView
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, pyqtSignal
 from modules.config import FLASH_BAUDS
 from modules.ui.widgets.card import Card
 from modules.ui.widgets.disk_map import DiskMapWidget
@@ -43,12 +43,28 @@ class _TargetContainer(QWidget):
     def winfo_children(self):
         return [c for c in self.children() if isinstance(c, QWidget)]
 
+    def clear_children(self):
+        """Gỡ hoàn toàn toàn bộ widget con khỏi GridLayout để không bị kẹt checkbox cũ."""
+        while self._grid.count():
+            item = self._grid.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.hide()
+                w.setParent(None)
+                w.deleteLater()
+        for child in list(self.winfo_children()):
+            child.hide()
+            child.setParent(None)
+            child.deleteLater()
+
     def winfo_exists(self) -> bool:
         return True
 
 
 class BackupPage(QWidget):
-    """Trang Sao Lưu Phân Vùng & Nhân Bản Đa Bo Mạch Trực Tiếp (v1.7)"""
+    """Trang Sao Lưu Phân Vùng & Nhân Bản Đa Bo Mạch Trực Tiếp (v1.8)"""
+
+    source_mode_changed = pyqtSignal(str)
 
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
@@ -258,16 +274,19 @@ class BackupPage(QWidget):
                     self.rb_folder.setChecked(norm != "live_board")
                 finally:
                     self._syncing_source_mode = False
+            self.source_mode_changed.emit(norm)
 
         self.var_clone_source_mode.set = _on_source_mode_var_set
 
         def _on_rb_live_toggled(chk: bool):
+            norm = "live_board" if chk else "saved_folder"
             if not self._syncing_source_mode:
                 self._syncing_source_mode = True
                 try:
-                    self.var_clone_source_mode._val = "live_board" if chk else "saved_folder"
+                    self.var_clone_source_mode._val = norm
                 finally:
                     self._syncing_source_mode = False
+                self.source_mode_changed.emit(norm)
 
         self.rb_live.toggled.connect(_on_rb_live_toggled)
 

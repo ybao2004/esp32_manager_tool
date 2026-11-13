@@ -154,11 +154,14 @@ class _ComboCompat(QComboBox):
     def __setitem__(self, key, value):
         if key == "values":
             curr = self.currentText()
+            was_blocked = self.signalsBlocked()
             self.blockSignals(True)
-            self.clear()
-            super().addItems([str(v) for v in value])
-            super().setCurrentText(curr)
-            self.blockSignals(False)
+            try:
+                self.clear()
+                super().addItems([str(v) for v in value])
+                super().setCurrentText(curr)
+            finally:
+                self.blockSignals(was_blocked)
             self._sync_fit_width()
         elif key == "state":
             self.setEnabled(value != "disabled")
