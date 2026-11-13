@@ -419,9 +419,9 @@ class BackupCloneTabMixin:
         if not target_candidates:
             from PyQt6.QtWidgets import QLabel
             hint = (
-                "(Chưa phát hiện thêm cổng COM đích nào khác ngoài cổng Board gốc. Hãy cắm thêm mạch đích và bấm 'Quét COM')"
+                "(Chưa phát hiện thêm cổng COM đích nào khác ngoài cổng Board gốc. Hãy cắm thêm mạch đích vào máy tính để phần mềm tự động nhận diện — khuyến nghị nên sử dụng các module giống nhau.)"
                 if source_mode == "live_board"
-                else "(Chưa phát hiện cổng COM mạch đích nào đang cắm trên máy tính.)"
+                else "(Chưa phát hiện cổng COM mạch đích nào đang cắm trên máy tính. Hãy cắm mạch đích để phần mềm tự động nhận diện — khuyến nghị nên sử dụng các module giống nhau.)"
             )
             lbl = QLabel(hint, self.clone_target_ports_frame)
             lbl.setWordWrap(True)
@@ -1274,7 +1274,7 @@ class BackupCloneTabMixin:
         if not target_ports:
             messagebox.showwarning(
                 "Chưa chọn Board Đích",
-                "Vui lòng cắm thêm ít nhất 1 mạch ESP đích vào máy tính, bấm 'Làm mới COM' và tích chọn các cổng COM Đích cần nhận sao chép!",
+                "Vui lòng cắm thêm ít nhất 1 mạch ESP đích vào máy tính để phần mềm tự động nhận diện và tích chọn các cổng COM Đích cần nhận sao chép! (Khuyến nghị nên sử dụng các module giống nhau.)",
                 parent=self.root
             )
             return

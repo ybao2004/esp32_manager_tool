@@ -307,7 +307,7 @@ class BackupPage(QWidget):
         self.var_clone_erase_first = _TkVarCompat(self.chk_clone_erase, default=False)
         c_layout.addWidget(self.chk_clone_erase)
 
-        self.btn_direct_clone = _ButtonCompat("Bắt đầu Sao Chép Đa Mạch", clone_card)
+        self.btn_direct_clone = _ButtonCompat("Sao chép đến board mạch đích", clone_card)
         self.btn_direct_clone.setProperty("accent", "true")
         self.btn_direct_clone.setMinimumHeight(30)
         bind_themed_icon(self.btn_direct_clone, "copy", role="on_accent")
