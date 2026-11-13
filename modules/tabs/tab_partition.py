@@ -18,7 +18,11 @@ from modules.ui import dialogs_service as filedialog
 from modules.ui import dialogs_service as simpledialog
 from modules.ui.dialogs import PartitionEditDialog, PresetSelectorDialog, SizeInputDialog
 from modules.config import DARK_PALETTE, LIGHT_PALETTE, FLASH_BAUDS, FLASH_CHIP_TARGETS
-from modules.esptool_util import run_esptool_command, esptool_command_succeeded
+from modules.esptool_util import (
+    run_esptool_command,
+    esptool_command_succeeded,
+    parse_esptool_progress_percent,
+)
 from modules.partition.unit_formatter import (
     DisplayMode, parse_size_or_offset, format_bytes_human, format_hex,
     format_value, align_up, sector_count
@@ -1405,9 +1409,9 @@ class PartitionTabMixin:
         """Phân tích dòng output từ esptool để cập nhật thanh tiến trình toàn cục (0% -> 100%)."""
         l_str = str(line)
         pct = None
-        m_pct = re.search(r"\((\d+)\s*%\)", l_str)
-        if m_pct:
-            pct = max(5, min(99, int(m_pct.group(1))))
+        parsed_pct = parse_esptool_progress_percent(l_str)
+        if parsed_pct is not None:
+            pct = max(5, min(99, int(round(parsed_pct))))
         elif "Connecting" in l_str:
             pct = 15
         elif "Chip is" in l_str or "Chip type:" in l_str or "Connected to" in l_str:
@@ -1502,9 +1506,15 @@ class PartitionTabMixin:
                                     self._sync_chip_and_flash_combos(cid, flash_size=highest_sz)
                                     break
                         self.refresh_partition_views()
-                        self.set_status("Đã đọc và giải mã bảng phân vùng từ ESP32 thành công!", "success", progress=100)
-                        self._log_partition_hw(">>> ĐỌC BẢNG PHÂN VÙNG TỪ CHIP THÀNH CÔNG!")
-                        messagebox.showinfo("Thành công", f"Đã đọc và nạp thành công {len(self.table.entries)} phân vùng trực tiếp từ chip ESP32!", parent=self.root)
+                        part_count = len(self.table.entries)
+                        self.set_status(
+                            f"Đã đọc và giải mã bảng phân vùng ({part_count} phân vùng) từ ESP32 thành công!",
+                            "success",
+                            progress=100,
+                        )
+                        self._log_partition_hw(
+                            f">>> ĐỌC VÀ NẠP THÀNH CÔNG {part_count} PHÂN VÙNG TỪ CHIP!"
+                        )
 
                     safe_after(update_ui)
                 else:

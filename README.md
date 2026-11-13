@@ -1,17 +1,17 @@
-# ESP32 Manager Tool (v1.9)
+# ESP32 Manager Tool (v1.10)
 
 > **Tác giả:** `@ybao04` | **Bản quyền:** GNU General Public License v3.0 (GPL-3.0) | **Kho lưu trữ:** [github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
 
-**ESP32 Manager Tool v1.9** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / nhân bản trực tiếp đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
+**ESP32 Manager Tool v1.10** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / nhân bản trực tiếp đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
 
 ---
 
-## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.9
+## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.10
 
-- **Bố cục Tự động Cuống Dòng Responsive (`FlowLayout`):** Thay thế các thanh công cụ cố định trên Tab 1, Tab 2, Tab 3, Tab 4 và Tab 5 bằng `FlowLayout` tự xuống dòng gọn gàng và mở rộng chiều cao chính xác, loại bỏ hoàn toàn lỗi cắt xén nút/dropdown ở cửa sổ hẹp (960x580 trở lên) và chuẩn hóa thanh `ConnectionBar`.
-- **Đồng bộ Trạng thái Thời gian Thực:** Đồng bộ tức thì `global_com_lbl` / `lbl_conn`, huy hiệu `chip_badge` trên thanh kết nối ngay sau khi dò chip hoặc mở/ngắt Serial, tự động đồng bộ `cb_part_flash` theo bảng phân vùng, và tự đưa thanh tiến trình về `0%` khi quay lại trạng thái `Sẵn sàng`.
-- **Nâng cấp Tương phản WCAG 2.2 AA & Đổi Theme Sống:** Tinh chỉnh toàn bộ bảng màu `DiskMapWidget` đạt độ tương phản >= 4.5:1 ở cả hai chế độ Sáng/Tối, tô lại màu các dòng log hiện hữu trong `LogView` tức thì khi chuyển theme, chuẩn hóa `Card(danger=True)` qua QSS/role (`danger` / `section_danger`) và tăng độ nổi bật mục Sidebar đang chọn ở Dark Mode.
-- **Bổ sung Icon Vector & Kế thừa Nền tảng v1.8:** Bổ sung `arrow_undo.svg` / `arrow_redo.svg` chuyên biệt cho Tab 4; kế thừa trọn vẹn khóa đơn thực thể (`SingleInstanceGuard`), đóng an toàn cổng COM/tiến trình con và hệ thống Engineering Sáng/Tối thuần PyQt6.
+- **Cập nhật nội tuyến trong Cài đặt & Tự thay thế `.exe` an toàn:** Gộp kiểm tra phiên bản, Release Notes và thanh tiến trình tải thẳng vào trang Cài đặt (không mở thêm cửa sổ); thêm tùy chọn *Tự động kiểm tra cập nhật khi khởi động* (mặc định tắt), chuỗi chấm đỏ điều hướng `UpdateDotBadge` từ Sidebar -> Tab Cài đặt -> nút cập nhật, và cơ chế staging vào `%TEMP%` + tự thay thế khi người dùng tải đè lên file `.exe` đang chạy.
+- **Màn hình khởi động Splash 2 tầng & Tối ưu tốc độ mở app:** Tích hợp `pyi_splash` (banner `icons/splash_v110.png` ngay khi giải nén `.exe` `--onefile`) nối tiếp `StartupSplash` (hiển thị logo, tên app, thanh tiến độ và bước đang nạp), kết hợp lazy-load `esptool` và kiểm tra đơn thực thể sớm để mở giao diện nhanh hơn.
+- **Tab 5 gọn 1 hàng, đồng bộ Cổng COM trên cùng & Baudrate độc lập:** Gom toàn bộ cụm điều khiển đầu trang về 1 hàng ngang; `Board Gốc` tự dùng chung Cổng COM ở thanh trên cùng và được loại trừ khỏi danh sách `Board Đích`, trong khi Baudrate Tab 5 hoạt động độc lập.
+- **Sửa chuẩn xác tiến trình `esptool` v4/v5 & Tối giản thông báo Tab 4:** Hỗ trợ trích xuất `%` của `esptool v5.x`, cập nhật nhãn bước thực tế (`Bước 1/2`, `Bước 2/2`), tự dọn trạng thái `Đang...` khi tác vụ lỗi/hoàn tất, và bỏ hộp thoại thông báo thừa sau khi Đọc bảng phân vùng từ chip ở Tab 4.
 
 ---
 
@@ -37,15 +37,16 @@
 - Hỗ trợ 2 chế độ đơn vị (**Thập phân KB/MB** và **Thập lục phân Hex**), tự động căn lề chuẩn 4 KB / 64 KB (`Auto-Align`), nạp **Mẫu Chuẩn...**, **Quét Dự Án** từ thư mục build ESP-IDF/PlatformIO/Arduino, mở CSV/BIN, lưu toàn bảng bằng **Lưu CSV**, và đọc/ghi/dump/xóa từng phân vùng trực tiếp qua chip.
 
 ### 5. Sao lưu & Nhân bản Đa Mạch (Tab 5)
+- Toàn bộ cụm nút nguồn & lọc nhanh nằm gọn trên **1 hàng ngang**; `Board Gốc` dùng chung Cổng COM ở thanh điều khiển trên cùng, trong khi **Baudrate Tab 5** giữ độc lập để đọc/chép tốc độ cao.
 - Đọc toàn bộ bảng phân vùng trực tiếp từ `Board Gốc` (hiển thị cả `bootloader` và `partition_table`), hỗ trợ tích chọn từng phân vùng trên bảng hoặc trực tiếp trên sơ đồ đĩa.
 - Cắt trống `0xFF` (`Smart Trim`) để tiết kiệm dung lượng sao lưu, tạo bộ hồ sơ xác thực toàn vẹn (`backup_info.txt`, `backup_manifest.json`, `partitions.csv`) chứa mã băm SHA-256 & MD5 cho từng phân vùng.
-- **Nhân bản trực tiếp (Direct Multi-Board Clone):** Đọc từ `Board Gốc` hoặc thư mục sao lưu sẵn có và nạp song song ra nhiều `Board Đích` cùng lúc (mặc định giữ nguyên vùng `nvs` / `otadata` tùy chọn theo nhu cầu).
-- **Nháy LED nhận diện Board Gốc (tùy chọn nâng cao):** Bật trong *Cài đặt -> Tùy chọn ẩn (Tab 5)* để gửi tín hiệu nháy LED TX/RX an toàn trong 5 giây khi chọn board nguồn hoặc bấm `Nháy LED`.
+- **Nhân bản trực tiếp (Direct Multi-Board Clone):** Đọc từ `Board Gốc` hoặc thư mục sao lưu sẵn có và nạp song song ra nhiều `Board Đích` cùng lúc (tự động loại trừ cổng COM trên cùng khỏi `Board Đích`, hiển thị chính xác tiến trình `esptool` v4/v5 theo từng bước).
+- **Nháy LED nhận diện Board Gốc (tùy chọn nâng cao):** Bật trong *Cài đặt -> Tùy chọn ẩn (Tab 5)* để gửi tín hiệu nháy LED TX/RX an toàn trong 5 giây khi đổi Cổng COM ở Tab 5 hoặc bấm `Nháy LED`.
 
 ### 6. Cài đặt & Cập nhật (Tab 6)
 - Chuyển đổi giao diện Kỹ thuật **Sáng / Tối** trực tiếp không cần khởi động lại.
 - Quản lý bộ lọc cổng COM (tự động quét định kỳ, lọc Bluetooth, ẩn danh sách cổng tùy chọn).
-- Quản lý bảng phím chức năng F1 - F15 và kiểm tra/tải cập nhật tự động qua GitHub Releases API (`ybao2004/esp32_manager_tool`).
+- Quản lý bảng phím chức năng F1 - F15 và kiểm tra/tải/cài đặt cập nhật nội tuyến ngay trong trang Cài đặt qua GitHub Releases API (`ybao2004/esp32_manager_tool`), kèm tùy chọn tự kiểm tra khi khởi động và chấm đỏ thông báo.
 
 ---
 
@@ -62,7 +63,7 @@ esp32_manager_tool/
 ├── modules/
 │   ├── app_core.py                 # Lớp InspectorApp, vòng đời Single-Instance & thu hồi GDI icon
 │   ├── single_instance.py          # Khóa đơn thực thể (Mutex/IPC) & dừng tiến trình con hệ điều hành
-│   ├── config.py                   # Cấu hình hệ thống, phiên bản (v1.9) và hằng số mặc định
+│   ├── config.py                   # Cấu hình hệ thống, phiên bản (v1.10) và hằng số mặc định
 │   ├── esptool_util.py             # Đóng gói tiến trình con esptool đa nền tảng & parse Output
 │   ├── backup_utils.py             # Tính băm SHA-256/MD5, cắt 0xFF và đọc viết manifest sao lưu
 │   ├── binary_scanner.py           # Bộ quét tệp .bin và gợi ý offset chuẩn

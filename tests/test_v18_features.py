@@ -216,20 +216,27 @@ def test_tab5_clone_targets_strictly_exclude_source_port(qapp, tmp_path):
             win.notebook.select(4)
             qapp.processEvents()
 
-            # Khi Board Gốc là COM3 -> Board Đích chỉ có COM13
-            win.cb_backup_src_port.setCurrentText("COM3")
-            win.backup_src_port_var.set("COM3")
-            win._refresh_clone_target_checkboxes(["COM3", "COM13"])
+            # Khi Cổng COM trên cùng là COM3 -> Board Gốc đồng bộ COM3, Board Đích chỉ có COM13
+            win.port_cb.blockSignals(True)
+            win.port_cb.clear()
+            win.port_cb.addItems(["COM3", "COM13"])
+            win.port_cb.setCurrentText("COM3")
+            win.port_cb.blockSignals(False)
+            win.on_port_selected("COM3")
             qapp.processEvents()
+            assert win.lbl_backup_src_port.text() == "COM3"
+            assert win.backup_src_port_var.get() == "COM3"
             assert list(win.clone_target_vars.keys()) == ["COM13"]
             visible_cbs = [w for w in win.clone_target_ports_frame.winfo_children() if isinstance(w, QCheckBox)]
             assert [cb.text() for cb in visible_cbs] == ["Board Đích: COM13"]
 
-            # Đổi Board Gốc sang COM13 (hoặc rút COM3 chỉ còn COM13): Board Đích phải loại sạch COM13
+            # Rút COM3 chỉ còn COM13: Cổng COM trên cùng & Board Gốc chuyển COM13 -> Board Đích loại sạch COM13
             ports_holder["ports"] = ["COM13"]
-            win._refresh_backup_ports()
+            win.saved_com_port = ""
+            win.update_port_list("COM3", ["COM13"])
             qapp.processEvents()
-            assert win.cb_backup_src_port.currentText() == "COM13"
+            assert win.port_cb.currentText() == "COM13"
+            assert win.lbl_backup_src_port.text() == "COM13"
             assert win.clone_target_vars == {}
             assert not any(
                 isinstance(w, QCheckBox) for w in win.clone_target_ports_frame.winfo_children()

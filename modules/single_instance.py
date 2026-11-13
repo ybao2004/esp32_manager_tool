@@ -22,6 +22,21 @@ _PROCESS_SYNCHRONIZE = 0x00100000
 
 _TRACKED_LOCK = threading.Lock()
 _TRACKED_PROCESSES: set = set()
+_EXEMPT_PIDS: set[int] = set()
+
+
+def exempt_child_pid(pid: Optional[int]) -> None:
+    """Đánh dấu một PID con (ví dụ script tự cập nhật) được miễn trừ khi dọn tiến trình lúc thoát."""
+    if pid is None:
+        return
+    try:
+        pid_int = int(pid)
+    except (TypeError, ValueError):
+        return
+    if pid_int <= 0:
+        return
+    with _TRACKED_LOCK:
+        _EXEMPT_PIDS.add(pid_int)
 
 
 def register_child_process(proc) -> None:
@@ -113,10 +128,12 @@ def _terminate_windows_child_pids(parent_pid: int) -> int:
         kernel32.CloseHandle(snap)
 
     killed = 0
-    # Không đụng tới console host hệ thống nếu còn
+    # Không đụng tới console host hệ thống hoặc tiến trình được miễn trừ (vd script cập nhật)
     ignored_names = {"conhost.exe", "csrss.exe"}
+    with _TRACKED_LOCK:
+        exempt_snapshot = set(_EXEMPT_PIDS)
     for pid, exe_name in child_pids:
-        if exe_name.lower() in ignored_names:
+        if pid in exempt_snapshot or exe_name.lower() in ignored_names:
             continue
         h_proc = kernel32.OpenProcess(_PROCESS_TERMINATE | _PROCESS_SYNCHRONIZE, False, pid)
         if h_proc:

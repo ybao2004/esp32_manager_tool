@@ -1,6 +1,6 @@
-# HƯỚNG DẪN SỬ DỤNG ESP32 MANAGER TOOL (v1.9)
+# HƯỚNG DẪN SỬ DỤNG ESP32 MANAGER TOOL (v1.10)
 
-> **Cập nhật theo phiên bản:** `v1.9` (Giao diện thuần PyQt6 — Bố cục Responsive FlowLayout, Chuẩn tương phản WCAG AA & Đồng bộ Trạng thái Thời gian Thực)
+> **Cập nhật theo phiên bản:** `v1.10` (Màn hình khởi động kèm tiến độ, tối ưu lazy-load `esptool`, Tab 5 gom 1 hàng dùng chung COM trên cùng & Baud độc lập, cập nhật nội tuyến trong Cài đặt + tự thay thế `.exe` an toàn)
 
 ---
 
@@ -79,13 +79,13 @@
 
 ## 6. TAB 5: SAO LƯU & NHÂN BẢN ĐA MẠCH
 
-- **Khởi tạo sạch & Đọc Chip Nguồn:** Danh sách phân vùng và sơ đồ đĩa ban đầu trống; chọn **Board Gốc** và bấm **Đọc Cấu Trúc Từ Chip Nguồn** để tải toàn bộ bố cục Flash (kể cả `bootloader` và `partition_table`).
+- **Khởi tạo sạch & Đọc Chip Nguồn:** Danh sách phân vùng và sơ đồ đĩa ban đầu trống; toàn bộ thanh cấu hình trên cùng gom gọn 1 hàng ngang (`Board Gốc` tự dùng chung **Cổng COM** ở thanh điều khiển trên cùng, còn **Baud** của Tab 5 độc lập hoàn toàn với Baudrate trên cùng). Bấm **Đọc Cấu Trúc Từ Chip Nguồn** để tải toàn bộ bố cục Flash (kể cả `bootloader` và `partition_table`).
 - **Tùy chọn ẩn Nháy LED 5 giây nhận diện Board Gốc:**
   - Mặc định tắt để giữ gọn giao diện; có thể bật trong **Cài đặt -> Cài đặt Chung và Cổng COM -> Tùy chọn ẩn (Tab 5 - Sao lưu & Nhân bản)**.
-  - Khi đã bật và đang ở trong **Tab 5**, chọn cổng **Board Gốc** sẽ tự động nháy LED TX trong 5 giây (qua luồng UART TX không xung DTR/RTS) để dễ nhận biết board đang cắm trên máy tính; nút **Nháy LED** cũng xuất hiện ngay bên cạnh ô `Board Gốc`.
+  - Khi đã bật và đang ở trong **Tab 5**, chọn Cổng COM trên cùng (Board Gốc) sẽ tự động nháy LED TX trong 5 giây (qua luồng UART TX không xung DTR/RTS) để dễ nhận biết board đang cắm trên máy tính; nút **Nháy LED** cũng xuất hiện ngay trên thanh cấu hình Tab 5.
   - Việc nháy LED tự động dừng ngay khi hết 5 giây, khi chuyển khỏi Tab 5, hoặc khi chạy thao tác phần cứng.
 - **Sao lưu & Hồ sơ xác thực:** Tích chọn các phân vùng cần sao lưu (bật/tắt **Cắt trống 0xFF** tùy chọn), bấm **Sao lưu vùng chọn** hoặc **Sao lưu Toàn bộ Flash** để lưu tệp `.bin` kèm `backup_info.txt`, `backup_manifest.json` (chứa SHA-256 & MD5) và `partitions.csv`.
-- **Sao Chép Trực Tiếp Đa Mạch:** Chọn nguồn (Board Gốc trực tiếp hoặc Thư mục đã lưu), tích chọn các **Board Đích**, rồi bấm **Bắt đầu Sao Chép Đa Mạch**. Khi dùng nguồn *Board Gốc trực tiếp*, danh sách Board Đích tự động loại trừ cổng của Board Gốc; khi chuyển sang *Thư mục đã lưu*, tất cả cổng đang cắm đều có thể chọn làm Board Đích.
+- **Sao Chép Trực Tiếp Đa Mạch:** Chọn nguồn (Board Gốc trực tiếp hoặc Thư mục đã lưu), tích chọn các **Board Đích**, rồi bấm **Bắt đầu Sao Chép Đa Mạch**. Khi dùng nguồn *Board Gốc trực tiếp*, danh sách Board Đích tự động loại trừ cổng COM đang chọn ở trên cùng; khi chuyển sang *Thư mục đã lưu*, tất cả cổng đang cắm đều có thể chọn làm Board Đích. Thanh tiến trình đáy hiển thị đúng tên bước (`Bước 1/2`, `Bước 2/2`, phần trăm thực tế của cả `esptool` v4 & v5) và tự dọn trạng thái khi lỗi hoặc hoàn tất.
 
 ---
 
@@ -94,8 +94,9 @@
 1. **Cài đặt Chung và Cổng COM:**
    - Chọn chế độ **Giao diện Kỹ thuật**: **Giao diện Tối (Dark)** hoặc **Giao diện Sáng (Light)** áp dụng tức thì không cần khởi động lại (Sidebar và thanh trạng thái đáy tự động cân chỉnh độ tương phản).
    - Cấu hình **Quản lý cổng COM** (quét định kỳ 2 giây, tự ưu tiên cổng mới cắm, lọc Bluetooth, ẩn danh sách cổng COM chỉ định) và **Tùy chọn ẩn nháy LED 5s (Tab 5)**.
+   - Tích chọn **Tự động kiểm tra cập nhật khi khởi động** (mặc định Tắt).
    - Cấu hình **IP Server** & **Cổng TCP** mặc định.
-   - Xem thông tin phiên bản `v1.9`, tác giả, giấy phép GPL-3.0 và bấm **Kiểm Tra Cập Nhật** từ GitHub Releases.
+   - Xem thông tin phiên bản `v1.10`, tác giả, giấy phép GPL-3.0, bấm **Kiểm Tra Cập Nhật** và xem Release Notes / tải cập nhật **ngay trong trang Cài đặt** (tự động hiện chấm đỏ hướng dẫn ở Sidebar và nút cập nhật khi có bản mới; tự tải qua thư mục tạm để thay thế `.exe` đang chạy an toàn hoặc chọn **Lưu ra file khác**).
 2. **Phím chức năng F1 - F15:** Tùy biến nhãn hiển thị và chuỗi lệnh UART gửi đi cho 15 phím điều khiển.
 3. **Khôi phục gốc / Lưu Cài Đặt:** Áp dụng thay đổi và lưu xuống tệp cấu hình cục bộ.
 4. **Đóng ứng dụng & Chống mở trùng cửa sổ:** Ứng dụng chỉ cho phép chạy một phiên bản duy nhất tại một thời điểm (mở lại file `.exe` sẽ tự bật cửa sổ đang chạy lên phía trước) và tự động thu hồi an toàn cổng COM, luồng nền, tiến trình con khi đóng cửa sổ.

@@ -284,5 +284,9 @@ class AboutUpdateMixin:
         dialog.exec()
 
     def open_update_dialog(self):
-        dialog = UpdateDialog(parent=self if isinstance(self, QWidget) else None)
-        dialog.exec()
+        """Chuyển sang trang Cài đặt và kiểm tra cập nhật trực tiếp (không mở cửa sổ riêng)."""
+        self.open_settings_dialog(0)
+        if hasattr(self, "trigger_update_check"):
+            self.trigger_update_check(silent=False)
+        elif hasattr(self, "page_settings") and hasattr(self.page_settings, "start_update_check"):
+            self.page_settings.start_update_check(silent=False)

@@ -88,20 +88,17 @@ class BackupPage(QWidget):
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(6)
 
-        # 1. Top Card: Cấu hình Chip Gốc & Bộ lọc chọn nhanh (2 hàng gọn, không tràn ở 1280px)
+        # 1. Top Card: Cấu hình Chip Nguồn & Bộ lọc Sao Lưu (gom gọn 1 hàng ngang)
         top_card = Card("Cấu hình Chip Nguồn & Bộ lọc Sao Lưu", icon_name="chip", parent=content)
-        top_vbox = QVBoxLayout()
-        top_vbox.setContentsMargins(0, 0, 0, 0)
-        top_vbox.setSpacing(6)
-
         row_src = FlowLayout(h_spacing=6, v_spacing=6)
 
-        self.cb_backup_src_port = _ComboCompat(top_card, min_fit_width=92)
         self.backup_src_port_var = _TkVarStringCompat("")
-        self.cb_backup_src_port.currentTextChanged.connect(
-            lambda txt: self.backup_src_port_var.set(txt)
+        self.lbl_backup_src_port = QLabel("Chưa chọn", top_card)
+        self.lbl_backup_src_port.setObjectName("backupSourceBadge")
+        self.lbl_backup_src_port.setToolTip(
+            "Board Gốc dùng chung Cổng COM ở thanh điều khiển trên cùng"
         )
-        row_src.addWidget(make_group(top_card, QLabel("Board Gốc:", top_card), self.cb_backup_src_port))
+        row_src.addWidget(make_group(top_card, QLabel("Board Gốc:", top_card), self.lbl_backup_src_port))
 
         self.btn_backup_blink_led = _ButtonCompat("Nháy LED", top_card)
         bind_themed_icon(self.btn_backup_blink_led, "flash")
@@ -112,51 +109,42 @@ class BackupPage(QWidget):
         self.btn_backup_blink_led.setVisible(False)
         row_src.addWidget(self.btn_backup_blink_led)
 
-        self.btn_backup_refresh_com = _ButtonCompat("Quét COM", top_card)
-        bind_themed_icon(self.btn_backup_refresh_com, "refresh")
-        self.btn_backup_refresh_com.setStyleSheet("padding: 0 8px;")
-        row_src.addWidget(self.btn_backup_refresh_com)
-
-        self.cb_backup_baud = _ComboCompat(top_card, min_fit_width=86)
+        self.cb_backup_baud = _ComboCompat(top_card, min_fit_width=78)
         self.cb_backup_baud.addItems(FLASH_BAUDS)
         self.cb_backup_baud.setCurrentText("460800")
         self.backup_baud_var = _TkVarStringCompat("460800")
         self.cb_backup_baud.currentTextChanged.connect(
             lambda txt: self.backup_baud_var.set(txt)
         )
+        self.cb_backup_baud.setToolTip(
+            "Tốc độ Baudrate riêng cho sao lưu & nhân bản ở Tab 5 (độc lập với Baudrate trên cùng)"
+        )
         row_src.addWidget(make_group(top_card, QLabel("Baud:", top_card), self.cb_backup_baud))
 
         self.btn_backup_read_chip = _ButtonCompat("Đọc Cấu Trúc Từ Chip Nguồn", top_card)
         self.btn_backup_read_chip.setProperty("accent", "true")
         bind_themed_icon(self.btn_backup_read_chip, "search", role="on_accent")
-        self.btn_backup_read_chip.setStyleSheet("padding: 0 12px;")
+        self.btn_backup_read_chip.setStyleSheet("padding: 0 10px;")
         row_src.addWidget(self.btn_backup_read_chip)
 
-        row_src.addStretch(1)
-        top_vbox.addLayout(row_src)
-
-        row_filter = FlowLayout(h_spacing=6, v_spacing=6)
-
         self.btn_backup_sel_all = _ButtonCompat("Chọn Tất Cả", top_card)
-        self.btn_backup_sel_all.setStyleSheet("padding: 0 10px;")
-        row_filter.addWidget(self.btn_backup_sel_all)
+        self.btn_backup_sel_all.setStyleSheet("padding: 0 8px;")
+        row_src.addWidget(self.btn_backup_sel_all)
 
         self.btn_backup_unsel_all = _ButtonCompat("Bỏ Chọn", top_card)
-        self.btn_backup_unsel_all.setStyleSheet("padding: 0 10px;")
-        row_filter.addWidget(self.btn_backup_unsel_all)
+        self.btn_backup_unsel_all.setStyleSheet("padding: 0 8px;")
+        row_src.addWidget(self.btn_backup_unsel_all)
 
         self.btn_backup_sel_fw = _ButtonCompat("Chỉ Chọn Firmware", top_card)
-        self.btn_backup_sel_fw.setStyleSheet("padding: 0 10px;")
-        row_filter.addWidget(self.btn_backup_sel_fw)
+        self.btn_backup_sel_fw.setStyleSheet("padding: 0 8px;")
+        row_src.addWidget(self.btn_backup_sel_fw)
 
-        row_filter.addSpacing(8)
         self.chk_backup_trim = QCheckBox("Cắt trống 0xFF", top_card)
         self.var_backup_smart_trim = _TkVarCompat(self.chk_backup_trim, default=True)
-        row_filter.addWidget(self.chk_backup_trim)
-        row_filter.addStretch(1)
+        row_src.addWidget(self.chk_backup_trim)
+        row_src.addStretch(1)
 
-        top_vbox.addLayout(row_filter)
-        top_card.body_layout.addLayout(top_vbox)
+        top_card.body_layout.addLayout(row_src)
         root_layout.addWidget(top_card)
 
         # 2. Visual Disk Map

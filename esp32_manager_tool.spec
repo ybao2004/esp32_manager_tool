@@ -29,12 +29,14 @@ hiddenimports = [
     'modules.ui.widgets.progress_row',
     'modules.ui.widgets.flow_layout',
     'modules.ui.widgets.sidebar',
+    'modules.ui.widgets.update_badge',
     'modules.ui.pages.inspector_page',
     'modules.ui.pages.monitor_page',
     'modules.ui.pages.flasher_page',
     'modules.ui.pages.partition_page',
     'modules.ui.pages.backup_page',
     'modules.ui.pages.settings_page',
+    'modules.ui.splash',
     'modules.ui.main_window',
     'modules.ui.models',
     'modules.ui.dialogs.about_update_dialogs',
@@ -81,9 +83,20 @@ a = Analysis(
 
 pyz = PYZ(a.pure)
 
+splash = Splash(
+    'icons/splash_v110.png',
+    binaries=a.binaries,
+    datas=a.datas,
+    text_pos=None,
+    minify_script=True,
+    always_on_top=False,
+)
+
 exe = EXE(
     pyz,
     a.scripts,
+    splash,
+    splash.binaries,
     a.binaries,
     a.datas,
     [],

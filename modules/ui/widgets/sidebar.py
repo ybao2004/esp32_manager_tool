@@ -12,6 +12,7 @@ from modules.ui.icons import get_icon
 from modules.ui.text import qt_text
 from modules.ui.theme.tokens import ThemeTokens
 from modules.ui.theme.manager import ThemeManager
+from modules.ui.widgets.update_badge import UpdateDotBadge
 
 
 class Sidebar(QFrame):
@@ -92,6 +93,7 @@ class Sidebar(QFrame):
         self.btn_settings.clicked.connect(lambda checked=False: self.page_selected.emit(5))
         self._btn_group.addButton(self.btn_settings, 5)
         self._buttons.append(self.btn_settings)
+        self._settings_badge = UpdateDotBadge(self.btn_settings, margin_right=6, margin_top=5)
         layout.addWidget(self.btn_settings)
 
         # Thiết lập độ rộng mặc định
@@ -130,6 +132,16 @@ class Sidebar(QFrame):
             b.setToolButtonStyle(style)
 
         self.setFixedWidth(target_w)
+        if hasattr(self, "_settings_badge"):
+            self._settings_badge.reposition()
+
+    def set_settings_badge(self, active: bool):
+        """Hiển thị hoặc ẩn dấu chấm đỏ hướng dẫn trên nút Cài đặt."""
+        if hasattr(self, "_settings_badge"):
+            self._settings_badge.set_active(bool(active))
+
+    def has_settings_badge(self) -> bool:
+        return hasattr(self, "_settings_badge") and self._settings_badge.is_active()
 
     def toggle_collapse(self):
         self.set_collapsed(not self._is_collapsed)

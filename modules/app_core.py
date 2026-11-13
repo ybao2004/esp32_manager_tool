@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
-ESP Tool & Hardware Inspector v1.8 - Core Application Controller (PyQt6 Edition)
-Đơn giản hóa kiến trúc, kế thừa MainWindow thuần PyQt6, hỗ trợ đầy đủ icon Windows Taskbar ở cả source & .exe,
-khóa đơn thực thể (Single-Instance) và giải phóng tiến trình / tài nguyên an toàn khi thoát.
+ESP Tool & Hardware Inspector v1.10 - Core Application Controller (PyQt6 Edition)
+Đơn giản hóa kiến trúc, khởi động mượt với StartupSplash (kết hợp pyi_splash),
+hỗ trợ đầy đủ icon Windows Taskbar ở cả source & .exe, khóa đơn thực thể (Single-Instance)
+và giải phóng tiến trình / tài nguyên an toàn khi thoát.
 """
 import os
 import sys
@@ -12,7 +13,38 @@ from modules.config import CONFIG_FILE
 from modules.serial_util import list_com_ports_local, get_bluetooth_com_ports
 from modules.ui import dialogs_service as messagebox
 from modules.ui import dialogs_service as filedialog
-from modules.ui.main_window import MainWindow
+
+
+def _build_inspector_app_class():
+    """Khởi tạo lớp InspectorApp theo kiểu lazy để giảm độ trễ import trước khi hiện Splash."""
+    from modules.ui.main_window import MainWindow
+
+    class _InspectorApp(MainWindow):
+        """Điểm vào tương thích cho InspectorApp kế thừa MainWindow thuần PyQt6."""
+
+        def __init__(self, root=None, auto_start: bool = True, parent=None, progress_callback=None):
+            super().__init__(
+                root=root,
+                auto_start=auto_start,
+                parent=parent,
+                progress_callback=progress_callback,
+            )
+
+    _InspectorApp.__name__ = "InspectorApp"
+    _InspectorApp.__qualname__ = "InspectorApp"
+    return _InspectorApp
+
+
+def __getattr__(name: str):
+    if name == "InspectorApp":
+        cls = _build_inspector_app_class()
+        globals()["InspectorApp"] = cls
+        return cls
+    if name == "MainWindow":
+        from modules.ui.main_window import MainWindow
+        globals()["MainWindow"] = MainWindow
+        return MainWindow
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def resolve_app_icon_path(base_dir=None) -> str:
@@ -134,18 +166,9 @@ def set_window_icon_native(window, base_dir=None):
         pass
 
 
-class InspectorApp(MainWindow):
-    """
-    Trình điều khiển trung tâm ứng dụng ESP Tool & Hardware Inspector v1.8 (PyQt6).
-    Kế thừa trực tiếp từ MainWindow.
-    """
-
-    def __init__(self, root=None, auto_start: bool = True, parent=None):
-        super().__init__(root=root, auto_start=auto_start, parent=parent)
-
-
 def main():
     from modules.single_instance import SingleInstanceGuard, terminate_child_processes
+    from modules.ui.splash import StartupSplash, close_pyi_splash
 
     app = QApplication.instance()
     if not app:
@@ -154,11 +177,26 @@ def main():
     guard = SingleInstanceGuard(app_id="esp32_manager_tool_single_instance_v1")
     if not guard.acquire():
         guard.notify_existing_instance()
+        close_pyi_splash()
         sys.exit(0)
 
     icon_path = resolve_app_icon_path()
     if icon_path:
         app.setWindowIcon(QIcon(icon_path))
+
+    splash = None
+    if os.environ.get("QT_QPA_PLATFORM", "").lower() != "offscreen":
+        splash = StartupSplash()
+        if icon_path:
+            splash.setWindowIcon(QIcon(icon_path))
+        splash.show()
+        set_window_icon_native(splash)
+        splash.set_stage(12, "Đang khởi tạo lõi ứng dụng PyQt6...")
+    close_pyi_splash()
+
+    def _report_stage(pct: int, msg: str):
+        if splash is not None:
+            splash.set_stage(pct, msg)
 
     window = None
     cleaned_up = False
@@ -187,12 +225,25 @@ def main():
     app.aboutToQuit.connect(_finalize_shutdown)
 
     try:
-        window = MainWindow()
+        _report_stage(24, "Đang nạp giao diện & các module công cụ...")
+        MainWindowCls = __getattr__("MainWindow")
+        window = MainWindowCls(progress_callback=_report_stage)
         guard.set_on_activate(window.bring_to_front)
+        _report_stage(94, "Đang hiển thị cửa sổ làm việc chính...")
         window.showMaximized()
         set_window_icon_native(window)
+        if splash is not None:
+            _report_stage(100, "Sẵn sàng!")
+            splash.finish(window)
+            destroy_window_icons_native(splash)
         exit_code = app.exec()
     finally:
+        if splash is not None:
+            try:
+                splash.close()
+            except Exception:
+                pass
+            destroy_window_icons_native(splash)
         _finalize_shutdown()
 
     sys.exit(exit_code)

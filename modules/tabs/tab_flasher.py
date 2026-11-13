@@ -11,7 +11,11 @@ from modules.ui import dialogs_service as filedialog
 from modules.ui.dialogs.erase_region_dialog import EraseRegionDialog
 from modules.config import FLASH_BAUDS, FLASH_CHIP_TARGETS, REPORT_FONT_SIZE
 from modules.binary_scanner import validate_binary_segments
-from modules.esptool_util import run_esptool_command, esptool_command_succeeded
+from modules.esptool_util import (
+    run_esptool_command,
+    esptool_command_succeeded,
+    parse_esptool_progress_percent,
+)
 
 class FlasherTabMixin:
     """Mixin cung cấp logic điều khiển Nạp Firmware & Công cụ Xóa Flash (Trang 3)."""
@@ -395,9 +399,9 @@ class FlasherTabMixin:
                 if "Writing at" in line:
                     file_finished = False
 
-                m = re.search(r"\((\d+)\s*%\)", line)
-                if m:
-                    pct = int(m.group(1))
+                parsed_pct = parse_esptool_progress_percent(line)
+                if parsed_pct is not None:
+                    pct = float(parsed_pct)
                     if pct < last_file_pct and current_file_idx < len(write_pairs) - 1:
                         if not file_finished:
                             current_file_idx += 1

@@ -20,8 +20,9 @@ Tác giả: {APP_AUTHOR}  |  Bản quyền: GNU General Public License v3.0 ({AP
 - Nạp Flash đồng thời tối đa 4 file .bin với offset tùy chọn, thanh tiến trình thống nhất ở đáy màn hình (0% -> 100%) kèm tên tiến trình, kiểm tra chồng lấn địa chỉ.
 - Quản lý Phân vùng Bộ nhớ (ESP32 Partition Wizard): sơ đồ trực quan MiniTool, chọn chip tự đặt dung lượng Flash tối đa hỗ trợ, tự động dồn biên 4K/64K, chèn phân vùng ngay sau dòng đang chọn, mở CSV/BIN và lưu toàn bảng ra CSV (Lưu CSV), đọc/nạp/dump/erase qua chip.
 - Sao lưu & Nhân bản Trực tiếp (Backup & Direct Multi-Board Clone): đọc sơ đồ phân vùng từ board gốc, sao lưu từng vùng hoặc toàn bộ kèm hồ sơ băm SHA-256 / MD5 / MAC gốc, hỗ trợ tùy chọn nháy LED 5 giây nhận diện Board Gốc tại Tab 5, loại trừ tuyệt đối cổng Board Gốc khỏi danh sách Board Đích khi nhân bản trực tiếp.
-- Tự động Kiểm tra & Tải Cập nhật: Tích hợp kết nối GitHub Releases API, tải trực tiếp file cập nhật kèm thanh tiến trình download thời gian thực.
-- Giao diện thuần PyQt6 phong cách Kỹ thuật Chuyên sâu (Engineering Sáng / Tối), Sidebar Sáng/Tối tương phản chuẩn, chế độ Đơn thực thể (Single-Instance) và giải phóng an toàn mọi luồng/cổng/tiến trình con khi thoát.
+- Giao diện thuần PyQt6 phong cách Kỹ thuật Chuyên sâu (Engineering Sáng / Tối), màn hình khởi động hiển thị logo, tiến độ từng bước & tối ưu nạp lazy `esptool`, chế độ Đơn thực thể (Single-Instance) và giải phóng an toàn mọi luồng/cổng/tiến trình con khi thoát.
+- Tab 5 dùng chung Cổng COM trên cùng cho Board Gốc (tự loại khỏi danh sách Board Đích), giữ tốc độ Baudrate độc lập, thanh nút gọn 1 hàng và hiển thị chuẩn xác tiến trình `esptool` v4/v5.
+- Kiểm tra & tải bản cập nhật ngay trong trang Cài đặt (kèm chấm đỏ điều hướng khi có bản mới, tùy chọn tự kiểm tra khi khởi động mặc định tắt, và tự thay thế `.exe` an toàn qua thư mục tạm).
 - Nền tảng: Python, PyQt6, esptool, PySerial."""
 
 
@@ -57,14 +58,15 @@ Chọn đúng chip, COM, baudrate và tối đa 4 file .bin với offset tương
 - Thao tác phần cứng an toàn: Đọc bảng từ Chip, Nạp bảng vào Chip, Dump vùng, Ghi vùng và Xóa vùng với nhật ký thu gọn và tiến trình hiển thị ở thanh trạng thái đáy.
 
 5. SAO LƯU & NHÂN BẢN (BACKUP / DIRECT CLONE)
-- Ban đầu danh sách phân vùng trống cho tới khi đọc cấu trúc từ Board Gốc.
-- Tích chọn từng phân vùng hoặc tất cả phân vùng để sao lưu, tự động cắt bỏ vùng trống 0xFF cuối phân vùng và sinh hồ sơ sao lưu đầy đủ (backup_info.txt, backup_manifest.json, partitions.csv) ghi lại SHA-256, MD5, offset, kích thước, chip và MAC gốc.
-- Nháy LED nhận diện Board Gốc (tùy chọn nâng cao trong Cài đặt): khi bật và đang ở Tab 5, chọn Board Gốc sẽ tự động nháy LED trong 5 giây (qua luồng UART TX không xung DTR/RTS) và hiện nút "Nháy LED" ngay cạnh ô chọn cổng nguồn.
-- Sao chép trực tiếp (Direct Multi-Board Clone): Cắm đồng thời 1 board gốc và 1 hoặc nhiều board đích để nhân bản trực tiếp sang tất cả board đích.
+- Toàn bộ nút cấu hình nguồn & lọc nhanh nằm gọn trên 1 hàng; **Board Gốc** dùng chung Cổng COM ở thanh trên cùng và **Baudrate** của Tab 5 độc lập với thanh trên cùng.
+- Danh sách phân vùng ban đầu trống cho tới khi bấm "Đọc Cấu Trúc Từ Chip Nguồn".
+- Tích chọn từng phân vùng hoặc tất cả để sao lưu, tự động cắt bỏ vùng trống 0xFF và sinh hồ sơ đầy đủ (backup_info.txt, backup_manifest.json, partitions.csv) ghi lại SHA-256, MD5, offset, kích thước, chip và MAC gốc.
+- Nháy LED nhận diện Board Gốc (tùy chọn ẩn trong Cài đặt): khi bật và đang ở Tab 5, đổi Cổng COM trên cùng sẽ tự động nháy LED trong 5 giây (qua luồng UART TX không xung DTR/RTS) và hiện nút "Nháy LED".
+- Sao chép trực tiếp (Direct Multi-Board Clone): Cắm đồng thời 1 board gốc (chọn ở cổng COM trên cùng) và nhiều board đích; danh sách Board Đích tự động loại trừ cổng Board Gốc.
 
 6. CÀI ĐẶT & CẬP NHẬT
 Trong trang Cài đặt:
-- Cài đặt Chung và Cổng COM: Chọn chế độ Engineering Sáng / Tối đồng bộ tức thì, lọc ẩn cổng COM Bluetooth hoặc cổng tùy chọn, cấu hình IP/Port mặc định, và bật/tắt tùy chọn ẩn nháy LED 5s ở Tab 5.
+- Cài đặt Chung và Cổng COM: Chọn chế độ Engineering Sáng / Tối đồng bộ tức thì, lọc ẩn cổng COM Bluetooth hoặc cổng tùy chọn, cấu hình IP/Port mặc định, bật/tắt tự kiểm tra cập nhật khi mở app (mặc định tắt) và tùy chọn ẩn nháy LED 5s ở Tab 5.
 - Phím chức năng F1 - F15: Tùy biến nhãn và lệnh cho 15 nút điều khiển.
-- Kiểm Tra Cập Nhật: Kiểm tra phiên bản mới nhất từ kho GitHub https://github.com/{GITHUB_REPO} và tải trực tiếp file cập nhật về máy.
+- Kiểm Tra Cập Nhật nội tuyến: Kiểm tra phiên bản mới từ GitHub Releases ngay trong trang Cài đặt (hiển thị dấu chấm đỏ hướng dẫn khi có bản mới), xem Release Notes, tải lưu file hoặc tự động thay thế file `.exe` đang chạy qua staging an toàn tại `{GITHUB_REPO}`.
 Tài liệu chi tiết đi kèm dự án nằm trong thư mục docs/."""

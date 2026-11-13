@@ -248,9 +248,11 @@ def test_tab5_hidden_led_blink_lifecycle(headless_app):
     mock_ser.close = MagicMock()
 
     with patch("serial.Serial", return_value=mock_ser):
-        if app.cb_backup_src_port.count() == 0:
-            app.cb_backup_src_port.addItem("COM9")
-        app.cb_backup_src_port.setCurrentText("COM9")
+        if app.port_cb.findText("COM9") < 0:
+            app.port_cb.addItem("COM9")
+        app.port_cb.setCurrentText("COM9")
+        app.on_port_selected("COM9")
+        assert app.lbl_backup_src_port.text() == "COM9"
         started = app._start_board_led_blink("COM9", duration=0.3)
         assert started is True
         time.sleep(0.15)

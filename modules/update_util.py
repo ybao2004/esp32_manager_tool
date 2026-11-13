@@ -8,6 +8,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import sys
+import tempfile
 import threading
 import urllib.error
 import urllib.request
@@ -16,6 +19,41 @@ from modules.config import APP_VERSION
 
 
 DEFAULT_REPO = "ybao2004/esp32_manager_tool"
+
+
+def is_running_frozen() -> bool:
+    """Trả về True nếu ứng dụng đang chạy từ file đóng gói (.exe PyInstaller)."""
+    return bool(getattr(sys, "frozen", False)) and bool(getattr(sys, "executable", ""))
+
+
+def get_running_executable_path() -> str:
+    """Trả về đường dẫn tuyệt đối của file .exe đang chạy (hoặc chuỗi rỗng nếu chạy từ source)."""
+    if not is_running_frozen():
+        return ""
+    return os.path.abspath(sys.executable)
+
+
+def is_same_target_as_running_exe(dest_path: str) -> bool:
+    """Kiểm tra dest_path có trỏ đúng tới file .exe đang chạy hay không."""
+    if not dest_path:
+        return False
+    running_exe = get_running_executable_path()
+    if not running_exe:
+        return False
+    try:
+        norm_dest = os.path.normcase(os.path.realpath(os.path.abspath(dest_path)))
+        norm_running = os.path.normcase(os.path.realpath(running_exe))
+        return norm_dest == norm_running
+    except OSError:
+        return os.path.normcase(os.path.abspath(dest_path)) == os.path.normcase(running_exe)
+
+
+def get_staged_update_path(asset_name: str = "Esp32_manager_tool_update.exe") -> str:
+    """Tạo đường dẫn file tạm an toàn trong %TEMP% để tải bản cập nhật trước khi thay thế."""
+    base_name = os.path.basename(asset_name or "Esp32_manager_tool_update.exe").strip()
+    if not base_name:
+        base_name = "Esp32_manager_tool_update.exe"
+    return os.path.join(tempfile.gettempdir(), f"esp32_manager_update_{os.getpid()}_{base_name}")
 
 
 def parse_version_tuple(ver_str: str) -> Tuple[int, ...]:
@@ -146,12 +184,22 @@ def download_update_asset(
     """
     if not download_url:
         return False, "Không có đường dẫn tải file cập nhật."
+    if not dest_path:
+        return False, "Đường dẫn lưu file cập nhật không hợp lệ."
+    if is_same_target_as_running_exe(dest_path):
+        return (
+            False,
+            "Không thể ghi đè trực tiếp lên file đang chạy. Vui lòng dùng chế độ tự cập nhật để tải tạm và thay thế khi đóng ứng dụng.",
+        )
 
     headers = {
         "User-Agent": f"Esp32ManagerTool/{APP_VERSION}"
     }
     req = urllib.request.Request(download_url, headers=headers)
-    temp_dest = dest_path + ".downloading"
+    parent_dir = os.path.dirname(os.path.abspath(dest_path))
+    if parent_dir:
+        os.makedirs(parent_dir, exist_ok=True)
+    temp_dest = f"{dest_path}.{os.getpid()}.downloading"
 
     try:
         with urllib.request.urlopen(req, timeout=30) as response, open(temp_dest, "wb") as out_file:
@@ -180,13 +228,19 @@ def download_update_asset(
                     percent = (downloaded / total_size * 100.0) if total_size > 0 else 0.0
                     progress_callback(percent, downloaded, total_size)
 
-        # Đổi tên file tạm sang file chính thức
-        if os.path.exists(dest_path):
-            try:
-                os.remove(dest_path)
-            except OSError:
-                pass
-        os.rename(temp_dest, dest_path)
+        # Thay thế nguyên tử file đích (tránh WinError 183 khi file đích đã tồn tại)
+        try:
+            os.replace(temp_dest, dest_path)
+        except OSError as replace_err:
+            if os.path.exists(temp_dest):
+                try:
+                    os.remove(temp_dest)
+                except OSError:
+                    pass
+            return (
+                False,
+                f"Không thể ghi vào '{dest_path}' (file có thể đang được chương trình khác sử dụng): {replace_err}",
+            )
         return True, dest_path
 
     except Exception as e:
@@ -196,3 +250,104 @@ def download_update_asset(
             except OSError:
                 pass
         return False, f"Lỗi khi tải file: {str(e)}"
+
+
+def build_windows_self_update_script(
+    staged_exe_path: str,
+    target_exe_path: str,
+    current_pid: int,
+    relaunch: bool = True,
+) -> str:
+    """Sinh nội dung script .cmd đợi tiến trình hiện tại thoát, ghi đè .exe và khởi động lại."""
+    src = os.path.abspath(staged_exe_path).replace('"', "")
+    dst = os.path.abspath(target_exe_path).replace('"', "")
+    pid = int(current_pid)
+    relaunch_block = f'start "" "{dst}"\r\n' if relaunch else ""
+    return (
+        "@echo off\r\n"
+        "chcp 65001 >nul\r\n"
+        f"set \"TARGET_PID={pid}\"\r\n"
+        f"set \"SRC_EXE={src}\"\r\n"
+        f"set \"DST_EXE={dst}\"\r\n"
+        "set /a WAIT_COUNT=0\r\n"
+        ":WAIT_EXIT\r\n"
+        "tasklist /FI \"PID eq %TARGET_PID%\" /FO CSV /NH 2>nul | findstr /C:\",\\\"%TARGET_PID%\\\",\" >nul\r\n"
+        "if errorlevel 1 goto REPLACE_FILE\r\n"
+        "set /a WAIT_COUNT+=1\r\n"
+        "if %WAIT_COUNT% GEQ 60 goto REPLACE_FILE\r\n"
+        "ping -n 2 127.0.0.1 >nul\r\n"
+        "goto WAIT_EXIT\r\n"
+        ":REPLACE_FILE\r\n"
+        "set /a RETRY=0\r\n"
+        ":RETRY_MOVE\r\n"
+        "move /Y \"%SRC_EXE%\" \"%DST_EXE%\" >nul 2>nul\r\n"
+        "if not errorlevel 1 goto LAUNCH_NEW\r\n"
+        "copy /Y \"%SRC_EXE%\" \"%DST_EXE%\" >nul 2>nul\r\n"
+        "if not errorlevel 1 (\r\n"
+        "    del /F /Q \"%SRC_EXE%\" >nul 2>nul\r\n"
+        "    goto LAUNCH_NEW\r\n"
+        ")\r\n"
+        "set /a RETRY+=1\r\n"
+        "if %RETRY% GEQ 20 goto CLEANUP\r\n"
+        "ping -n 2 127.0.0.1 >nul\r\n"
+        "goto RETRY_MOVE\r\n"
+        ":LAUNCH_NEW\r\n"
+        f"{relaunch_block}"
+        ":CLEANUP\r\n"
+        "(goto) 2>nul & del \"%~f0\"\r\n"
+    )
+
+
+def launch_windows_self_updater(
+    staged_exe_path: str,
+    target_exe_path: str,
+    current_pid: int | None = None,
+    relaunch: bool = True,
+) -> Tuple[bool, str]:
+    """Khởi chạy script tự cập nhật chạy ngầm trên Windows để thay thế file .exe sau khi app thoát."""
+    if os.name != "nt":
+        return False, "Chức năng tự thay thế file .exe chỉ hỗ trợ trên Windows."
+    if not staged_exe_path or not os.path.isfile(staged_exe_path):
+        return False, "Không tìm thấy file cập nhật tạm để thay thế."
+    if not target_exe_path:
+        return False, "Không xác định được đường dẫn file ứng dụng đích."
+
+    pid = int(current_pid if current_pid is not None else os.getpid())
+    script_path = os.path.join(tempfile.gettempdir(), f"esp32_self_update_{pid}.cmd")
+    script_content = build_windows_self_update_script(
+        staged_exe_path=staged_exe_path,
+        target_exe_path=target_exe_path,
+        current_pid=pid,
+        relaunch=relaunch,
+    )
+
+    try:
+        with open(script_path, "w", encoding="utf-8", newline="") as fp:
+            fp.write(script_content)
+
+        creation_flags = (
+            getattr(subprocess, "DETACHED_PROCESS", 0)
+            | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        )
+        proc = subprocess.Popen(
+            ["cmd.exe", "/c", script_path],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+            creationflags=creation_flags,
+        )
+        try:
+            from modules.single_instance import exempt_child_pid
+            exempt_child_pid(proc.pid)
+        except Exception:
+            pass
+        return True, script_path
+    except Exception as exc:
+        try:
+            if os.path.exists(script_path):
+                os.remove(script_path)
+        except OSError:
+            pass
+        return False, f"Không thể khởi chạy trình tự cập nhật: {exc}"

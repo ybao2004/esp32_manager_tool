@@ -1,4 +1,4 @@
-# HƯỚNG DẪN QUẢN LÝ PHÂN VÙNG (ESP32 PARTITION WIZARD - v1.9)
+# HƯỚNG DẪN QUẢN LÝ PHÂN VÙNG (ESP32 PARTITION WIZARD - v1.10)
 
 Tab **Phân vùng** tích hợp bộ biên soạn & chẩn đoán phân vùng Flash ESP32 theo chuẩn **ESP-IDF (`gen_esp32part.py`)** với sơ đồ trực quan phong cách MiniTool Partition Wizard.
 
@@ -44,7 +44,7 @@ Tab **Phân vùng** tích hợp bộ biên soạn & chẩn đoán phân vùng Fl
 
 Mọi tác vụ phần cứng sử dụng chung thanh tiến trình ở đáy màn hình kèm tên tác vụ và ghi nhật ký chi tiết tại khung thu gọn **Nhật Ký Thao Tác Phần Cứng Phân Vùng**:
 
-1. **Đọc bảng từ Chip:** Đọc vùng bảng phân vùng tại `0x8000` (tự nhận diện vùng `0x10000` khi bootloader cần mở rộng trên S3/P4 nếu có), giải mã chuẩn ESP-IDF và hiển thị lên cả Disk Map lẫn bảng chi tiết.
+1. **Đọc bảng từ Chip:** Đọc vùng bảng phân vùng tại `0x8000` (tự nhận diện vùng `0x10000` khi bootloader cần mở rộng trên S3/P4 nếu có), giải mã chuẩn ESP-IDF và hiển thị lên cả Disk Map lẫn bảng chi tiết (kết quả thông báo gọn trên thanh trạng thái đáy và nhật ký, không bật hộp thoại chặn thao tác).
 2. **Nạp bảng vào Chip:** Biên dịch bảng hiện tại sang nhị phân 3 KB kèm chữ ký `MD5` ở 32 byte cuối và nạp vào Flash qua `esptool`.
 3. **Dump vùng:** Sao lưu dữ liệu nhị phân thực tế của đúng phân vùng đang chọn thành file `.bin`.
 4. **Ghi vùng:** Nạp một file `.bin` (như `spiffs.bin`, `littlefs.bin`, `app.bin`, `nvs.bin`) vào đúng địa chỉ Offset của phân vùng đang chọn (kiểm tra dung lượng không vượt quá kích thước phân vùng).

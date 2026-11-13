@@ -12,10 +12,53 @@ import sys
 import threading
 import time
 
-try:
-    import esptool
-except ImportError:
-    esptool = None
+esptool = None
+_esptool_load_lock = threading.Lock()
+_esptool_import_attempted = False
+
+
+def _ensure_esptool():
+    """Lazy-import esptool khi cần chạy lệnh, nhưng vẫn tôn trọng object giả lập trong test."""
+    global esptool, _esptool_import_attempted
+    if esptool is not None:
+        return esptool
+    with _esptool_load_lock:
+        if esptool is not None:
+            return esptool
+        if not _esptool_import_attempted:
+            _esptool_import_attempted = True
+            try:
+                import esptool as _esptool_mod
+                esptool = _esptool_mod
+            except ImportError:
+                esptool = None
+        return esptool
+
+
+def preload_esptool() -> bool:
+    """Nạp trước esptool ở luồng nền sau khi cửa sổ chính đã hiển thị."""
+    return _ensure_esptool() is not None
+
+
+def parse_esptool_progress_percent(line: str) -> float | None:
+    """Trích xuất phần trăm tiến trình từ log esptool v4 '(45 %)' hoặc v5 '[...]  45.3%'."""
+    if not line:
+        return None
+    cleaned = clean_esptool_ansi(str(line))
+    for pattern in (
+        r"\((\d{1,3}(?:\.\d+)?)\s*%\)",
+        r"\]\s*(\d{1,3}(?:\.\d+)?)\s*%",
+        r"(?:^|\s)(\d{1,3}(?:\.\d+)?)\s*%(?:\s|$)",
+    ):
+        match = re.search(pattern, cleaned)
+        if match:
+            try:
+                val = float(match.group(1))
+                if 0.0 <= val <= 100.0:
+                    return val
+            except ValueError:
+                continue
+    return None
 
 from modules.config import CHIP_DATABASE
 from modules.partition.partition_model import PartitionTable
@@ -153,7 +196,8 @@ def esptool_deep_inspection_context(capture_boot_log=True, boot_log_duration=2.2
 
 def _esptool_major_version():
     """Best-effort major-version detection; unknown installs use current v5 syntax."""
-    version_text = getattr(esptool, "__version__", "") if esptool is not None else ""
+    mod = _ensure_esptool()
+    version_text = getattr(mod, "__version__", "") if mod is not None else ""
     if not version_text:
         try:
             version_text = metadata.version("esptool")
@@ -628,7 +672,7 @@ def run_esptool_command(args, progress_callback=None):
     Thực thi lệnh esptool an toàn với khóa luồng threading.Lock.
     Đón bắt toàn bộ stdout/stderr qua StreamInterceptor và trả về output tổng hợp.
     """
-    if esptool is None:
+    if _ensure_esptool() is None:
         raise RuntimeError("Thư viện 'esptool' chưa được cài đặt.")
 
     normalized_args = _normalize_esptool_args(args)

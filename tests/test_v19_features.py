@@ -52,8 +52,8 @@ def _contrast_ratio(hex_a: str, hex_b: str) -> float:
 
 
 def test_app_version_is_v19():
-    """Xác nhận phiên bản APP_VERSION == '1.9' và không dùng Tkinter."""
-    assert APP_VERSION == "1.9"
+    """Xác nhận phiên bản >= v1.9 và không dùng Tkinter."""
+    assert tuple(int(x) for x in APP_VERSION.split(".")[:2]) >= (1, 9)
     root_dir = Path(__file__).resolve().parent.parent
     py_files = [root_dir / "main.py"] + list((root_dir / "modules").rglob("*.py"))
     for fpath in py_files:

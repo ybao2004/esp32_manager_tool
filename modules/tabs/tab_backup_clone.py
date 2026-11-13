@@ -27,7 +27,10 @@ from modules.config import (
     APP_NAME, APP_VERSION
 )
 from modules.esptool_util import (
-    run_esptool_command, esptool_command_succeeded, parse_esptool_output
+    run_esptool_command,
+    esptool_command_succeeded,
+    parse_esptool_output,
+    parse_esptool_progress_percent,
 )
 from modules.serial_util import list_com_ports_local
 from modules.partition.unit_formatter import (
@@ -158,37 +161,53 @@ class BackupCloneTabMixin:
             })
         return regions
 
+    def _get_backup_src_port(self) -> str:
+        """Lấy cổng COM Board Gốc đồng bộ từ thanh chọn COM trên cùng."""
+        port = ""
+        if hasattr(self, "port_cb") and self.port_cb is not None:
+            try:
+                port = self.port_cb.get().strip()
+            except Exception:
+                port = ""
+        if (not port or port == "Không có cổng COM") and hasattr(self, "port_var"):
+            try:
+                port = str(self.port_var.get()).strip()
+            except Exception:
+                port = ""
+        if (not port or port == "Không có cổng COM") and hasattr(self, "backup_src_port_var"):
+            try:
+                port = str(self.backup_src_port_var.get()).strip()
+            except Exception:
+                port = ""
+        if port == "Không có cổng COM":
+            return ""
+        return port
+
+    def _sync_backup_source_port_ui(self, port_text: str | None = None) -> str:
+        """Đồng bộ nhãn hiển thị Board Gốc ở Tab 5 theo Cổng COM trên cùng."""
+        src = (port_text if port_text is not None else self._get_backup_src_port()).strip()
+        if src == "Không có cổng COM":
+            src = ""
+        if hasattr(self, "backup_src_port_var") and self.backup_src_port_var is not None:
+            if self.backup_src_port_var.get().strip() != src:
+                self.backup_src_port_var.set(src)
+        lbl = getattr(self, "lbl_backup_src_port", None)
+        if lbl is not None:
+            lbl.setText(src if src else "Chưa chọn")
+            active_val = "true" if src else "false"
+            if lbl.property("active") != active_val:
+                lbl.setProperty("active", active_val)
+                st = lbl.style()
+                if st is not None:
+                    st.unpolish(lbl)
+                    st.polish(lbl)
+        return src
+
     def _refresh_backup_ports(self):
-        """Đồng bộ danh sách cổng COM cho Board Gốc và danh sách checkbox Board Đích."""
+        """Đồng bộ cổng Board Gốc từ thanh trên cùng và lọc danh sách Board Đích."""
         raw_ports = list_com_ports_local()
         filtered = self.filter_ignored_ports(raw_ports) if hasattr(self, "filter_ignored_ports") else raw_ports
-
-        if hasattr(self, "cb_backup_src_port") and self.cb_backup_src_port.winfo_exists():
-            self._syncing_backup_ports = True
-            try:
-                self.cb_backup_src_port.blockSignals(True)
-                self.cb_backup_src_port["values"] = filtered
-                curr_src = self.backup_src_port_var.get().strip()
-                top_port = self.port_cb.get().strip() if hasattr(self, "port_cb") else ""
-                chosen = ""
-                if curr_src and curr_src in filtered:
-                    chosen = curr_src
-                elif top_port and top_port in filtered:
-                    chosen = top_port
-                elif filtered:
-                    chosen = filtered[0]
-                if chosen:
-                    self.cb_backup_src_port.setCurrentText(chosen)
-                    self.backup_src_port_var.set(chosen)
-                else:
-                    self.cb_backup_src_port.setCurrentIndex(-1)
-                    self.backup_src_port_var.set("")
-                self.cb_backup_src_port.blockSignals(False)
-                if hasattr(self.cb_backup_src_port, "_sync_fit_width"):
-                    self.cb_backup_src_port._sync_fit_width()
-            finally:
-                self._syncing_backup_ports = False
-
+        self._sync_backup_source_port_ui()
         self._refresh_clone_target_checkboxes(filtered)
 
     def _is_on_backup_tab(self) -> bool:
@@ -335,17 +354,14 @@ class BackupCloneTabMixin:
         return True
 
     def _on_backup_src_port_selected_by_user(self, port_text: str = ""):
-        """Tự động nháy LED 5s khi người dùng chọn Board Gốc (chỉ trong Tab 5 và khi bật tính năng)."""
+        """Đồng bộ khi Cổng COM trên cùng đổi và nháy LED 5s nhận diện Board Gốc (nếu đang ở Tab 5)."""
         if getattr(self, "_syncing_backup_ports", False):
             return
-        chosen = str(port_text or "").strip()
-        if not chosen and hasattr(self, "cb_backup_src_port"):
-            chosen = self.cb_backup_src_port.currentText().strip()
-        if chosen and hasattr(self, "backup_src_port_var"):
-            self.backup_src_port_var.set(chosen)
+        chosen = self._sync_backup_source_port_ui(port_text)
         self._refresh_clone_target_checkboxes()
         if chosen and self._is_on_backup_tab() and bool(getattr(self, "tab5_led_blink_enabled", False)):
-            self._start_board_led_blink(chosen, duration=5.0)
+            if not getattr(self, "_is_backup_hw_running", False):
+                self._start_board_led_blink(chosen, duration=5.0)
         else:
             self._stop_board_led_blink()
 
@@ -355,13 +371,11 @@ class BackupCloneTabMixin:
             self._stop_board_led_blink()
             self.set_status("Đã dừng nháy LED nhận diện Board Gốc.", "info")
             return
-        port = self.backup_src_port_var.get().strip() if hasattr(self, "backup_src_port_var") else ""
-        if not port and hasattr(self, "cb_backup_src_port"):
-            port = self.cb_backup_src_port.currentText().strip()
-        if not port or port == "Không có cổng COM":
+        port = self._sync_backup_source_port_ui()
+        if not port:
             messagebox.showwarning(
                 "Chưa chọn Board Gốc",
-                "Vui lòng chọn cổng COM của Board Gốc trước khi nháy LED.",
+                "Vui lòng chọn cổng COM trên thanh điều khiển ở trên cùng trước khi nháy LED.",
                 parent=self.root,
             )
             return
@@ -376,17 +390,8 @@ class BackupCloneTabMixin:
             raw_ports = list_com_ports_local()
             available_ports = self.filter_ignored_ports(raw_ports) if hasattr(self, "filter_ignored_ports") else raw_ports
 
-        # Lấy Board Gốc ưu tiên trực tiếp từ ComboBox để tránh lệch trạng thái với biến StringVar
-        combo_src = ""
-        if hasattr(self, "cb_backup_src_port") and self.cb_backup_src_port is not None:
-            try:
-                combo_src = self.cb_backup_src_port.currentText().strip()
-            except Exception:
-                combo_src = ""
-        var_src = self.backup_src_port_var.get().strip() if hasattr(self, "backup_src_port_var") else ""
-        effective_src = combo_src or var_src
-        if combo_src and var_src != combo_src and hasattr(self, "backup_src_port_var"):
-            self.backup_src_port_var.set(combo_src)
+        # Lấy Board Gốc đồng bộ từ thanh Cổng COM trên cùng
+        effective_src = self._sync_backup_source_port_ui()
         src_port = effective_src.upper()
 
         source_mode = "live_board"
@@ -613,7 +618,7 @@ class BackupCloneTabMixin:
         if isinstance(state, bool):
             state = "normal" if state else "disabled"
         for attr in (
-            "cb_backup_src_port", "btn_backup_blink_led", "btn_backup_refresh_com", "cb_backup_baud",
+            "btn_backup_blink_led", "cb_backup_baud",
             "btn_backup_read_chip", "btn_backup_sel_all", "btn_backup_unsel_all",
             "btn_backup_sel_fw", "chk_backup_trim", "btn_backup_to_folder",
             "btn_backup_full_chip", "btn_backup_to_flasher", "btn_direct_clone",
@@ -629,13 +634,13 @@ class BackupCloneTabMixin:
     def _prepare_backup_source_port(self) -> tuple[str, int] | None:
         if hasattr(self, "_stop_board_led_blink"):
             self._stop_board_led_blink()
-        port = self.backup_src_port_var.get().strip()
-        if not port and hasattr(self, "port_cb"):
-            port = self.port_cb.get().strip()
-            if port:
-                self.backup_src_port_var.set(port)
+        port = self._sync_backup_source_port_ui()
         if not port:
-            messagebox.showwarning("Thiếu Cổng COM", "Vui lòng chọn cổng COM của Board Gốc trước khi thao tác!", parent=self.root)
+            messagebox.showwarning(
+                "Thiếu Cổng COM",
+                "Vui lòng chọn cổng COM trên thanh điều khiển ở trên cùng trước khi thao tác!",
+                parent=self.root,
+            )
             return None
 
         baud_str = self.backup_baud_var.get().strip()
@@ -671,6 +676,7 @@ class BackupCloneTabMixin:
         boot_off = infer_bootloader_offset_for_chip(chip_key)
 
         self.backup_source_info.update({
+            "source_port": port,
             "chip_name": chip_key,
             "chip_line": chip_line,
             "revision": rev,
@@ -684,13 +690,36 @@ class BackupCloneTabMixin:
         safe_after(lambda: self.log_backup(
             f"  + Chip gốc: {chip_line} | MAC gốc: {mac_fmt} | Flash: {flash_mb:.1f} MB | Bootloader @ 0x{boot_off:X}"
         ))
-        safe_after(lambda: self.set_status(f"Đang đọc bảng phân vùng (0x8000) từ {chip_key}...", "info", progress=45))
+        safe_after(
+            lambda: self.set_status(
+                f"Đang đọc bảng phân vùng (0x8000) từ {chip_key}...",
+                "info",
+                progress=45,
+                task_label=f"Đọc bảng phân vùng ({port})",
+            )
+        )
 
         with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
             tmp_path = tmp.name
 
         try:
-            read_out = run_esptool_command(["--port", port, "--baud", str(baud), "read-flash", "0x8000", "0x1000", tmp_path])
+            def on_pt_stream(line):
+                pct_val = parse_esptool_progress_percent(line)
+                if pct_val is not None:
+                    prog = 45.0 + (pct_val / 100.0) * 45.0
+                    safe_after(
+                        lambda p=prog, pt=port: self.set_status(
+                            f"Đang đọc bảng phân vùng ({int(round(pct_val))}%)...",
+                            "info",
+                            progress=p,
+                            task_label=f"Đọc bảng phân vùng ({pt})",
+                        )
+                    )
+
+            read_out = run_esptool_command(
+                ["--port", port, "--baud", str(baud), "read-flash", "0x8000", "0x1000", tmp_path],
+                progress_callback=on_pt_stream,
+            )
             if esptool_command_succeeded(read_out) and os.path.isfile(tmp_path) and os.path.getsize(tmp_path) > 0:
                 with open(tmp_path, "rb") as f:
                     pt_bytes = f.read()
@@ -753,14 +782,33 @@ class BackupCloneTabMixin:
                         self.backup_selected_keys = {r["key"] for r in self._get_all_backup_regions()}
                         self.backup_region_hashes.clear()
                         self.refresh_backup_views()
-                        self.set_status("Đã đọc thông tin chip, địa chỉ MAC và bảng phân vùng thành công!", "success", progress=100)
+                        self.set_status(
+                            "Đã đọc thông tin chip, địa chỉ MAC và bảng phân vùng thành công!",
+                            "success",
+                            progress=100,
+                            task_label="Đọc chip nguồn hoàn tất",
+                        )
                     safe_after(_on_ok)
                 else:
-                    safe_after(lambda: self.set_status("Không thể đọc cấu trúc từ chip gốc!", "error", progress=0))
+                    safe_after(
+                        lambda: self.set_status(
+                            "Không thể đọc cấu trúc từ chip gốc!",
+                            "error",
+                            progress=0,
+                            task_label="Lỗi đọc chip nguồn",
+                        )
+                    )
             except Exception as ex:
                 err_msg = str(ex)
                 safe_after(lambda m=err_msg: self.log_backup(f">>> [NGOẠI LỆ] {m}", "red"))
-                safe_after(lambda: self.set_status("Lỗi khi đọc chip gốc!", "error", progress=0))
+                safe_after(
+                    lambda: self.set_status(
+                        "Lỗi khi đọc chip gốc!",
+                        "error",
+                        progress=0,
+                        task_label="Lỗi đọc chip nguồn",
+                    )
+                )
             finally:
                 self._is_backup_hw_running = False
                 if hasattr(self, "set_global_busy_state"):
@@ -773,7 +821,7 @@ class BackupCloneTabMixin:
 
     def _dump_selected_regions_to_dir_sync(
         self, port: str, baud: int, out_dir: str, regions: list[dict], smart_trim: bool, safe_after,
-        progress_start: float = 15.0, progress_end: float = 95.0
+        progress_start: float = 15.0, progress_end: float = 95.0, stage_label: str = "Sao lưu"
     ) -> dict | None:
         """
         Thực thi đọc tuần tự các phân vùng đã chọn từ cổng `port` ra thư mục `out_dir`,
@@ -791,19 +839,39 @@ class BackupCloneTabMixin:
             safe_filename = f"{idx:02d}_{r_name}_{format_hex(r_off)}.bin"
             dest_path = os.path.join(out_dir, safe_filename)
 
+            reg_start_prog = progress_start + ((completed_bytes / total_bytes) * (progress_end - progress_start))
+            reg_task = f"{stage_label} [{idx}/{len(regions)}]: {r_name}"
+
             safe_after(lambda n=r_name, o=r_off, s=r_size, i=idx, tot=len(regions): self.log_backup(
                 f"  [{i}/{tot}] Đang sao lưu '{n}' tại {format_hex(o)} ({format_bytes_human(s)})..."
             ))
+            safe_after(
+                lambda p=reg_start_prog, n=r_name, i=idx, tot=len(regions), tl=reg_task: self.set_status(
+                    f"{stage_label} [{i}/{tot}] '{n}'...", "warning", progress=p, task_label=tl
+                )
+            )
 
-            def on_stream(line, base_done=completed_bytes, cur_sz=r_size):
-                m = re.search(r"\((\d+)\s*%\)", str(line))
-                if m:
-                    pct = int(m.group(1))
-                    cur_done = base_done + (pct / 100.0) * cur_sz
+            def on_stream(
+                line,
+                base_done=completed_bytes,
+                cur_sz=r_size,
+                reg_name=r_name,
+                reg_idx=idx,
+                reg_tot=len(regions),
+                tl=reg_task,
+            ):
+                pct_val = parse_esptool_progress_percent(line)
+                if pct_val is not None:
+                    cur_done = base_done + (pct_val / 100.0) * cur_sz
                     overall = progress_start + ((cur_done / total_bytes) * (progress_end - progress_start))
-                    safe_after(lambda p=overall, n=r_name, pc=pct: self.set_status(
-                        f"Đang sao lưu '{n}' ({pc}%)...", "warning", progress=p, task_label=f"Sao lưu '{n}'"
-                    ))
+                    safe_after(
+                        lambda p=overall, n=reg_name, pc=int(round(pct_val)), i=reg_idx, tot=reg_tot, t_lbl=tl: self.set_status(
+                            f"{stage_label} [{i}/{tot}] '{n}' ({pc}%)...",
+                            "warning",
+                            progress=p,
+                            task_label=t_lbl,
+                        )
+                    )
 
             args = ["--port", port, "--baud", str(baud), "read-flash", format_hex(r_off), format_hex(r_size), dest_path]
             res = run_esptool_command(args, progress_callback=on_stream)
@@ -932,18 +1000,28 @@ class BackupCloneTabMixin:
 
             try:
                 # Nếu chưa đọc thông tin MAC/chip thực tế từ cổng này, tự động đọc trước khi sao lưu
-                if self.backup_source_info.get("mac") in (None, "Chưa xác định", "N/A"):
+                if (
+                    self.backup_source_info.get("mac") in (None, "Chưa xác định", "N/A")
+                    or self.backup_source_info.get("source_port") != port
+                ):
                     self._probe_chip_and_partition_sync(port, baud, safe_after)
 
                 manifest = self._dump_selected_regions_to_dir_sync(
                     port, baud, out_dir, selected_regions, smart_trim, safe_after,
-                    progress_start=20.0, progress_end=98.0
+                    progress_start=20.0, progress_end=98.0, stage_label="Sao lưu"
                 )
                 if manifest:
                     self.backup_last_saved_dir = out_dir
                     self.backup_last_manifest = manifest
                     safe_after(self.refresh_backup_views)
-                    safe_after(lambda: self.set_status("Đã sao lưu thành công kèm hồ sơ SHA-256 & MAC gốc!", "success", progress=100))
+                    safe_after(
+                        lambda: self.set_status(
+                            "Đã sao lưu thành công kèm hồ sơ SHA-256 & MAC gốc!",
+                            "success",
+                            progress=100,
+                            task_label="Hoàn tất sao lưu",
+                        )
+                    )
                     safe_after(lambda: self.log_backup(f"\n>>> HOÀN TẤT SAO LƯU VÀO THƯ MỤC:\n    {out_dir}", "green"))
                     safe_after(lambda: messagebox.showinfo(
                         "Sao lưu thành công",
@@ -951,11 +1029,25 @@ class BackupCloneTabMixin:
                         parent=self.root
                     ))
                 else:
-                    safe_after(lambda: self.set_status("Sao lưu phân vùng thất bại!", "error", progress=0))
+                    safe_after(
+                        lambda: self.set_status(
+                            "Sao lưu phân vùng thất bại!",
+                            "error",
+                            progress=0,
+                            task_label="Lỗi sao lưu",
+                        )
+                    )
             except Exception as ex:
                 err_msg = str(ex)
                 safe_after(lambda m=err_msg: self.log_backup(f">>> [NGOẠI LỆ] {m}", "red"))
-                safe_after(lambda: self.set_status("Lỗi trong quá trình sao lưu!", "error", progress=0))
+                safe_after(
+                    lambda: self.set_status(
+                        "Lỗi trong quá trình sao lưu!",
+                        "error",
+                        progress=0,
+                        task_label="Lỗi sao lưu",
+                    )
+                )
             finally:
                 self._is_backup_hw_running = False
                 if hasattr(self, "set_global_busy_state"):
@@ -1006,7 +1098,10 @@ class BackupCloneTabMixin:
                 safe_after(lambda: self._set_backup_ui_state("disabled"))
 
             try:
-                if self.backup_source_info.get("mac") in (None, "Chưa xác định", "N/A"):
+                if (
+                    self.backup_source_info.get("mac") in (None, "Chưa xác định", "N/A")
+                    or self.backup_source_info.get("source_port") != port
+                ):
                     self._probe_chip_and_partition_sync(port, baud, safe_after)
 
                 flash_sz = int(self.backup_table.flash_size)
@@ -1014,15 +1109,27 @@ class BackupCloneTabMixin:
                     f"\n=== BẮT ĐẦU SAO LƯU TOÀN BỘ FLASH (0x0 -> {format_hex(flash_sz)}, {format_bytes_human(flash_sz)}) ===",
                     "header"
                 ))
+                safe_after(
+                    lambda pt=port: self.set_status(
+                        f"Đang đọc toàn bộ Flash từ {pt}...",
+                        "warning",
+                        progress=15,
+                        task_label=f"Xuất toàn bộ Flash ({pt})",
+                    )
+                )
 
                 def on_stream(line):
-                    m = re.search(r"\((\d+)\s*%\)", str(line))
-                    if m:
-                        pct = int(m.group(1))
-                        prog = 15 + int(pct * 0.8)
-                        safe_after(lambda p=prog, pc=pct: self.set_status(
-                            f"Đang đọc toàn bộ Flash ({pc}%)...", "warning", progress=p, task_label="Sao lưu toàn bộ Flash"
-                        ))
+                    pct_val = parse_esptool_progress_percent(line)
+                    if pct_val is not None:
+                        prog = 15.0 + (pct_val / 100.0) * 80.0
+                        safe_after(
+                            lambda p=prog, pc=int(round(pct_val)), pt=port: self.set_status(
+                                f"Đang đọc toàn bộ Flash ({pc}%)...",
+                                "warning",
+                                progress=p,
+                                task_label=f"Xuất toàn bộ Flash ({pt})",
+                            )
+                        )
 
                 res = run_esptool_command(
                     ["--port", port, "--baud", str(baud), "read-flash", "0x0", format_hex(flash_sz), save_path],
@@ -1074,7 +1181,14 @@ class BackupCloneTabMixin:
                         f.write(build_backup_metadata_report(manifest))
 
                     self.backup_last_manifest = manifest
-                    safe_after(lambda: self.set_status("Đã sao lưu toàn bộ Flash kèm file thông tin thành công!", "success", progress=100))
+                    safe_after(
+                        lambda: self.set_status(
+                            "Đã sao lưu toàn bộ Flash kèm file thông tin thành công!",
+                            "success",
+                            progress=100,
+                            task_label="Hoàn tất xuất Flash",
+                        )
+                    )
                     safe_after(lambda: self.log_backup(
                         f">>> ĐÃ LƯU FULL FLASH: {save_path}\n"
                         f"    Dung lượng lưu: {format_bytes_human(len(final_data))} | MD5: {hashes['md5']}\n"
@@ -1089,12 +1203,26 @@ class BackupCloneTabMixin:
                         parent=self.root
                     ))
                 else:
-                    safe_after(lambda: self.set_status("Sao lưu toàn bộ Flash thất bại!", "error", progress=0))
+                    safe_after(
+                        lambda: self.set_status(
+                            "Sao lưu toàn bộ Flash thất bại!",
+                            "error",
+                            progress=0,
+                            task_label="Lỗi xuất Flash",
+                        )
+                    )
                     safe_after(lambda: self.log_backup(">>> [LỖI] Không thể đọc toàn bộ Flash từ chip!", "red"))
             except Exception as ex:
                 err_msg = str(ex)
                 safe_after(lambda m=err_msg: self.log_backup(f">>> [NGOẠI LỆ] {m}", "red"))
-                safe_after(lambda: self.set_status("Lỗi khi sao lưu toàn bộ Flash!", "error", progress=0))
+                safe_after(
+                    lambda: self.set_status(
+                        "Lỗi khi sao lưu toàn bộ Flash!",
+                        "error",
+                        progress=0,
+                        task_label="Lỗi xuất Flash",
+                    )
+                )
             finally:
                 self._is_backup_hw_running = False
                 if hasattr(self, "set_global_busy_state"):
@@ -1223,15 +1351,33 @@ class BackupCloneTabMixin:
                     safe_after(lambda: self.log_backup(
                         f"\n=== BƯỚC 1/2: HÚT DỮ LIỆU TỪ BOARD GỐC ({src_port}) ===", "header"
                     ))
-                    if self.backup_source_info.get("mac") in (None, "Chưa xác định", "N/A"):
+                    safe_after(
+                        lambda pt=src_port: self.set_status(
+                            f"Bước 1/2: chuẩn bị đọc dữ liệu từ Board Gốc {pt}...",
+                            "info",
+                            progress=5,
+                            task_label=f"Bước 1/2 - Đọc nguồn ({pt})",
+                        )
+                    )
+                    if (
+                        self.backup_source_info.get("mac") in (None, "Chưa xác định", "N/A")
+                        or self.backup_source_info.get("source_port") != src_port
+                    ):
                         self._probe_chip_and_partition_sync(src_port, baud, safe_after)
 
                     manifest = self._dump_selected_regions_to_dir_sync(
                         src_port, baud, temp_clone_dir, selected_regions, smart_trim, safe_after,
-                        progress_start=10.0, progress_end=50.0
+                        progress_start=10.0, progress_end=50.0, stage_label="Bước 1/2 - Đọc nguồn"
                     )
                     if not manifest or not manifest.get("regions"):
-                        safe_after(lambda: self.set_status("Lỗi khi đọc dữ liệu từ Board Gốc! Đã dừng sao chép.", "error", progress=0))
+                        safe_after(
+                            lambda: self.set_status(
+                                "Lỗi khi đọc dữ liệu từ Board Gốc! Đã dừng sao chép.",
+                                "error",
+                                progress=0,
+                                task_label="Lỗi đọc Board Gốc",
+                            )
+                        )
                         return
                 else:
                     manifest_file = os.path.join(saved_folder_dir, "backup_manifest.json")
@@ -1248,27 +1394,47 @@ class BackupCloneTabMixin:
                         write_pairs.append((off_hex, fpath))
 
                 if not write_pairs:
-                    safe_after(lambda: self.set_status("Không có dữ liệu phân vùng hợp lệ để ghi!", "error", progress=0))
+                    safe_after(
+                        lambda: self.set_status(
+                            "Không có dữ liệu phân vùng hợp lệ để ghi!",
+                            "error",
+                            progress=0,
+                            task_label="Thiếu dữ liệu nguồn",
+                        )
+                    )
                     return
 
-                safe_after(lambda: self.log_backup(
-                    f"\n=== BƯỚC 2/2: SAO CHÉP SANG {len(target_ports)} BOARD ĐÍCH ({targets_str}) ===", "header"
+                step_label = "BƯỚC 2/2" if source_mode == "live_board" else "BƯỚC 1/1"
+                step_short = "Bước 2/2" if source_mode == "live_board" else "Nạp đích"
+                step_start_pct = 50.0 if source_mode == "live_board" else 10.0
+                step_span_pct = 98.0 - step_start_pct
+
+                safe_after(lambda sl=step_label: self.log_backup(
+                    f"\n=== {sl}: SAO CHÉP SANG {len(target_ports)} BOARD ĐÍCH ({targets_str}) ===", "header"
                 ))
 
                 success_ports = []
                 failed_ports = []
                 total_targets = len(target_ports)
+                pair_sizes = [max(1, os.path.getsize(fp)) for _, fp in write_pairs]
+                total_write_bytes = sum(pair_sizes) or 1
 
                 for t_idx, t_port in enumerate(target_ports, 1):
-                    base_prog = 50.0 + ((t_idx - 1) / total_targets) * 48.0
-                    span_prog = 48.0 / total_targets
+                    base_prog = step_start_pct + ((t_idx - 1) / total_targets) * step_span_pct
+                    span_prog = step_span_pct / total_targets
+                    target_task = f"{step_short} -> {t_port} ({t_idx}/{total_targets})"
 
                     safe_after(lambda tp=t_port, ti=t_idx, tt=total_targets: self.log_backup(
                         f"\n  >>> [{ti}/{tt}] Đang nạp nhân bản vào Board Đích: {tp}..."
                     ))
-                    safe_after(lambda tp=t_port, ti=t_idx, tt=total_targets, bp=base_prog: self.set_status(
-                        f"Đang chép sang Board Đích {tp} ({ti}/{tt})...", "warning", progress=bp
-                    ))
+                    safe_after(
+                        lambda tp=t_port, ti=t_idx, tt=total_targets, bp=base_prog, tl=target_task: self.set_status(
+                            f"{step_short}: đang kết nối Board Đích {tp} ({ti}/{tt})...",
+                            "warning",
+                            progress=bp,
+                            task_label=tl,
+                        )
+                    )
 
                     args = ["--port", t_port, "--baud", str(baud), "write-flash", "-z"]
                     if erase_first:
@@ -1276,27 +1442,91 @@ class BackupCloneTabMixin:
                     for off_hex, fpath in write_pairs:
                         args.extend([off_hex, fpath])
 
-                    def on_target_stream(line, bp=base_prog, sp=span_prog, tp=t_port, ti=t_idx, tt=total_targets):
-                        m = re.search(r"\((\d+)\s*%\)", str(line))
-                        if m:
-                            pct = int(m.group(1))
-                            cur_p = bp + (pct / 100.0) * sp
-                            safe_after(lambda p=cur_p, port_lbl=tp, pc=pct, i=ti, tot=tt: self.set_status(
-                                f"Đang chép sang {port_lbl} [{i}/{tot}] ({pc}%)...", "warning", progress=p,
-                                task_label=f"Nhân bản {port_lbl} [{i}/{tot}]"
-                            ))
+                    current_file_idx = 0
+                    last_raw_pct = 0.0
+                    file_finished = False
 
-                    res = run_esptool_command(args, progress_callback=on_target_stream)
-                    if esptool_command_succeeded(res):
-                        success_ports.append(t_port)
-                        safe_after(lambda tp=t_port: self.log_backup(
-                            f"      [THÀNH CÔNG] Board {tp} đã nhận đầy đủ Firmware & Phân vùng!", "green"
+                    def on_target_stream(
+                        line,
+                        bp=base_prog,
+                        sp=span_prog,
+                        tp=t_port,
+                        ti=t_idx,
+                        tt=total_targets,
+                        tl=target_task,
+                    ):
+                        nonlocal current_file_idx, last_raw_pct, file_finished
+                        l_str = str(line)
+                        if "Hash of data verified" in l_str or re.search(r"Wrote\s+\d+\s+bytes", l_str):
+                            if not file_finished and current_file_idx < len(pair_sizes) - 1:
+                                current_file_idx += 1
+                                last_raw_pct = 0.0
+                                file_finished = True
+                        if "Writing at " in l_str:
+                            file_finished = False
+
+                        pct_val = parse_esptool_progress_percent(l_str)
+                        if pct_val is not None:
+                            if pct_val < last_raw_pct - 20.0 and current_file_idx < len(pair_sizes) - 1:
+                                if not file_finished:
+                                    current_file_idx += 1
+                            last_raw_pct = pct_val
+                            file_finished = False
+                            done_bytes = sum(pair_sizes[:current_file_idx]) + (pct_val / 100.0) * pair_sizes[current_file_idx]
+                            frac = min(1.0, max(0.0, done_bytes / total_write_bytes))
+                            board_pct = int(round(frac * 100))
+                            cur_p = bp + frac * sp
+                            safe_after(
+                                lambda p=cur_p, port_lbl=tp, pc=board_pct, i=ti, tot=tt, t_lbl=tl: self.set_status(
+                                    f"{step_short}: đang nạp {port_lbl} [{i}/{tot}] ({pc}%)...",
+                                    "warning",
+                                    progress=p,
+                                    task_label=t_lbl,
+                                )
+                            )
+
+                    port_err_msg = ""
+                    port_ok = False
+                    try:
+                        res = run_esptool_command(args, progress_callback=on_target_stream)
+                        port_ok = esptool_command_succeeded(res)
+                        if not port_ok:
+                            port_err_msg = str(res or "")
+                    except Exception as port_ex:
+                        port_err_msg = str(port_ex)
+                        safe_after(lambda tp=t_port, err=port_err_msg: self.log_backup(
+                            f">>> [NGOẠI LỆ] {tp}: {err}", "red"
                         ))
+
+                    if port_ok:
+                        success_ports.append(t_port)
+                        done_prog = base_prog + span_prog
+                        safe_after(
+                            lambda tp=t_port, ti=t_idx, tt=total_targets, dp=done_prog, tl=target_task: (
+                                self.log_backup(
+                                    f"      [THÀNH CÔNG] Board {tp} đã nhận đầy đủ Firmware & Phân vùng!", "green"
+                                ),
+                                self.set_status(
+                                    f"Đã nạp xong {tp} ({ti}/{tt}).",
+                                    "success",
+                                    progress=dp,
+                                    task_label=tl,
+                                ),
+                            )
+                        )
                     else:
                         failed_ports.append(t_port)
-                        safe_after(lambda tp=t_port: self.log_backup(
-                            f"      [THẤT BẠI] Không thể ghi dữ liệu vào Board {tp}!", "red"
-                        ))
+                        lower_err = port_err_msg.lower()
+                        if "is not an" in lower_err and "image" in lower_err:
+                            safe_after(lambda tp=t_port: self.log_backup(
+                                f"      [LỖI KHÁC CHIP] Dữ liệu nguồn không tương thích với Board Đích {tp} "
+                                f"(ví dụ nhân bản ESP32-S3 sang ESP32 thường). Hai board phải cùng dòng chip!",
+                                "red",
+                            ))
+                        else:
+                            safe_after(lambda tp=t_port: self.log_backup(
+                                f"      [THẤT BẠI] Không thể ghi dữ liệu vào Board {tp}!", "red"
+                            ))
 
                 summary_msg = (
                     f"Hoàn tất nhân bản: Thành công {len(success_ports)}/{total_targets} board"
@@ -1305,13 +1535,33 @@ class BackupCloneTabMixin:
                 )
                 final_level = "success" if not failed_ports else ("warning" if success_ports else "error")
                 final_prog = 100 if success_ports else 0
-                safe_after(lambda m=summary_msg, lv=final_level, p=final_prog: self.set_status(m, lv, progress=p))
+                final_task = (
+                    f"Hoàn tất nhân bản ({len(success_ports)}/{total_targets})"
+                    if not failed_ports
+                    else (
+                        f"Nhân bản xong {len(success_ports)}/{total_targets} board"
+                        if success_ports
+                        else f"Nhân bản thất bại (0/{total_targets})"
+                    )
+                )
+                safe_after(
+                    lambda m=summary_msg, lv=final_level, p=final_prog, tl=final_task: self.set_status(
+                        m, lv, progress=p, task_label=tl
+                    )
+                )
                 safe_after(lambda m=summary_msg: self.log_backup(f"\n=== KẾT QUẢ NHÂN BẢN ĐA MẠCH: {m} ===", "header"))
                 safe_after(lambda m=summary_msg: messagebox.showinfo("Kết quả Sao chép Trực tiếp", m, parent=self.root))
             except Exception as ex:
                 err_msg = str(ex)
                 safe_after(lambda m=err_msg: self.log_backup(f">>> [NGOẠI LỆ] {m}", "red"))
-                safe_after(lambda: self.set_status("Lỗi trong quá trình sao chép trực tiếp!", "error", progress=0))
+                safe_after(
+                    lambda: self.set_status(
+                        "Lỗi trong quá trình sao chép trực tiếp!",
+                        "error",
+                        progress=0,
+                        task_label="Lỗi nhân bản",
+                    )
+                )
             finally:
                 if temp_clone_dir and os.path.isdir(temp_clone_dir):
                     try:

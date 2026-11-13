@@ -1,12 +1,12 @@
-# KIẾN TRÚC HỆ THỐNG & THIẾT KẾ PHẦN MỀM (v1.9)
+# KIẾN TRÚC HỆ THỐNG & THIẾT KẾ PHẦN MỀM (v1.10)
 
-> Tài liệu mô tả kiến trúc thuần PyQt6 của **ESP32 Manager Tool v1.9**, cấu trúc module, bố cục responsive `FlowLayout`, chuẩn tương phản WCAG AA, quản lý chủ đề Engineering, đơn thực thể và cơ chế giải phóng tài nguyên an toàn.
+> Tài liệu mô tả kiến trúc thuần PyQt6 của **ESP32 Manager Tool v1.10**, cơ chế khởi động tối ưu kèm Splash 2 tầng (`pyi_splash` + `StartupSplash`), cập nhật nội tuyến trong Cài đặt kèm self-updater Windows, chuẩn tương phản WCAG AA, đơn thực thể và giải phóng tài nguyên an toàn.
 
 ---
 
 ## 1. TỔNG QUAN KIẾN TRÚC TỔNG THỂ
 
-Từ phiên bản v1.7 trở đi (hiện tại v1.9), **ESP32 Manager Tool** chạy hoàn toàn trên **PyQt6** (đã loại bỏ 100% thư viện `tkinter` và `ttk`). Lớp điều phối chính `InspectorApp` (`modules/app_core.py`) kết hợp lớp cửa sổ gốc `MainWindow` (`modules/ui/main_window.py`) cùng 5 lớp Mixin nghiệp vụ chuyên biệt theo mô hình:
+Từ phiên bản v1.7 trở đi (hiện tại v1.10), **ESP32 Manager Tool** chạy hoàn toàn trên **PyQt6** (đã loại bỏ 100% thư viện `tkinter` và `ttk`). Điểm vào `main.py` khởi tạo `QApplication` và kiểm tra đơn thực thể sớm, hiển thị ngay `StartupSplash` (tiếp nối `pyi_splash` ở bản `.exe`), nạp lazy `MainWindow` cùng `esptool` để rút ngắn độ trễ hiển thị ban đầu, rồi vận hành `InspectorApp` (`modules/app_core.py`) với 5 lớp Mixin nghiệp vụ chuyên biệt:
 
 ```text
 InspectorApp (modules/app_core.py)
@@ -40,6 +40,8 @@ InspectorApp (modules/app_core.py)
 - `card.py`: Khung thẻ với icon và tiêu đề (`section` / `section_danger`) đồng bộ hoàn toàn theo theme.
 - `disk_map.py`: `DiskMapWidget` vẽ phân vùng tỷ lệ Flash theo 2 lượt với bảng màu đạt chuẩn tương phản WCAG 2.2 AA (>= 4.5:1) trên cả hai nền Sáng/Tối và khung viền chọn đôi tương phản cao.
 - `log_view.py`: Gắn thuộc tính `_ROLE_PROP` cho từng đoạn văn bản log và tự động tô lại toàn bộ khối log đã hiển thị khi người dùng đổi Sáng/Tối.
+- `splash.py`: `StartupSplash` (kết hợp `close_pyi_splash()` và trình sinh banner `icons/splash_v110.png`) hiển thị logo, tên app, thanh tiến độ và bước khởi tạo thực tế ngay trên Taskbar Windows (không khóa luôn-trên-cùng).
+- `update_badge.py`: `UpdateDotBadge` vẽ chấm đỏ hướng dẫn xuyên suốt Sidebar -> Tab Cài đặt -> nút cập nhật khi có phiên bản mới.
 - `connection_bar.py`, `collapsible.py`, `key_value_table.py`, `info_bar.py`, `progress_row.py`.
 
 ### 2.3. Hệ thống Hộp thoại & Icon Cửa sổ / Taskbar
@@ -68,7 +70,7 @@ InspectorApp (modules/app_core.py)
 Bộ kiểm thử sử dụng `pytest` với môi trường offscreen PyQt6 (`tests/mock_hardware/app_harness.py`) và thiết bị giả lập (`mock_serial.py`, `mock_esptool.py`, `mock_registry.py`):
 - Kiểm thử lõi & phân vùng: `test_core_utils.py`, `test_partition_wizard.py`, `test_update_util.py`, `test_audit_regressions.py`, `test_release_safety.py`.
 - Kiểm thử tích hợp End-to-End giả lập & đối kháng: `test_e2e_mock_tier1..4.py`, `test_challenger_m1_verification.py`, `test_tier5_adversarial_core.py`, `test_tier5_adversarial_hardware.py`.
-- **Kiểm thử giao diện & tính năng v1.7 / v1.8 / v1.9:** `test_app_tabs.py`, `test_ui_foundation.py`, `test_ui_widgets.py`, `test_ui_v15.py`, `test_v17_features.py`, `test_v18_features.py`, `test_v19_features.py`.
+- **Kiểm thử giao diện & tính năng v1.7 - v1.10:** `test_app_tabs.py`, `test_ui_foundation.py`, `test_ui_widgets.py`, `test_ui_v15.py`, `test_v17_features.py`, `test_v18_features.py`, `test_v19_features.py`, `test_inline_update_ui.py`, `test_v110_features.py`.
 
 ---
 

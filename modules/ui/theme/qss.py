@@ -375,7 +375,21 @@ def build_qss(t: ThemeTokens) -> str:
         color: {t.text};
         border-radius: 2px;
     }}
-    QStatusBar {{
+    QLabel#backupSourceBadge {{
+    background-color: {t.surface_alt};
+    color: {t.text_secondary};
+    border: 1px solid {t.border};
+    border-radius: 10px;
+    padding: 3px 10px;
+    font-weight: 600;
+}}
+QLabel#backupSourceBadge[active="true"] {{
+    background-color: {t.selection};
+    color: {t.accent};
+    border: 1px solid {t.accent};
+}}
+
+QStatusBar {{
         background-color: {t.surface};
         color: {t.text};
         border-top: 1px solid {t.border};

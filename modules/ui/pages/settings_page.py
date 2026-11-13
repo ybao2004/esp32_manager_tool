@@ -8,23 +8,39 @@ Trang Cài Đặt Hệ Thống (SettingsPage - v1.6).
   2. Sub-tab 2 ("Phím chức năng F1-F15"): Bảng 15 dòng chiếm trọn chiều cao, dễ nhìn và dễ chỉnh sửa.
 - Hàng nút dưới cùng cố định: [Khôi phục mặc định] (155px) và [Lưu Cài Đặt] (155px Primary) căn phải.
 """
+import os
+import threading
+
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QLineEdit,
     QPushButton, QComboBox, QCheckBox, QFrame, QTableWidget,
-    QTableWidgetItem, QHeaderView, QRadioButton, QTabWidget
+    QTableWidgetItem, QHeaderView, QRadioButton, QTabWidget,
+    QPlainTextEdit, QProgressBar, QApplication
 )
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QIcon
 from serial.tools import list_ports
-from modules.config import CONTROL_CONFIG, APP_VERSION
+from modules.config import CONTROL_CONFIG, APP_VERSION, GITHUB_REPO
 from modules.serial_util import is_bluetooth_port
+from modules.update_util import (
+    check_for_updates,
+    download_update_asset,
+    get_running_executable_path,
+    get_staged_update_path,
+    is_running_frozen,
+    is_same_target_as_running_exe,
+    launch_windows_self_updater,
+)
+from modules.ui.dispatch import UiDispatcher
 from modules.ui.theme.manager import ThemeManager
 from modules.ui.widgets.card import Card
+from modules.ui.widgets.update_badge import UpdateDotBadge, get_update_dot_icon
 from modules.ui.icons import get_icon, bind_themed_icon
 from modules.ui import dialogs_service as dlg
 
 
 class SettingsPage(QWidget):
-    """Trang Cài Đặt Hệ Thống ESP32 Manager Tool (v1.6)"""
+    """Trang Cài Đặt Hệ Thống ESP32 Manager Tool (v1.9)"""
 
     def __init__(self, core_app=None, parent: QWidget = None):
         super().__init__(parent)
@@ -32,6 +48,13 @@ class SettingsPage(QWidget):
         self._com_checkboxes: dict[str, QCheckBox] = {}
         self._f_entries: list[tuple[QLineEdit, QLineEdit]] = []
         self._syncing_theme_controls = False
+        self._syncing_update_prefs = False
+        self._dispatcher = UiDispatcher.instance()
+        self.latest_update_info: dict = {}
+        self._update_check_in_progress = False
+        self._update_download_in_progress = False
+        self._update_cancel_event = threading.Event()
+        self._has_available_update = False
         self._build_ui()
         ThemeManager.instance().theme_changed.connect(self._on_external_theme_changed)
 
@@ -119,11 +142,11 @@ class SettingsPage(QWidget):
         card_server.body_layout.addLayout(srv_grid)
         left_col.addWidget(card_server)
 
-        # 3. Card Thông tin Phiên bản & Bản quyền
+        # 3. Card Thông tin Phiên bản & Bản quyền + Cập nhật trực tiếp (Inline)
         card_about = Card("Thông tin Phiên bản & Bản quyền", icon_name="info", parent=tab_general)
         abt_layout = QVBoxLayout()
         abt_layout.setContentsMargins(0, 0, 0, 0)
-        abt_layout.setSpacing(5)
+        abt_layout.setSpacing(6)
 
         lbl_app = QLabel(f"ESP32 Manager Tool - Phiên bản v{APP_VERSION}", card_about)
         lbl_app.setStyleSheet("font-size: 10.5pt; font-weight: 700;")
@@ -132,17 +155,94 @@ class SettingsPage(QWidget):
         abt_layout.addWidget(QLabel("Tác giả: @ybao04", card_about))
         abt_layout.addWidget(QLabel("Giấy phép: GNU General Public License v3.0 (GPL-3.0)", card_about))
         abt_layout.addWidget(
-            QLabel("Mã nguồn: https://github.com/ybao2004/esp32_manager_tool.git", card_about)
+            QLabel(f"Mã nguồn: https://github.com/{GITHUB_REPO}.git", card_about)
         )
 
+        sep_upd = QFrame(card_about)
+        sep_upd.setFrameShape(QFrame.Shape.HLine)
+        abt_layout.addWidget(sep_upd)
+
+        self.chk_auto_check_update = QCheckBox(
+            "Tự động kiểm tra cập nhật khi mở ứng dụng", card_about
+        )
+        self.chk_auto_check_update.setChecked(
+            bool(getattr(self.core, "saved_auto_check_updates", False)) if self.core else False
+        )
+        self.chk_auto_check_update.toggled.connect(self._on_auto_check_update_toggled)
+        abt_layout.addWidget(self.chk_auto_check_update)
+
+        self.lbl_update_status = QLabel(
+            "Nhấn 'Kiểm Tra Cập Nhật' để kiểm tra bản phát hành mới từ GitHub.",
+            card_about,
+        )
+        self.lbl_update_status.setProperty("role", "muted")
+        self.lbl_update_status.setWordWrap(True)
+        abt_layout.addWidget(self.lbl_update_status)
+
         abt_btn_row = QHBoxLayout()
+        abt_btn_row.setSpacing(8)
         self.btn_chk_update = QPushButton("Kiểm Tra Cập Nhật", card_about)
         bind_themed_icon(self.btn_chk_update, "refresh")
-        self.btn_chk_update.setFixedWidth(165)
+        self.btn_chk_update.setMinimumWidth(165)
         self.btn_chk_update.clicked.connect(self._on_check_update)
         abt_btn_row.addWidget(self.btn_chk_update)
+
+        self.btn_update_now = QPushButton("Cập nhật ngay", card_about)
+        self.btn_update_now.setProperty("accent", "true")
+        bind_themed_icon(self.btn_update_now, "arrow_download", role="on_accent")
+        self.btn_update_now.setMinimumWidth(140)
+        self.btn_update_now.clicked.connect(self._on_update_now_click)
+        self.btn_update_now.setVisible(False)
+        abt_btn_row.addWidget(self.btn_update_now)
+
+        self.btn_save_update = QPushButton("Lưu về máy...", card_about)
+        bind_themed_icon(self.btn_save_update, "save")
+        self.btn_save_update.setMinimumWidth(130)
+        self.btn_save_update.clicked.connect(self._on_save_update_click)
+        self.btn_save_update.setVisible(False)
+        abt_btn_row.addWidget(self.btn_save_update)
+
+        self.btn_cancel_update = QPushButton("Hủy tải", card_about)
+        self.btn_cancel_update.setProperty("danger_outline", "true")
+        bind_themed_icon(self.btn_cancel_update, "stop", role="danger")
+        self.btn_cancel_update.setMinimumWidth(95)
+        self.btn_cancel_update.clicked.connect(self._on_cancel_update_click)
+        self.btn_cancel_update.setVisible(False)
+        abt_btn_row.addWidget(self.btn_cancel_update)
+
         abt_btn_row.addStretch(1)
         abt_layout.addLayout(abt_btn_row)
+
+        # Khung chi tiết bản phát hành & tiến trình tải (hiện trực tiếp ngay trong card)
+        self.update_details_panel = QWidget(card_about)
+        upd_det_layout = QVBoxLayout(self.update_details_panel)
+        upd_det_layout.setContentsMargins(0, 4, 0, 0)
+        upd_det_layout.setSpacing(6)
+
+        self.txt_release_notes = QPlainTextEdit(self.update_details_panel)
+        self.txt_release_notes.setReadOnly(True)
+        self.txt_release_notes.setProperty("role", "log")
+        self.txt_release_notes.setFixedHeight(105)
+        upd_det_layout.addWidget(self.txt_release_notes)
+
+        self.pb_update_download = QProgressBar(self.update_details_panel)
+        self.pb_update_download.setRange(0, 100)
+        self.pb_update_download.setValue(0)
+        self.pb_update_download.setVisible(False)
+        upd_det_layout.addWidget(self.pb_update_download)
+
+        self.lbl_download_status = QLabel("", self.update_details_panel)
+        self.lbl_download_status.setProperty("role", "muted")
+        self.lbl_download_status.setWordWrap(True)
+        self.lbl_download_status.setVisible(False)
+        upd_det_layout.addWidget(self.lbl_download_status)
+
+        self.update_details_panel.setVisible(False)
+        abt_layout.addWidget(self.update_details_panel)
+
+        self._btn_chk_badge = UpdateDotBadge(self.btn_chk_update, margin_right=5, margin_top=4)
+        self._btn_update_now_badge = UpdateDotBadge(self.btn_update_now, margin_right=5, margin_top=4)
+        self._btn_save_update_badge = UpdateDotBadge(self.btn_save_update, margin_right=5, margin_top=4)
 
         card_about.body_layout.addLayout(abt_layout)
         left_col.addWidget(card_about)
@@ -401,13 +501,344 @@ class SettingsPage(QWidget):
                 self.com_list_layout.addWidget(cb, idx, 0)
                 self._com_checkboxes[dev] = cb
 
-    def _on_check_update(self):
-        if self.core and hasattr(self.core, "open_update_dialog"):
-            self.core.open_update_dialog()
+    def _is_widget_alive(self) -> bool:
+        if self.core is not None and getattr(self.core, "_closing", False):
+            return False
+        try:
+            _ = self.isVisible()
+            return True
+        except RuntimeError:
+            return False
+
+    def _on_auto_check_update_toggled(self, checked: bool):
+        if self._syncing_update_prefs:
+            return
+        enabled = bool(checked)
+        if self.core is not None:
+            self.core.saved_auto_check_updates = enabled
+            if hasattr(self.core, "save_config"):
+                self.core.save_config()
+        if enabled:
+            self.start_update_check(silent=True)
+
+    def _sync_update_badge_targets(self):
+        active = bool(self._has_available_update)
+        if hasattr(self, "tabs"):
+            self.tabs.tabBar().setTabIcon(0, get_update_dot_icon(10) if active else QIcon())
+
+        show_now = active and hasattr(self, "btn_update_now") and not self.btn_update_now.isHidden()
+        show_save = active and not show_now and hasattr(self, "btn_save_update") and not self.btn_save_update.isHidden()
+        show_chk = active and not show_now and not show_save
+
+        if hasattr(self, "_btn_update_now_badge"):
+            self._btn_update_now_badge.set_active(show_now)
+        if hasattr(self, "_btn_save_update_badge"):
+            self._btn_save_update_badge.set_active(show_save)
+        if hasattr(self, "_btn_chk_badge"):
+            self._btn_chk_badge.set_active(show_chk)
+
+    def set_update_badge(self, active: bool):
+        """Hiển thị hoặc ẩn dấu chấm đỏ hướng dẫn đến nút cập nhật trên tab Cài đặt."""
+        self._has_available_update = bool(active)
+        self._sync_update_badge_targets()
+
+    def _notify_update_availability(self, has_update: bool, info: dict | None = None):
+        if self.core is not None and hasattr(self.core, "set_update_available"):
+            self.core.set_update_available(bool(has_update), info)
         else:
-            dlg.show_info(
-                "Cập nhật", f"Phiên bản hiện tại là v{APP_VERSION} mới nhất.", self
+            self.set_update_badge(bool(has_update))
+
+    def _on_check_update(self):
+        self.start_update_check(silent=False)
+
+    def start_update_check(self, silent: bool = False):
+        """Kiểm tra bản cập nhật trực tiếp trong trang Cài đặt (không mở cửa sổ khác)."""
+        if self._update_check_in_progress or self._update_download_in_progress:
+            return
+
+        self._update_check_in_progress = True
+        if not silent:
+            self.btn_chk_update.setEnabled(False)
+            self.lbl_update_status.setText("Đang kết nối GitHub Releases API...")
+
+        def worker():
+            res = check_for_updates(current_version=APP_VERSION, repo=GITHUB_REPO)
+
+            def apply_result():
+                if not self._is_widget_alive():
+                    return
+                self._update_check_in_progress = False
+                self.btn_chk_update.setEnabled(not self._update_download_in_progress)
+                self._apply_update_check_result(res, silent=silent)
+
+            self._dispatcher.post(apply_result)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_update_check_result(self, res: dict, silent: bool = False):
+        status = res.get("status")
+        if status == "error" and silent:
+            # Kiểm tra ngầm lúc khởi động/mở lại: offline hoặc lỗi API thì bỏ qua im lặng
+            return
+
+        self.latest_update_info.clear()
+        self.latest_update_info.update(res)
+        if self.core is not None:
+            self.core.latest_update_info = dict(res)
+
+        if status == "success":
+            tag = res.get("latest_version", "")
+            has_up = bool(res.get("has_update", False))
+            rel_name = res.get("release_name", tag)
+            pub_date = res.get("published_at", "")
+            notes = res.get("release_notes", "")
+            asset_name = res.get("asset_name", "")
+            asset_size = res.get("asset_size", 0)
+            download_url = res.get("download_url", "")
+
+            size_str = f" ({asset_size / (1024 * 1024):.1f} MB)" if asset_size > 0 else ""
+            lines = [
+                f"[ BẢN PHÁT HÀNH: {rel_name} ({tag}) ]",
+                f"Ngày phát hành: {pub_date}",
+                f"File tải về: {asset_name if asset_name else 'Mã nguồn (.zip)'}{size_str}",
+                "-" * 60,
+                "Nội dung cập nhật & cải tiến:",
+                notes if notes else "(Không có ghi chú phát hành).",
+            ]
+            self.txt_release_notes.setPlainText("\n".join(lines))
+
+            can_self_update = (
+                is_running_frozen()
+                and os.name == "nt"
+                and bool(download_url)
+                and asset_name.lower().endswith(".exe")
             )
+
+            if has_up:
+                self.lbl_update_status.setText(
+                    f"Có bản cập nhật mới: {tag} (Hiện tại: v{APP_VERSION})"
+                )
+                self.update_details_panel.setVisible(True)
+                self.btn_update_now.setVisible(can_self_update)
+                self.btn_update_now.setEnabled(can_self_update)
+                self.btn_save_update.setVisible(bool(download_url))
+                self.btn_save_update.setEnabled(bool(download_url))
+            else:
+                self.lbl_update_status.setText(
+                    f"Bạn đang sử dụng phiên bản mới nhất (v{APP_VERSION})."
+                )
+                self.update_details_panel.setVisible(not silent)
+                self.btn_update_now.setVisible(False)
+                self.btn_save_update.setVisible(bool(download_url) and not silent)
+                self.btn_save_update.setEnabled(bool(download_url))
+
+            self._notify_update_availability(has_up, res)
+        elif status == "no_releases":
+            if not silent:
+                self.lbl_update_status.setText("Kho GitHub chưa tạo Release chính thức.")
+                self.txt_release_notes.setPlainText(res.get("message", ""))
+                self.update_details_panel.setVisible(True)
+            self.btn_update_now.setVisible(False)
+            self.btn_save_update.setVisible(False)
+            self._notify_update_availability(False, res)
+        else:
+            self.lbl_update_status.setText("Lỗi khi kiểm tra cập nhật.")
+            self.txt_release_notes.setPlainText(
+                f"Lỗi: {res.get('message', 'Không xác định')}"
+            )
+            self.update_details_panel.setVisible(True)
+            self.btn_update_now.setVisible(False)
+            self.btn_save_update.setVisible(False)
+
+    def _on_update_now_click(self):
+        if self._update_download_in_progress:
+            return
+        download_url = self.latest_update_info.get("download_url", "")
+        if not download_url:
+            dlg.show_info("Thông báo", "Không tìm thấy đường dẫn tải file cập nhật trực tiếp.", self)
+            return
+        running_exe = get_running_executable_path()
+        if not running_exe or os.name != "nt":
+            self._on_save_update_click()
+            return
+        asset_name = self.latest_update_info.get("asset_name", "Esp32_manager_tool_update.exe")
+        staged_path = get_staged_update_path(asset_name)
+        self._start_update_download(download_url, staged_path, self_update_target=running_exe)
+
+    def _on_save_update_click(self):
+        if self._update_download_in_progress:
+            return
+        download_url = self.latest_update_info.get("download_url", "")
+        if not download_url:
+            dlg.show_info("Thông báo", "Không tìm thấy đường dẫn tải file cập nhật trực tiếp.", self)
+            return
+
+        raw_name = self.latest_update_info.get("asset_name", "Esp32_manager_tool_update.exe")
+        tag = str(self.latest_update_info.get("latest_version", "") or "").strip()
+        stem, ext = os.path.splitext(raw_name)
+        ext = ext or ".exe"
+
+        # Gợi ý tên kèm phiên bản nếu trùng tên file .exe đang chạy để tránh ghi nhầm vị trí đang chạy
+        running_exe = get_running_executable_path()
+        default_name = raw_name
+        if running_exe and raw_name.lower() == os.path.basename(running_exe).lower() and tag:
+            safe_tag = "".join(c for c in tag if c.isalnum() or c in (".", "_", "-"))
+            if safe_tag and safe_tag not in stem:
+                default_name = f"{stem}_{safe_tag}{ext}"
+
+        dest_path = dlg.asksaveasfilename(
+            title="Chọn vị trí lưu file cập nhật",
+            defaultextension=ext,
+            initialfile=default_name,
+            filetypes=[("Update Files (*.exe;*.zip)", "*.exe *.zip"), ("All Files (*.*)", "*.*")],
+            parent=self,
+        )
+        if not dest_path:
+            return
+
+        # Nếu người dùng vẫn chọn đúng file .exe đang chạy -> tự chuyển sang luồng tải tạm & tự thay thế khi đóng app
+        if is_same_target_as_running_exe(dest_path):
+            staged_path = get_staged_update_path(raw_name)
+            self._start_update_download(download_url, staged_path, self_update_target=os.path.abspath(dest_path))
+        else:
+            self._start_update_download(download_url, dest_path, self_update_target=None)
+
+    def _on_cancel_update_click(self):
+        if self._update_download_in_progress:
+            self._update_cancel_event.set()
+            self.lbl_download_status.setText("Đang hủy quá trình tải...")
+            self.btn_cancel_update.setEnabled(False)
+
+    def _start_update_download(
+        self,
+        download_url: str,
+        dest_path: str,
+        self_update_target: str | None = None,
+    ):
+        self._update_cancel_event.clear()
+        self._update_download_in_progress = True
+
+        self.btn_chk_update.setEnabled(False)
+        self.btn_update_now.setEnabled(False)
+        self.btn_save_update.setEnabled(False)
+        self.btn_cancel_update.setVisible(True)
+        self.btn_cancel_update.setEnabled(True)
+
+        self.update_details_panel.setVisible(True)
+        self.pb_update_download.setVisible(True)
+        self.pb_update_download.setValue(0)
+        self.lbl_download_status.setVisible(True)
+        self.lbl_download_status.setText("Đang kết nối tải bản cập nhật...")
+
+        def worker():
+            def progress_cb(percent, downloaded, total):
+                if self._update_cancel_event.is_set():
+                    return
+
+                def update_progress():
+                    if not self._is_widget_alive():
+                        return
+                    self.pb_update_download.setValue(int(round(percent)))
+                    if total > 0:
+                        self.lbl_download_status.setText(
+                            f"Đang tải: {downloaded / (1024 * 1024):.2f} MB / {total / (1024 * 1024):.2f} MB ({percent:.1f}%)"
+                        )
+                    else:
+                        self.lbl_download_status.setText(
+                            f"Đang tải: {downloaded / (1024 * 1024):.2f} MB..."
+                        )
+
+                self._dispatcher.post(update_progress)
+
+            success, msg = download_update_asset(
+                download_url,
+                dest_path,
+                progress_callback=progress_cb,
+                cancel_event=self._update_cancel_event,
+            )
+
+            def download_finished():
+                if not self._is_widget_alive():
+                    return
+                self._update_download_in_progress = False
+                self.btn_cancel_update.setVisible(False)
+                self.btn_chk_update.setEnabled(True)
+                self.btn_update_now.setEnabled(not self.btn_update_now.isHidden())
+                self.btn_save_update.setEnabled(not self.btn_save_update.isHidden())
+
+                if self._update_cancel_event.is_set():
+                    self.pb_update_download.setValue(0)
+                    self.lbl_download_status.setText("Đã hủy tải bản cập nhật.")
+                    return
+
+                if success:
+                    self.pb_update_download.setValue(100)
+                    if self_update_target:
+                        self._handle_staged_self_update_ready(dest_path, self_update_target)
+                    else:
+                        self.lbl_download_status.setText(
+                            f"Tải thành công: {os.path.basename(dest_path)}"
+                        )
+                        dlg.show_info(
+                            "Tải hoàn tất",
+                            f"Đã tải thành công bản cập nhật về máy:\n{dest_path}\n\n"
+                            "Bạn có thể đóng ứng dụng và chạy file này để sử dụng bản mới.",
+                            parent=self,
+                        )
+                else:
+                    self.lbl_download_status.setText("Lỗi khi tải bản cập nhật.")
+                    dlg.show_error(
+                        "Lỗi tải file",
+                        f"Không thể tải bản cập nhật:\n{msg}",
+                        parent=self,
+                    )
+
+            self._dispatcher.post(download_finished)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _handle_staged_self_update_ready(self, staged_path: str, target_exe_path: str):
+        self.lbl_download_status.setText("Đã tải xong bản cập nhật. Sẵn sàng cài đặt.")
+        if self.core is not None and hasattr(self.core, "is_device_busy") and self.core.is_device_busy():
+            dlg.show_warning(
+                "Thiết bị đang bận",
+                f"Đã tải xong bản cập nhật tạm tại:\n{staged_path}\n\n"
+                "Thiết bị đang thực hiện tác vụ phần cứng. Vui lòng đợi tác vụ hoàn tất rồi bấm 'Cập nhật ngay' lại.",
+                parent=self,
+            )
+            return
+
+        if not dlg.ask_yes_no(
+            "Sẵn sàng cập nhật",
+            f"Đã tải xong bản cập nhật mới.\n\n"
+            f"Ứng dụng sẽ đóng lại, thay thế file:\n{target_exe_path}\n"
+            "và tự động khởi động lại phiên bản mới.\n\n"
+            "Bạn có muốn cập nhật ngay bây giờ không?",
+            parent=self,
+        ):
+            self.lbl_download_status.setText(f"Đã tải tạm bản cập nhật tại: {staged_path}")
+            return
+
+        ok, info_msg = launch_windows_self_updater(
+            staged_exe_path=staged_path,
+            target_exe_path=target_exe_path,
+            current_pid=os.getpid(),
+            relaunch=True,
+        )
+        if not ok:
+            dlg.show_error("Lỗi tự cập nhật", info_msg, parent=self)
+            return
+
+        self._notify_update_availability(False, None)
+        if self.core is not None and hasattr(self.core, "on_closing"):
+            self.core.on_closing()
+        qapp = QApplication.instance()
+        if qapp is not None:
+            qapp.quit()
+
+    def cancel_pending_update_tasks(self):
+        """Hủy tiến trình tải cập nhật đang chạy khi đóng ứng dụng."""
+        self._update_cancel_event.set()
 
     def load_from_core(self):
         """Đồng bộ lại toàn bộ ô nhập liệu trên trang Cài đặt từ trạng thái của cửa sổ chính."""
@@ -420,6 +851,14 @@ class SettingsPage(QWidget):
         self.chk_auto_scan.setChecked(bool(getattr(self.core, "saved_auto_scan", True)))
         self.chk_auto_select.setChecked(bool(getattr(self.core, "saved_auto_select_new", True)))
         self.chk_hide_bt.setChecked(bool(getattr(self.core, "saved_hide_bluetooth_ports", True)))
+        if hasattr(self, "chk_auto_check_update"):
+            self._syncing_update_prefs = True
+            try:
+                self.chk_auto_check_update.setChecked(
+                    bool(getattr(self.core, "saved_auto_check_updates", False))
+                )
+            finally:
+                self._syncing_update_prefs = False
         if hasattr(self, "chk_tab5_led_blink"):
             self.chk_tab5_led_blink.setChecked(bool(getattr(self.core, "tab5_led_blink_enabled", False)))
 
@@ -464,6 +903,8 @@ class SettingsPage(QWidget):
         self.core.saved_auto_scan = self.chk_auto_scan.isChecked()
         self.core.saved_auto_select_new = self.chk_auto_select.isChecked()
         self.core.saved_hide_bluetooth_ports = self.chk_hide_bt.isChecked()
+        if hasattr(self, "chk_auto_check_update"):
+            self.core.saved_auto_check_updates = bool(self.chk_auto_check_update.isChecked())
 
         if hasattr(self.core, "var_auto_scan"):
             self.core.var_auto_scan.set(self.core.saved_auto_scan)

@@ -7,7 +7,13 @@ import urllib.error
 from unittest.mock import patch, MagicMock
 
 from modules.update_util import (
-    parse_version_tuple, is_newer_version, check_for_updates, download_update_asset
+    parse_version_tuple,
+    is_newer_version,
+    check_for_updates,
+    download_update_asset,
+    is_same_target_as_running_exe,
+    get_staged_update_path,
+    build_windows_self_update_script,
 )
 
 
@@ -84,6 +90,59 @@ class UpdateUtilTests(unittest.TestCase):
             self.assertTrue(os.path.isfile(dest))
             self.assertEqual(os.path.getsize(dest), len(dummy_content))
             self.assertTrue(len(progress_calls) > 0)
+
+    @patch("urllib.request.urlopen")
+    def test_download_update_asset_overwrites_existing_file_without_winerror183(self, mock_urlopen):
+        new_content = b"new updated binary payload"
+        mock_resp = MagicMock()
+        mock_resp.headers = {"content-length": str(len(new_content))}
+        mock_resp.read.side_effect = [new_content, b""]
+        mock_urlopen.return_value.__enter__.return_value = mock_resp
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            dest = os.path.join(tmp_dir, "Esp32_manager_tool.exe")
+            with open(dest, "wb") as fp:
+                fp.write(b"old binary payload")
+
+            success, path = download_update_asset(
+                download_url="https://example.com/app.exe",
+                dest_path=dest,
+            )
+            self.assertTrue(success)
+            self.assertEqual(path, dest)
+            with open(dest, "rb") as fp:
+                self.assertEqual(fp.read(), new_content)
+
+    def test_is_same_target_as_running_exe_and_blocks_direct_overwrite(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            fake_exe = os.path.join(tmp_dir, "Esp32_manager_tool.exe")
+            with open(fake_exe, "wb") as fp:
+                fp.write(b"running")
+
+            with patch("modules.update_util.sys.frozen", True, create=True), \
+                 patch("modules.update_util.sys.executable", fake_exe):
+                self.assertTrue(is_same_target_as_running_exe(fake_exe))
+                self.assertTrue(is_same_target_as_running_exe(fake_exe.replace("\\", "/").lower()))
+                self.assertFalse(is_same_target_as_running_exe(os.path.join(tmp_dir, "other.exe")))
+
+                ok, msg = download_update_asset("https://example.com/app.exe", fake_exe)
+                self.assertFalse(ok)
+                self.assertIn("đang chạy", msg)
+
+    def test_staged_path_and_self_update_script_builder(self):
+        staged = get_staged_update_path("Esp32_manager_tool.exe")
+        self.assertTrue(staged.endswith("Esp32_manager_tool.exe"))
+        self.assertIn(str(os.getpid()), os.path.basename(staged))
+
+        script = build_windows_self_update_script(
+            staged_exe_path=r"C:\Temp\new.exe",
+            target_exe_path=r"D:\Apps\Esp32_manager_tool.exe",
+            current_pid=4242,
+            relaunch=True,
+        )
+        self.assertIn("4242", script)
+        self.assertIn('move /Y "%SRC_EXE%" "%DST_EXE%"', script)
+        self.assertIn('start ""', script)
 
 
 if __name__ == "__main__":

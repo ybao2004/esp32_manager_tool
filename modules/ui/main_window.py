@@ -265,11 +265,13 @@ class MainWindow(
     BackupCloneTabMixin,
     AboutUpdateMixin
 ):
-    """Cửa sổ chính ứng dụng ESP32 Manager Tool v1.9"""
+    """Cửa sổ chính ứng dụng ESP32 Manager Tool v1.10"""
 
-    def __init__(self, root=None, auto_start: bool = True, parent: Optional[QWidget] = None):
+    def __init__(self, root=None, auto_start: bool = True, parent: Optional[QWidget] = None, progress_callback=None):
         QMainWindow.__init__(self, parent)
         self.root = root if root is not None else self
+        self._startup_progress_cb = progress_callback
+        self._report_startup_step(36, "Đang khởi tạo tài nguyên cốt lõi...")
         self._closing = False
         self._resources_cleaned = False
         self._native_icon_applied = False
@@ -333,6 +335,9 @@ class MainWindow(
         self.saved_hide_bluetooth_ports = True
         self.saved_auto_scan = True
         self.saved_auto_select_new = True
+        self.saved_auto_check_updates = False
+        self.has_available_update = False
+        self.latest_update_info = {}
         self._previous_ports = set()
 
         self.default_ip = "192.168.4.1"
@@ -346,6 +351,7 @@ class MainWindow(
         self.saved_flash_erase = False
 
         # Đọc cấu hình từ file
+        self._report_startup_step(48, "Đang nạp cấu hình & giao diện Engineering...")
         self.load_config()
 
         # Áp dụng Theme theo cấu hình
@@ -403,6 +409,7 @@ class MainWindow(
         # QStackedWidget chứa 6 trang
         self.stack = QStackedWidget(workspace_widget)
 
+        self._report_startup_step(64, "Đang dựng các phân hệ công cụ (Tab 1 - Tab 6)...")
         self.page_inspector = InspectorPage(self.stack)
         self.page_monitor = MonitorPage(
             default_ip=self.default_ip,
@@ -631,10 +638,9 @@ class MainWindow(
         self.btn_save_csv.clicked.connect(self._action_save_csv)
 
         # Backup
-        self.cb_backup_src_port = self.page_backup.cb_backup_src_port
+        self.lbl_backup_src_port = self.page_backup.lbl_backup_src_port
         self.backup_src_port_var = self.page_backup.backup_src_port_var
         self.btn_backup_blink_led = self.page_backup.btn_backup_blink_led
-        self.btn_backup_refresh_com = self.page_backup.btn_backup_refresh_com
         self.cb_backup_baud = self.page_backup.cb_backup_baud
         self.backup_baud_var = self.page_backup.backup_baud_var
         self.btn_backup_read_chip = self.page_backup.btn_backup_read_chip
@@ -662,12 +668,10 @@ class MainWindow(
             self.page_backup.source_mode_changed.connect(
                 lambda _m: self._refresh_clone_target_checkboxes()
             )
-        self.cb_backup_src_port.currentTextChanged.connect(self._on_backup_src_port_selected_by_user)
-        self.cb_backup_src_port.activated.connect(
-            lambda _idx: self._on_backup_src_port_selected_by_user(self.cb_backup_src_port.currentText())
-        )
         self.btn_backup_blink_led.clicked.connect(self._on_toggle_board_led_blink)
-        self.btn_backup_refresh_com.clicked.connect(self._refresh_backup_ports)
+        if hasattr(self, "_sync_backup_source_port_ui"):
+            self._sync_backup_source_port_ui()
+        self._report_startup_step(84, "Đang hoàn thiện kết nối sự kiện & phím tắt...")
         self.btn_backup_read_chip.clicked.connect(self._hw_probe_source_chip_for_backup)
         self.btn_backup_sel_all.clicked.connect(lambda: self._backup_select_all(True))
         self.btn_backup_unsel_all.clicked.connect(lambda: self._backup_select_all(False))
@@ -720,9 +724,22 @@ class MainWindow(
                 except Exception:
                     pass
 
+    def _report_startup_step(self, pct: int, message: str):
+        cb = getattr(self, "_startup_progress_cb", None)
+        if callable(cb):
+            try:
+                cb(pct, message)
+            except Exception:
+                pass
+
     def _on_page_selected(self, index: int):
         self.stack.setCurrentIndex(index)
-        if index != 4 and hasattr(self, "_stop_board_led_blink"):
+        if index == 4:
+            if hasattr(self, "_sync_backup_source_port_ui"):
+                self._sync_backup_source_port_ui()
+            if hasattr(self, "_refresh_clone_target_checkboxes"):
+                self._refresh_clone_target_checkboxes()
+        elif hasattr(self, "_stop_board_led_blink"):
             self._stop_board_led_blink()
         if index == 4 and hasattr(self, "update_tab5_led_blink_visibility"):
             self.update_tab5_led_blink_visibility()
@@ -799,7 +816,16 @@ class MainWindow(
         if hasattr(self, "req_status_lbl") and self.req_status_lbl is not None:
             self.req_status_lbl.setText(message)
         if progress is not None:
-            self.update_global_progress(progress, task_label=task_label)
+            resolved_label = task_label
+            if (
+                resolved_label is None
+                and level in ("error", "warning")
+                and float(progress) == 0.0
+                and hasattr(self, "lbl_progress_task")
+                and self.lbl_progress_task.text().startswith("Đang ")
+            ):
+                resolved_label = ""
+            self.update_global_progress(progress, task_label=resolved_label)
         elif task_label is not None and hasattr(self, "lbl_progress_task"):
             txt = str(task_label).strip()
             resolved = txt if txt else "Tiến trình: Sẵn sàng"
@@ -915,6 +941,7 @@ class MainWindow(
                         self.ignored_com_ports = config.get("ignored_com_ports", [])
                         self.saved_auto_scan = config.get("auto_scan", True) is not False
                         self.saved_auto_select_new = config.get("auto_select_new_port", True) is not False
+                        self.saved_auto_check_updates = config.get("auto_check_updates", False) is True
                         self.default_ip = str(config.get("default_ip", "192.168.4.1") or "192.168.4.1")
                         self.default_port = str(config.get("default_port", "100") or "100")
                         self.saved_flash_baud = str(config.get("flash_baud", "460800") or "460800")
@@ -973,6 +1000,7 @@ class MainWindow(
             "hide_bluetooth_ports": self.saved_hide_bluetooth_ports,
             "auto_scan": getattr(self, "saved_auto_scan", True),
             "auto_select_new_port": self.saved_auto_select_new,
+            "auto_check_updates": bool(getattr(self, "saved_auto_check_updates", False)),
             "default_ip": self.default_ip,
             "default_port": self.default_port,
             "control_labels": self.control_labels,
@@ -1015,6 +1043,7 @@ class MainWindow(
             self.saved_hide_bluetooth_ports = True
             self.saved_auto_scan = True
             self.saved_auto_select_new = True
+            self.saved_auto_check_updates = False
             if hasattr(self, "var_hide_bt_ports"):
                 self.var_hide_bt_ports.set(True)
             if hasattr(self, "var_auto_scan"):
@@ -1055,6 +1084,35 @@ class MainWindow(
         self._scan_thread = threading.Thread(target=self._auto_scan_ports, daemon=True)
         self._scan_thread.start()
         self.set_status("Sẵn sàng.", "info", progress=0)
+        if getattr(self, "saved_auto_check_updates", False):
+            QTimer.singleShot(1500, lambda: self.trigger_update_check(silent=True))
+        # Ấm sẵn esptool trong luồng nền sau khi UI đã hiện để thao tác chip lần đầu phản hồi nhanh
+        QTimer.singleShot(600, self._schedule_esptool_preload)
+
+    def _schedule_esptool_preload(self):
+        import threading
+        from modules import esptool_util
+
+        if getattr(self, "_closing", False) or esptool_util.esptool is not None:
+            return
+        threading.Thread(target=esptool_util.preload_esptool, daemon=True).start()
+
+    def set_update_available(self, available: bool, info: dict | None = None):
+        """Đồng bộ trạng thái có bản cập nhật mới và bật/tắt dấu chấm đỏ dẫn đường."""
+        self.has_available_update = bool(available)
+        if isinstance(info, dict):
+            self.latest_update_info = dict(info)
+        if hasattr(self, "sidebar") and hasattr(self.sidebar, "set_settings_badge"):
+            self.sidebar.set_settings_badge(self.has_available_update)
+        if hasattr(self, "page_settings") and hasattr(self.page_settings, "set_update_badge"):
+            self.page_settings.set_update_badge(self.has_available_update)
+
+    def trigger_update_check(self, silent: bool = False):
+        """Kích hoạt kiểm tra cập nhật trực tiếp trong trang Cài đặt."""
+        if getattr(self, "_closing", False):
+            return
+        if hasattr(self, "page_settings") and hasattr(self.page_settings, "start_update_check"):
+            self.page_settings.start_update_check(silent=silent)
 
     def _auto_scan_ports(self):
         from modules.serial_util import list_com_ports_local
@@ -1129,10 +1187,16 @@ class MainWindow(
         self.update_port_list(current_selection, filtered_ports)
 
     def on_port_selected(self, text: str = ""):
-        port = self.port_cb.currentText().strip()
-        if port:
+        port = str(text or self.port_cb.currentText() or "").strip()
+        if port and port != "Không có cổng COM":
             self.saved_com_port = port
             self.save_config()
+        if hasattr(self, "_on_backup_src_port_selected_by_user"):
+            self._on_backup_src_port_selected_by_user(port)
+        elif hasattr(self, "_sync_backup_source_port_ui"):
+            self._sync_backup_source_port_ui(port)
+            if hasattr(self, "_refresh_clone_target_checkboxes"):
+                self._refresh_clone_target_checkboxes()
 
     def on_baud_selected(self, text: str = ""):
         baud = self.baud_cb.currentText().strip()
@@ -1227,6 +1291,8 @@ class MainWindow(
                 )
         elif not is_busy:
             self.status_prog.config(mode="determinate")
+            if self.lbl_progress_task.text().startswith("Đang "):
+                self.lbl_progress_task.setText("Tiến trình: Sẵn sàng")
 
     def _set_mcu_dependent_ui_state(self, ui_state: str):
         enabled = (ui_state != "disabled")
@@ -1289,7 +1355,12 @@ class MainWindow(
         self._resources_cleaned = True
         self._closing = True
 
-        # 1. Dừng luồng quét cổng COM định kỳ
+        # 1. Dừng luồng quét cổng COM định kỳ & tác vụ cập nhật
+        if hasattr(self, "page_settings") and hasattr(self.page_settings, "cancel_pending_update_tasks"):
+            try:
+                self.page_settings.cancel_pending_update_tasks()
+            except Exception:
+                pass
         stop_scan = getattr(self, "stop_scan", None)
         if stop_scan is not None and hasattr(stop_scan, "set"):
             stop_scan.set()
