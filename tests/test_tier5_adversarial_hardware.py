@@ -249,6 +249,8 @@ class TestTier5AdversarialHardware:
 
         # Flasher verifies max_end against flash_size and blocks flashing
         app.port_cb.set("COM3")
+        for row in app.flash_file_rows[1:]:
+            row["var_enable"].set(False)
         app.flash_file_rows[0]["var_enable"].set(True)
         app.flash_file_rows[0]["path_entry"].delete(0, "end")
         app.flash_file_rows[0]["path_entry"].insert(0, str(bin_file))
@@ -297,6 +299,11 @@ class TestTier5AdversarialHardware:
         checks `_is_partition_hw_running` / `is_device_busy()` and returns early.
         """
         harness, app = headless_app
+        app.table.entries.append(PartitionEntry(
+            name="nvs", type_str="data", subtype_str="nvs",
+            offset=0x9000, size=0x6000, flags_str=""
+        ))
+        app.refresh_partition_views()
         assert len(app.table.entries) > 0
         target_entry = app.table.entries[0]
         initial_count = len(app.table.entries)
@@ -348,6 +355,11 @@ class TestTier5AdversarialHardware:
         `_action_add_after_row` or `_action_auto_pack` is blocked by busy check.
         """
         harness, app = headless_app
+        app.table.entries.append(PartitionEntry(
+            name="nvs", type_str="data", subtype_str="nvs",
+            offset=0x9000, size=0x6000, flags_str=""
+        ))
+        app.refresh_partition_views()
         initial_count = len(app.table.entries)
 
         app._is_partition_hw_running = True

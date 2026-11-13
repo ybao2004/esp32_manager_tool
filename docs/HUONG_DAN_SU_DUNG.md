@@ -1,122 +1,100 @@
-# Hướng dẫn sử dụng Esp32 manager tool (v1.3)
+# HƯỚNG DẪN SỬ DỤNG ESP32 MANAGER TOOL (v1.7)
 
-Ứng dụng GUI tất-cả-trong-một (All-in-One GUI Toolkit) chuyên nghiệp và gọn nhẹ dành cho kỹ sư nhúng và nhà phát triển làm việc với ESP8266 và toàn bộ các dòng chip ESP32 (S2, S3, C2, C3, C5, C6, H2, P4,...).
-
----
-
-## KHỞI CHẠY ỨNG DỤNG
-
-1. **Khởi chạy từ mã nguồn Python:**
-   ```bash
-   pip install -r requirements.txt
-   python main.py
-   ```
-2. **Khởi chạy file thực thi độc lập (Standalone Portable EXE):**
-   ```bash
-   esp32_manager_tool.exe
-   ```
+> **Cập nhật theo phiên bản:** `v1.7` (Giao diện thuần PyQt6 — Phong cách Kỹ thuật Chuyên sâu)
 
 ---
 
-## 1. KIỂM TRA & CHẨN ĐOÁN PHẦN CỨNG (TAB 1)
-
-1. **Kết nối phần cứng:**
-   - Chọn cổng **COM Port** tương ứng với mạch ESP đang cắm vào máy tính.
-   - Chọn **Baudrate** (khuyến nghị để `Tự động` hoặc `115200`).
-2. **Thực hiện kiểm tra:**
-   - Bấm **KIỂM TRA TOÀN DIỆN**.
-   - Ứng dụng sẽ đồng bộ với bootloader ROM của ESP và phân tích:
-     - **Thông tin chip:** Chip Model, Silicon Revision, Crystal Frequency, ID nhà sản xuất Flash (Winbond, GigaDevice, Puya, Macronix,...), dung lượng Flash và PSRAM.
-     - **Địa chỉ MAC:** Base MAC, MAC Wi-Fi Station, MAC Wi-Fi AP và MAC Bluetooth.
-     - **Đối soát OUI:** Đối soát tiền tố MA-L/OUI với cơ sở dữ liệu hơn 335 dải MAC của Espressif.
-     - **Bảng thông số kỹ thuật:** Kiến trúc CPU, số nhân, tần số tối đa, năng lực tính toán MIPS/CoreMark, SRAM, ROM.
-3. **Tiện ích:**
-   - Tích chọn **Hiển thị Output Thô** để xem chi tiết log trả về từ `esptool`.
-   - Bấm **Lưu Báo Cáo** để xuất toàn bộ kết quả chẩn đoán ra file văn bản `.txt`.
+## MỤC LỤC
+1. [Giao diện Tổng quan & Thanh Trạng Thái Hợp Nhất](#1-giao-dien-tong-quan--thanh-trang-thai-hop-nhat)
+2. [Tab 1: Kiểm tra Chip & Phần cứng](#2-tab-1-kiem-tra-chip--phan-cung)
+3. [Tab 2: Serial Monitor & Bảng Điều Khiển IoT](#3-tab-2-serial-monitor--bang-dieu-khien-iot)
+4. [Tab 3: Nạp Firmware (.bin)](#4-tab-3-nap-firmware-bin)
+5. [Tab 4: Phân vùng Bộ nhớ (Partition Wizard)](#5-tab-4-phan-vung-bo-nho-partition-wizard)
+6. [Tab 5: Sao lưu & Nhân bản Đa Mạch](#6-tab-5-sao-luu--nhan-ban-da-mach)
+7. [Tab 6: Cài đặt & Cập nhật](#7-tab-6-cai-dat--cap-nhat)
 
 ---
 
-## 2. SERIAL MONITOR & ĐIỀU KHIỂN IOT (TAB 2)
+## 1. GIAO DIỆN TỔNG QUAN & THANH TRẠNG THÁI HỢP NHẤT
 
-1. **Kết nối Serial:**
-   - Chọn cổng COM và Baudrate ở thanh điều khiển trên cùng, bấm **Kết nối**.
-   - Màn hình Serial hiển thị dữ liệu truyền nhận từ thiết bị theo thời gian thực.
-   - Hỗ trợ **Tự động cuộn** và **Thêm Dấu thời gian** (timestamp).
-   - Bộ lọc cổng COM thông minh, tự động phát hiện cổng mới cắm và ghi nhớ cấu hình cổng gần nhất.
-2. **Gửi dữ liệu Serial:**
-   - Nhập chuỗi tại ô nhập liệu bên dưới.
-   - Bấm **Enter** để gửi lệnh, hoặc **Shift + Enter** để xuống dòng.
-   - Nút **Reset ESP** sẽ gửi chuỗi lệnh `RESET` đồng thời kích hoạt xung phần cứng DTR/RTS trên cổng nạp để khởi động lại chip.
-3. **Bảng phím điều khiển (F1 -> F15):**
-   - 15 nút chức năng tùy biến cho phép gửi nhanh các chuỗi lệnh cấu hình định sẵn.
-   - Tùy biến nhãn hiển thị và nội dung lệnh tương ứng trong menu **Cài đặt -> Nút chức năng**.
-4. **Cấu hình mạng Wi-Fi & TCP Server:**
-   - Bấm **Quét WiFi** để yêu cầu vi điều khiển quét danh sách mạng khả dụng.
-   - Nhập mật khẩu, bấm **Kết nối WiFi** để gửi cấu hình kết nối.
-   - Nhập IP Server và Cổng, bấm **Kết nối Server** để vi điều khiển thiết lập socket TCP.
+- **Sidebar bên trái:** Thu gọn / mở rộng nhanh để chuyển giữa 6 trang làm việc chính (`Kiểm tra Chip`, `Serial Monitor`, `Nạp Firmware`, `Phân vùng`, `Sao lưu & Chép`, `Cài đặt`).
+- **Thanh kết nối chung phía trên:** Chọn **Cổng COM**, **Baudrate**, làm mới danh sách cổng hoặc bấm **Kết nối** / **Ngắt kết nối** Serial bất cứ lúc nào.
+- **Thanh tiến trình hợp nhất ở đáy màn hình:**
+  - Hiển thị trạng thái kết nối Serial, tên tiến trình đang thực thi ở bên trái thanh tiến trình, thanh tiến trình (0% -> 100%) và tỷ lệ `%` ở bên phải.
+  - Phục vụ chung cho cả Tab 1 (Kiểm tra Chip), Tab 3 (Nạp Firmware / Xóa Flash), Tab 4 (Đọc / Nạp / Dump / Ghi / Xóa phân vùng) và Tab 5 (Đọc cấu trúc / Sao lưu / Nhân bản).
 
 ---
 
-## 3. NẠP FLASH FIRMWARE (.BIN) & CÔNG CỤ XÓA (TAB 3)
+## 2. TAB 1: KIỂM TRA CHIP & PHẦN CỨNG
 
-1. **Cấu hình nạp chung:**
-   - **Mục tiêu Chip:** Chọn chip mục tiêu (mặc định `auto` để esptool tự nhận diện).
-   - **Tốc độ Nạp (Baud):** Khuyến nghị `460800` hoặc `921600` để nạp nhanh, hoặc `115200` nếu cáp truyền tín hiệu kém.
-   - Tùy chọn **Xóa sạch Flash trước khi nạp (--erase-all)** nếu muốn format trắng bộ nhớ trước khi ghi.
-2. **Danh sách File nạp:**
-   - Hỗ trợ nạp đồng thời tối đa 4 file binary (.bin) cùng lúc.
-   - Bấm **Chọn File...** để duyệt tìm file `.bin` trên máy tính.
-   - Điền địa chỉ **Offset** nạp tương ứng (ví dụ: `0x1000` cho Bootloader, `0x8000` cho Partitions, `0xe000` cho Boot App0, `0x10000` cho Firmware ứng dụng).
-   - Tích chọn ô kích hoạt cho các file muốn nạp.
-   - Ứng dụng tự động kiểm tra tính hợp lệ và cảnh báo chống chồng lấn vùng nhớ (*Address Overlap Check*).
-3. **Tiến trình nạp:**
-   - Bấm nút **BẮT ĐẦU NẠP FLASH**.
-   - Theo dõi thanh tiến trình phần trăm (%) và log chi tiết thời gian thực.
-4. **Công cụ Xóa Flash an toàn:**
-   - **Xóa Toàn Bộ Flash:** Format trắng toàn bộ bộ nhớ flash vật lý của chip.
-   - **Xóa vùng Flash:** Xóa một vùng bộ nhớ cụ thể theo Offset và kích thước xác định (yêu cầu địa chỉ và độ dài chia hết cho sector 4 KB = `0x1000` an toàn).
+### Mục đích
+Đọc nhanh cấu hình phần cứng thực tế từ chip Espressif (Chip Model, Revision, Crystal, Tính năng Wi-Fi/BLE, Flash JEDEC, PSRAM, các vùng Heap RAM và MAC Address/OUI).
+
+### Thao tác thực hiện
+1. Cắm mạch ESP32 vào máy tính và chọn cổng COM ở thanh phía trên.
+2. Nhấn **Kiểm tra Chip** (tiến trình chạy hiển thị ở thanh trạng thái đáy).
+3. Nếu muốn theo dõi log thô từ `esptool`, tích chọn **Xem log thô esptool**.
+4. Bấm **Báo cáo Liền mạch** để đọc báo cáo văn bản hoặc **Bảng Thông số** để xem dạng bảng có bộ lọc tìm nhanh.
+5. Nhấn **Lưu Báo Cáo** để xuất thành file `.txt`.
 
 ---
 
-## 4. QUẢN LÝ PHÂN VÙNG BỘ NHỚ FLASH - PARTITION WIZARD (TAB 4)
+## 3. TAB 2: SERIAL MONITOR & BẢNG ĐIỀU KHIỂN IOT
 
-1. **Sơ đồ thanh ổ đĩa trực quan (MiniTool Disk Map):**
-   - Biểu diễn trực quan tỷ lệ các phân vùng trên toàn bộ dung lượng chip Flash.
-   - Tự động nhận diện các khoảng trống chưa phân bổ (*Unallocated Gaps*).
-   - Click chọn khối để highlight trong bảng; nhấp vào khoảng trống để tạo phân vùng mới ngay tại vị trí đó; hover chuột để xem thông số chi tiết qua Tooltip.
-   - Menu chuột phải trên từng khối: Thêm, Sửa, Xóa, Sao lưu (Dump), Xóa trắng (Erase) hoặc Nạp trực tiếp file `.bin`.
-2. **Bộ công cụ tự động căn lề (`⚡ Dồn & Căn 4K/64K`):**
-   - Tự động tính toán lại toàn bộ Offset nối tiếp nhau, đảm bảo căn lề chuẩn 64 KB (`0x10000`) cho phân vùng App và 4 KB (`0x1000`) cho phân vùng Data.
-3. **Kiểm tra tính hợp lệ thời gian thực (Real-Time Validator):**
-   - Cảnh báo trùng lặp tên, sai định dạng, phân vùng App đặt dưới `0x10000`, thiếu phân vùng `otadata` khi có `ota_X`, hoặc tổng dung lượng vượt quá kích thước chip Flash.
-4. **Nhập/Xuất & Biên dịch nhị phân:**
-   - Hỗ trợ nhập và xuất file `partitions.csv` chuẩn ESP-IDF.
-   - Biên dịch trực tiếp bảng phân vùng sang file nhị phân `partition-table.bin` 32-byte struct kèm MD5 Checksum.
-   - Hỗ trợ nạp bảng mẫu preset nhanh (Default 4MB, Large App, Minimal SPIFFS, 8MB/16MB OTA,...).
-5. **Tương tác phần cứng an toàn:**
-   - Đọc bảng phân vùng trực tiếp từ chip ESP đang kết nối.
-   - Nạp bảng phân vùng xuống chip tại địa chỉ `0x8000`.
-   - Sao lưu (Dump) phân vùng ra file `.bin`, Xóa trắng (Erase) hoặc nạp file binary vào từng phân vùng độc lập.
-   - Tự động ngắt và khôi phục Serial Monitor để tránh xung đột cổng COM.
-   - Chi tiết xem tại: [HUONG_DAN_PHAN_VUNG.md](HUONG_DAN_PHAN_VUNG.md).
+### Theo dõi & Gửi dữ liệu UART
+1. Chọn cổng COM và tốc độ Baudrate phù hợp (mặc định `115200`), nhấn **Kết nối**.
+2. Dữ liệu phản hồi từ ESP32 xuất hiện theo thời gian thực; hỗ trợ **Tự động cuộn** và **Thêm dấu thời gian**.
+3. Nhập lệnh vào ô phía dưới, nhấn `Enter` hoặc nút **Gửi** (tùy chọn **Thêm \r\n**; dùng phím Mũi tên Lên/Xuống để duyệt lại lịch sử lệnh).
+4. Bấm **Reset ESP** để khởi động lại mạch qua tín hiệu DTR/RTS hoặc **Ẩn / Hiện Bảng Điều Khiển** khi cần mở rộng Terminal.
+
+### Bảng điều khiển Mạng & 15 Phím F1 - F15
+- **Cấu hình Mạng (Wi-Fi & Server):** Cho phép gửi nhanh lệnh quét Wi-Fi, kết nối Wi-Fi và nối TCP Server về thiết bị ESP đang chạy firmware tương thích.
+- **Phím F1 - F15:** Gửi nhanh các chuỗi lệnh cấu hình sẵn hoặc tùy chỉnh trong `Cài đặt -> Phím chức năng F1 - F15`.
 
 ---
 
-## 5. CÀI ĐẶT HỆ THỐNG & TỰ ĐỘNG CẬP NHẬT
+## 4. TAB 3: NẠP FIRMWARE (.BIN)
 
-Bấm nút **Cài đặt** ở góc trên bên phải giao diện để mở cửa sổ cấu hình đa tab:
+### Nạp nhiều file firmware đồng thời
+1. Chọn dòng **Chip** (`auto`, `esp32`, `esp32s3`, `esp32p4`,...) và **Baud** (`460800`, `921600`,...).
+2. Trong card cấu hình trên cùng đã tích hợp đủ 4 nút điều khiển gọn trên một hàng: **Bắt đầu nạp**, **Xóa vùng nhớ**, **Xóa toàn bộ Flash** và **Xóa nhật ký**.
+3. Tích chọn từ 1 đến 4 dòng tệp `.bin` (hỗ trợ nút **Chọn...** hoặc kéo thả file `.bin` vào từng ô đường dẫn), nhập **Offset (Hex)** tương ứng (`0x0`, `0x1000`, `0x8000`, `0xe000`, `0x10000`,...).
+4. Bấm **Bắt đầu nạp**. Ứng dụng kiểm tra chống chồng lấn dải địa chỉ và hiển thị tiến trình phần trăm trên thanh trạng thái đáy.
 
-1. **Cài đặt chung:**
-   - **Giao diện:** Chuyển đổi giữa chế độ **Sáng (Light)** và **Tối (Dark)** đồng bộ toàn hệ thống.
-   - **Quản lý cổng COM:** Lọc và ẩn các cổng COM ảo hoặc thiết bị không mong muốn; tùy chọn tự động chọn cổng mới cắm.
-   - **Mạng mặc định:** Cấu hình IP và Port máy chủ TCP mặc định cho Tab Monitor.
-2. **Nút chức năng:**
-   - Tùy biến nhãn hiển thị và câu lệnh gửi đi cho 15 phím chức năng `F1` đến `F15`.
-3. **Cập nhật (Update):**
-   - Tích hợp kết nối trực tiếp với GitHub Releases API (`ybao2004/esp32_manager_tool`).
-   - Kiểm tra phiên bản mới nhất, xem ghi chú phát hành (Changelog).
-   - Tải trực tiếp file cập nhật mới nhất về máy với thanh tiến trình download thời gian thực.
-4. **Hướng dẫn sử dụng & Giới thiệu:**
-   - Xem hướng dẫn nhanh tích hợp và thông tin bản quyền ứng dụng.
-5. **Khôi phục gốc:**
-   - Đưa toàn bộ cấu hình về trạng thái mặc định của nhà sản xuất.
+### Công cụ Xóa Flash
+- **Xóa vùng nhớ:** Mở hộp thoại chỉ định địa chỉ bắt đầu và dung lượng cần xóa (tự kiểm tra căn lề 4 KB).
+- **Xóa toàn bộ Flash:** Xóa trắng toàn bộ bộ nhớ SPI Flash.
+
+---
+
+## 5. TAB 4: PHÂN VÙNG BỘ NHỚ (PARTITION WIZARD)
+
+- **Khởi tạo sạch:** Bảng phân vùng và sơ đồ ổ đĩa luôn trống khi mới mở cho đến khi bạn chọn **Mẫu Chuẩn...**, **Quét Dự Án**, **Mở CSV/BIN**, **Đọc bảng từ Chip**, hoặc bấm **+ Thêm dòng**.
+- **Tự đặt Flash cao nhất theo dòng Chip:** Khi chọn dòng chip ở danh sách **Chip**, ứng dụng tự động lọc dung lượng tương thích và chọn dung lượng **Flash cao nhất** mà dòng chip đó hỗ trợ.
+- **Thêm phân vùng ngay sau dòng đang chọn:** Bấm **+ Thêm dòng** (hoặc nhấp dòng `+` cuối bảng) để chèn phân vùng mới ngay phía sau dòng đang được chọn trên bảng, đồng thời tự động tránh trùng tên.
+- **Lưu CSV toàn bảng:** Bấm **Lưu CSV** để lưu toàn bộ bảng phân vùng hiện có ra tệp `.csv` chuẩn ESP-IDF (tự lưu đè nếu đang mở tệp `.csv`, hoặc mở hộp thoại chọn vị trí lưu lần đầu).
+- Chi tiết xem thêm tại [HUONG_DAN_PHAN_VUNG.md](HUONG_DAN_PHAN_VUNG.md).
+
+---
+
+## 6. TAB 5: SAO LƯU & NHÂN BẢN ĐA MẠCH
+
+- **Khởi tạo sạch & Đọc Chip Nguồn:** Danh sách phân vùng và sơ đồ đĩa ban đầu trống; chọn **Board Gốc** và bấm **Đọc Cấu Trúc Từ Chip Nguồn** để tải toàn bộ bố cục Flash (kể cả `bootloader` và `partition_table`).
+- **Tùy chọn ẩn Nháy LED 5 giây nhận diện Board Gốc:**
+  - Mặc định tắt để giữ gọn giao diện; có thể bật trong **Cài đặt -> Cài đặt Chung và Cổng COM -> Tùy chọn ẩn (Tab 5 - Sao lưu & Nhân bản)**.
+  - Khi đã bật và đang ở trong **Tab 5**, chọn cổng **Board Gốc** sẽ tự động nháy LED TX trong 5 giây (qua luồng UART TX không xung DTR/RTS) để dễ nhận biết board đang cắm trên máy tính; nút **Nháy LED** cũng xuất hiện ngay bên cạnh ô `Board Gốc`.
+  - Việc nháy LED tự động dừng ngay khi hết 5 giây, khi chuyển khỏi Tab 5, hoặc khi chạy thao tác phần cứng.
+- **Sao lưu & Hồ sơ xác thực:** Tích chọn các phân vùng cần sao lưu (bật/tắt **Cắt trống 0xFF** tùy chọn), bấm **Sao lưu vùng chọn** hoặc **Sao lưu Toàn bộ Flash** để lưu tệp `.bin` kèm `backup_info.txt`, `backup_manifest.json` (chứa SHA-256 & MD5) và `partitions.csv`.
+- **Sao Chép Trực Tiếp Đa Mạch:** Chọn nguồn (Board Gốc trực tiếp hoặc Thư mục đã lưu), tích chọn các **Board Đích**, rồi bấm **Bắt đầu Sao Chép Đa Mạch**.
+
+---
+
+## 7. TAB 6: CÀI ĐẶT & CẬP NHẬT
+
+1. **Cài đặt Chung và Cổng COM:**
+   - Chọn chế độ **Giao diện Kỹ thuật**: **Giao diện Tối (Dark)** hoặc **Giao diện Sáng (Light)** áp dụng tức thì không cần khởi động lại.
+   - Cấu hình **Quản lý cổng COM** (quét định kỳ 2 giây, tự ưu tiên cổng mới cắm, lọc Bluetooth, ẩn danh sách cổng COM chỉ định) và **Tùy chọn ẩn nháy LED 5s (Tab 5)**.
+   - Cấu hình **IP Server** & **Cổng TCP** mặc định.
+   - Xem thông tin phiên bản `v1.7`, tác giả, giấy phép GPL-3.0 và bấm **Kiểm Tra Cập Nhật** từ GitHub Releases.
+2. **Phím chức năng F1 - F15:** Tùy biến nhãn hiển thị và chuỗi lệnh UART gửi đi cho 15 phím điều khiển.
+3. **Khôi phục gốc / Lưu Cài Đặt:** Áp dụng thay đổi và lưu xuống tệp cấu hình cục bộ.

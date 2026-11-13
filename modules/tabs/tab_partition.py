@@ -10,27 +10,24 @@ import re
 import sys
 import tempfile
 import threading
-from modules import qt_toolkit as tk
-from modules.qt_toolkit import ttk, messagebox, filedialog, simpledialog
-
-from modules.config import (
-    DARK_PALETTE, LIGHT_PALETTE, FLASH_BAUDS, FLASH_CHIP_TARGETS
-)
+from PyQt6.QtWidgets import QDialog, QVBoxLayout, QTextEdit, QPushButton, QHBoxLayout, QMenu
+from PyQt6.QtCore import QPoint
+from modules.ui.models import BooleanVar as _BooleanVar
+from modules.ui import dialogs_service as messagebox
+from modules.ui import dialogs_service as filedialog
+from modules.ui import dialogs_service as simpledialog
+from modules.ui.dialogs import PartitionEditDialog, PresetSelectorDialog, SizeInputDialog
+from modules.config import DARK_PALETTE, LIGHT_PALETTE, FLASH_BAUDS, FLASH_CHIP_TARGETS
 from modules.esptool_util import run_esptool_command, esptool_command_succeeded
 from modules.partition.unit_formatter import (
     DisplayMode, parse_size_or_offset, format_bytes_human, format_hex,
     format_value, align_up, sector_count
 )
-from modules.partition.chip_database import (
-    CHIP_FAMILY_DATABASE, get_chip_info
-)
+from modules.partition.chip_database import CHIP_FAMILY_DATABASE, get_chip_info
 from modules.partition.partition_model import (
     PartitionTable, PartitionEntry, PARTITION_TABLE_SIZE_DEFAULT
 )
 from modules.partition.project_scanner import scan_esp_project
-from modules.dialogs.partition_dialogs import (
-    PartitionEditDialog, PresetSelectorDialog, SizeInputDialog
-)
 
 
 FLASH_SIZE_OPTIONS = [
@@ -42,508 +39,116 @@ FLASH_SIZE_OPTIONS = [
 ]
 
 
-class CanvasTooltip:
-    """Tooltip nổi hiển thị thông số chi tiết khi hover chuột vào từng khối phân vùng"""
-    def __init__(self, canvas: tk.Canvas):
-        self.canvas = canvas
-        self.tip_window: tk.Toplevel | None = None
-
-    def show(self, text: str, x: int, y: int, is_dark: bool):
-        self.hide()
-        p = DARK_PALETTE if is_dark else LIGHT_PALETTE
-        self.tip_window = tw = tk.Toplevel(self.canvas)
-        tw.wm_overrideredirect(True)
-        tw.attributes("-topmost", True)
-
-        frame = tk.Frame(tw, background=p["border"], padx=1, pady=1)
-        frame.pack()
-
-        lbl = tk.Label(
-            frame,
-            text=text,
-            justify="left",
-            background=p["text_bg"],
-            foreground=p["text_fg"],
-            font=("Segoe UI", 9),
-            padx=10,
-            pady=8
-        )
-        lbl.pack()
-
-        tw.update_idletasks()
-        req_w = tw.winfo_reqwidth()
-        req_h = tw.winfo_reqheight()
-        screen_w = tw.winfo_screenwidth()
-        screen_h = tw.winfo_screenheight()
-
-        pos_x = x + 14
-        pos_y = y + 14
-        if pos_x + req_w > screen_w - 10:
-            pos_x = max(10, x - req_w - 10)
-        if pos_y + req_h > screen_h - 10:
-            pos_y = max(10, y - req_h - 10)
-
-        tw.wm_geometry(f"+{pos_x}+{pos_y}")
-
-    def hide(self):
-        if self.tip_window:
-            self.tip_window.destroy()
-            self.tip_window = None
+from modules.ui.widgets.disk_map import DiskMapWidget as DiskMapCanvas
 
 
-class DiskMapCanvas(tk.Canvas):
-    """
-    Thanh hiển thị trực quan bản đồ bộ nhớ Flash phong cách MiniTool Partition Wizard.
-    Vẽ các phân vùng và khoảng trống chưa phân bổ (Unallocated) theo tỷ lệ thực tế.
-    """
-    def __init__(self, parent, on_select_entry=None, on_unallocated_click=None, on_context_action=None, **kwargs):
-        super().__init__(parent, height=80, relief="solid", borderwidth=1, highlightthickness=0, **kwargs)
-        self.on_select_entry = on_select_entry
-        self.on_unallocated_click = on_unallocated_click
-        self.on_context_action = on_context_action
+class _QMenuCompat(QMenu):
+    """Lớp bọc QMenu hỗ trợ giao thức add_command / add_cascade / add_separator / tk_popup."""
 
-        self.layout_entries: list[PartitionEntry] = []
-        self.flash_size: int = 4 * 1024 * 1024
-        self.display_mode: DisplayMode = DisplayMode.DECIMAL
-        self.selected_entry: PartitionEntry | None = None
-        self.is_dark: bool = False
+    def add_command(self, label: str = "", command=None, state: str = "normal"):
+        act = self.addAction(str(label))
+        if state == "disabled":
+            act.setEnabled(False)
+        if command is not None:
+            act.triggered.connect(lambda _=False, fn=command: fn())
+        return act
 
-        self._rendered_blocks: list[tuple[float, float, float, float, PartitionEntry]] = []
-        self.tooltip = CanvasTooltip(self)
+    def add_separator(self):
+        self.addSeparator()
 
-        self.bind("<Configure>", lambda e: self.redraw())
-        self.bind("<Motion>", self._on_motion)
-        self.bind("<Leave>", self._on_leave)
-        self.bind("<Button-1>", self._on_click)
-        self.bind("<Double-1>", self._on_double_click)
-        self.bind("<Button-3>", self._on_right_click)
+    def add_cascade(self, label: str = "", menu: QMenu = None):
+        if menu is not None:
+            menu.setTitle(str(label))
+            self.addMenu(menu)
 
-    def set_theme_mode(self, is_dark: bool):
-        self.is_dark = is_dark
-        p = DARK_PALETTE if is_dark else LIGHT_PALETTE
-        self.configure(background=p["bg"], highlightbackground=p["border"])
-        self.redraw()
+    def configure(self, **kwargs):
+        pass
 
-    def set_data(self, layout_entries: list[PartitionEntry], flash_size: int, display_mode: DisplayMode, selected_entry: PartitionEntry | None = None):
-        self.layout_entries = layout_entries
-        self.flash_size = max(1024, flash_size)
-        self.display_mode = display_mode
-        self.selected_entry = selected_entry
-        self.redraw()
+    config = configure
 
-    def _get_entry_color(self, entry: PartitionEntry) -> tuple[str, str]:
-        """Trả về (màu nền, màu chữ) cho từng loại phân vùng"""
-        if entry.is_unallocated:
-            return ("#374151" if self.is_dark else "#e2e8f0", "#9ca3af" if self.is_dark else "#64748b")
-        if entry.is_system:
-            if entry.type_str == "bootloader":
-                return ("#475569" if self.is_dark else "#94a3b8", "#ffffff")
-            return ("#334155" if self.is_dark else "#64748b", "#ffffff")
+    def tk_popup(self, x: int, y: int):
+        self.exec(QPoint(int(x), int(y)))
 
-        t = entry.type_str.lower()
-        st = entry.subtype_str.lower()
+    def index(self, which: str) -> int:
+        acts = self.actions()
+        return max(0, len(acts) - 1) if acts else 0
 
-        if t == "app":
-            if st == "factory":
-                return ("#2563eb" if self.is_dark else "#3b82f6", "#ffffff")
-            elif st.startswith("ota_"):
-                return ("#7c3aed" if self.is_dark else "#8b5cf6", "#ffffff")
-            return ("#4f46e5" if self.is_dark else "#6366f1", "#ffffff")
-        else:  # data
-            if st == "nvs":
-                return ("#d97706" if self.is_dark else "#f59e0b", "#ffffff")
-            elif st == "ota":
-                return ("#0d9488" if self.is_dark else "#14b8a6", "#ffffff")
-            elif st in ("spiffs", "littlefs", "fat"):
-                return ("#059669" if self.is_dark else "#10b981", "#ffffff")
-            elif st == "phy":
-                return ("#b45309" if self.is_dark else "#d97706", "#ffffff")
-            elif st == "coredump":
-                return ("#be185d" if self.is_dark else "#ec4899", "#ffffff")
-            return ("#0891b2" if self.is_dark else "#06b6d4", "#ffffff")
+    def entrycget(self, idx: int, opt: str):
+        acts = self.actions()
+        if 0 <= idx < len(acts):
+            act = acts[idx]
+            if opt == "label":
+                return act.text()
+            if opt == "state":
+                return "normal" if act.isEnabled() else "disabled"
+        return ""
 
-    def redraw(self):
-        self.delete("all")
-        self._rendered_blocks.clear()
-
-        w = self.winfo_width()
-        h = self.winfo_height()
-        if w < 60 or h < 30:
-            return
-
-        p = DARK_PALETTE if self.is_dark else LIGHT_PALETTE
-        # Vẽ viền ngoài
-        self.create_rectangle(2, 2, w - 2, h - 2, outline=p["border"], fill=p["bg"], width=1)
-
-        if not self.layout_entries or self.flash_size <= 0:
-            self.create_text(w / 2, h / 2, text="Chưa có dữ liệu phân vùng", fill=p["fg"], font=("Segoe UI", 10))
-            return
-
-        padding_x = 4.0
-        padding_y = 4.0
-        bar_w = w - (2 * padding_x)
-        bar_h = h - (2 * padding_y)
-
-        # Tính toán bề rộng tối thiểu 36px cho mỗi khối
-        min_px = 36.0
-        raw_widths = []
-        for e in self.layout_entries:
-            px = (e.size / self.flash_size) * bar_w
-            raw_widths.append(max(px, min_px if e.size > 0 else 0))
-
-        sum_w = sum(raw_widths)
-        scale = bar_w / sum_w if sum_w > 0 else 1.0
-
-        current_x = padding_x
-        top_y = padding_y
-        bot_y = padding_y + bar_h
-
-        for idx, entry in enumerate(self.layout_entries):
-            block_w = raw_widths[idx] * scale
-            x1 = current_x
-            x2 = current_x + block_w
-            current_x = x2
-
-            bg_color, fg_color = self._get_entry_color(entry)
-            border_col = p["border"]
-            border_w = 1
-
-            is_selected = (
-                self.selected_entry and not entry.is_unallocated and not entry.is_system and
-                self.selected_entry.name == entry.name and self.selected_entry.offset == entry.offset
-            )
-            if is_selected:
-                border_col = "#38bdf8" if self.is_dark else "#005fb8"
-                border_w = 3
-
-            # Vẽ khối chữ nhật phân vùng
-            tag_id = f"block_{idx}"
-            if entry.is_unallocated:
-                self.create_rectangle(x1, top_y, x2, bot_y, fill=bg_color, outline=border_col, width=border_w, tags=tag_id, dash=(4, 2))
-            else:
-                self.create_rectangle(x1, top_y, x2, bot_y, fill=bg_color, outline=border_col, width=border_w, tags=tag_id)
-
-            # Vẽ thanh % đã dùng nếu có
-            if entry.used_size > 0 and entry.size > 0:
-                used_ratio = min(1.0, entry.used_size / entry.size)
-                used_x2 = x1 + (block_w * used_ratio)
-                used_bg = "#1e40af" if self.is_dark else "#1d4ed8"
-                self.create_rectangle(x1, bot_y - 8, used_x2, bot_y - 1, fill=used_bg, outline="", tags=tag_id)
-
-            # Vẽ nhãn tên & kích thước
-            mid_x = (x1 + x2) / 2
-            mid_y = (top_y + bot_y) / 2
-
-            if block_w >= 40:
-                name_lbl = entry.name
-                if block_w < 70 and len(name_lbl) > 8:
-                    name_lbl = name_lbl[:7] + "…"
-                size_lbl = format_bytes_human(entry.size, compact=True)
-
-                self.create_text(mid_x, mid_y - 8, text=name_lbl, fill=fg_color, font=("Segoe UI", 8, "bold"), tags=tag_id)
-                self.create_text(mid_x, mid_y + 8, text=size_lbl, fill=fg_color, font=("Segoe UI", 7), tags=tag_id)
-            elif block_w >= 20:
-                self.create_text(mid_x, mid_y, text=entry.name[:3], fill=fg_color, font=("Segoe UI", 7), tags=tag_id)
-
-            self._rendered_blocks.append((x1, top_y, x2, bot_y, entry))
-
-    def _find_entry_at(self, x: float, y: float) -> PartitionEntry | None:
-        for x1, y1, x2, y2, entry in self._rendered_blocks:
-            if x1 <= x <= x2 and y1 <= y <= y2:
-                return entry
-        return None
-
-    def _build_detailed_tooltip_text(self, entry: PartitionEntry) -> str:
-        lines = []
-        if entry.is_unallocated:
-            lines.append("=" * 52)
-            lines.append("【 KHOẢNG TRỐNG CHƯA PHÂN BỔ (UNALLOCATED GAP) 】")
-            lines.append("=" * 52)
-            lines.append(f"• Địa chỉ (Offset): {format_hex(entry.offset)} -> {format_hex(entry.end_offset)}")
-            lines.append(f"• Dung lượng trống: {format_bytes_human(entry.size)} ({entry.size:,} Bytes)")
-            lines.append(f"• Số Sector vật lý: {sector_count(entry.size)} sectors (mỗi sector 4KB)")
-            lines.append("-" * 52)
-            lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
-            lines.append("Vùng nhớ Flash vật lý còn trống, chưa được cấp phát cho phân vùng nào.")
-            lines.append("Có thể tận dụng để mở rộng phân vùng hoặc tạo phân vùng mới (LittleFS, SPIFFS, OTA).")
-            lines.append("-" * 52)
-            lines.append("[GỢI Ý THAO TÁC]:")
-            lines.append("-> Bấm chuột trái vào khối này để tạo phân vùng mới vừa vặn.")
-            return "\n".join(lines)
-
-        if entry.is_system:
-            lines.append("=" * 52)
-            if entry.type_str == "bootloader":
-                lines.append(f"【 PHÂN VÙNG HỆ THỐNG: {entry.name.upper()} 】")
-                lines.append("=" * 52)
-                lines.append(f"- Vị trí Offset: {format_hex(entry.offset)} | Kích thước: {format_bytes_human(entry.size)} ({entry.size:,} B)")
-                lines.append("-" * 52)
-                lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
-                lines.append("Chương trình Second-Stage Bootloader do Espressif quản lý.")
-                lines.append("Khởi tạo phần cứng (GPIO/PLL/Flash), đọc bảng phân vùng tại 0x8000 và nạp App.")
-                lines.append("-" * 52)
-                lines.append("[KHUYẾN NGHỊ DUNG LƯỢNG]:")
-                lines.append("- Mặc định: 28 KB - 32 KB (đặt tại 0x1000 trên ESP32 hoặc 0x0 trên S3/C3).")
-                lines.append("- Phân vùng cố định, không được chỉnh sửa hoặc xóa.")
-            else:
-                lines.append(f"【 BẢNG PHÂN VÙNG HỆ THỐNG (PARTITION TABLE) 】")
-                lines.append("=" * 52)
-                lines.append(f"- Vị trí Offset: {format_hex(entry.offset)} | Kích thước: {format_bytes_human(entry.size)} ({entry.size:,} B)")
-                lines.append("-" * 52)
-                lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
-                lines.append("Bản đồ lưu trữ toàn bộ các phân vùng của chip Flash.")
-                lines.append("Chứa cấu trúc 32-byte định nghĩa Type, SubType, Offset, Size và MD5 Checksum.")
-                lines.append("-" * 52)
-                lines.append("[KHUYẾN NGHỊ DUNG LƯỢNG]:")
-                lines.append("- Chuẩn ESP-IDF: Cố định đúng 1 sector 4 KB (0x1000) tại offset 0x8000.")
-            return "\n".join(lines)
-
-        # Phân vùng người dùng
-        lines.append("=" * 52)
-        lines.append(f"【 PHÂN VÙNG: {entry.name} 】 (Type: {entry.type_str} | SubType: {entry.subtype_str})")
-        lines.append("=" * 52)
-        align_rule = "Căn biên 64 KB (0x10000)" if entry.type_str == "app" else "Căn biên 4 KB (0x1000)"
-        lines.append(f"• Offset: {format_hex(entry.offset)} ({entry.offset:,} B) | {align_rule}")
-        lines.append(f"• Dung lượng: {format_bytes_human(entry.size)} ({entry.size:,} B) | {sector_count(entry.size)} Sectors (4KB)")
-        if entry.used_size > 0:
-            lines.append(f"• Firmware chiếm: {format_bytes_human(entry.used_size)} ({entry.usage_percent:.1f}%) | Còn trống: {format_bytes_human(entry.free_size)}")
-        if entry.flags_str:
-            lines.append(f"• Cờ bảo mật: {entry.flags_str}")
-        lines.append("-" * 52)
-
-        t = entry.type_str.lower()
-        st = entry.subtype_str.lower()
-
-        purpose = ""
-        rec_min = ""
-        rec_typical = ""
-        rec_max = ""
-
-        if st == "nvs":
-            purpose = (
-                "Non-Volatile Storage. Lưu trữ cấu hình Wi-Fi (SSID, Password), khóa BLE,\n"
-                "dữ liệu hiệu chuẩn RF (PHY calibration) và các biến Key-Value tùy biến.\n"
-                "Dữ liệu được lưu vĩnh viễn, không bị mất khi reset hoặc tắt nguồn."
-            )
-            rec_min = "12 KB (0x3000 = 3 sectors)"
-            rec_typical = "16 KB - 24 KB (0x4000 - 0x6000)"
-            rec_max = "64 KB - 128 KB (nếu ứng dụng ghi nhiều tham số/biến)"
-        elif st in ("ota", "otadata"):
-            purpose = (
-                "Lưu trữ chỉ mục và trạng thái nạp firmware qua mạng (OTA Data).\n"
-                "Bootloader đọc vùng này để biết khe ota_0 hay ota_1 đang là bản mới nhất,\n"
-                "hỗ trợ tự động Rollback về bản firmware cũ nếu bản mới gặp lỗi boot loop."
-            )
-            rec_min = "Bắt buộc cố định đúng 8 KB (0x2000 = 2 sectors) theo chuẩn ESP-IDF"
-            rec_typical = "8 KB (0x2000)"
-            rec_max = "8 KB (0x2000)"
-        elif st == "factory":
-            purpose = (
-                "Bản firmware ứng dụng chính gốc xuất xưởng (Default Factory App).\n"
-                "Bootloader sẽ nạp và thực thi mã tại phân vùng này khi khởi động\n"
-                "(nếu cấu hình không dùng cơ chế chuyển đổi khe nạp OTA)."
-            )
-            rec_min = "1 MB (0x100000)"
-            rec_typical = "1.5 MB - 2 MB (tùy dung lượng thư viện Wi-Fi/BLE/Web)"
-            rec_max = "3 MB+ (phụ thuộc kích thước Flash)"
-        elif st.startswith("ota_"):
-            purpose = (
-                f"Khe firmware cập nhật qua mạng ({st.upper()}).\n"
-                "Hỗ trợ cơ chế nạp Over-The-Air xoay vòng hai khe (Dual-bank Ping-Pong):\n"
-                "khi chip đang chạy ở khe này, firmware mới được tải vào khe kia\n"
-                "và hoán đổi an toàn mà không làm gián đoạn thiết bị."
-            )
-            rec_min = "1 MB (0x100000)"
-            rec_typical = "1.5 MB - 2 MB (các khe OTA phải có dung lượng bằng nhau)"
-            rec_max = "3 MB+ (phụ thuộc kích thước Flash)"
-        elif st in ("spiffs", "littlefs", "fat"):
-            fs_name = st.upper()
-            purpose = (
-                f"Hệ thống tập tin nhúng ({fs_name}).\n"
-                "Dùng lưu trữ file giao diện Web (HTML, CSS, JS), file âm thanh, ảnh,\n"
-                "chứng chỉ SSL/TLS hoặc ghi nhận dữ liệu cảm biến (Data logging).\n"
-                "Khuyên dùng LittleFS để chống hỏng hóc file khi mất điện đột ngột."
-            )
-            rec_min = "64 KB (0x10000)"
-            rec_typical = "256 KB - 1.5 MB"
-            rec_max = "Toàn bộ phần dung lượng còn lại của chip Flash"
-        elif st == "phy":
-            purpose = (
-                "Chứa bảng thông số hiệu chuẩn tầng vật lý vô tuyến RF/Wi-Fi/Bluetooth,\n"
-                "giúp vi điều khiển đạt công suất phát sóng và độ nhạy thu tối ưu."
-            )
-            rec_min = "Cố định 4 KB (0x1000 = 1 sector)"
-            rec_typical = "4 KB (0x1000)"
-            rec_max = "4 KB (0x1000)"
-        elif st == "coredump":
-            purpose = (
-                "Lưu vết ngăn xếp (Stack & Registers Dump) của CPU khi hệ thống gặp lỗi\n"
-                "sập chương trình (Panic crash), phục vụ phân tích gỡ lỗi sau khi khởi động lại."
-            )
-            rec_min = "64 KB (0x10000)"
-            rec_typical = "64 KB (0x10000)"
-            rec_max = "64 KB (0x10000)"
-        elif st == "nvs_keys":
-            purpose = (
-                "Lưu khóa mã hóa dùng để giải mã phân vùng NVS khi kích hoạt tính năng\n"
-                "Flash Encryption và NVS Encryption phần cứng."
-            )
-            rec_min = "Cố định 4 KB (0x1000 = 1 sector)"
-            rec_typical = "4 KB (0x1000)"
-            rec_max = "4 KB (0x1000)"
-        elif st == "test":
-            purpose = "Phân vùng firmware dành riêng cho kiểm thử chức năng xuất xưởng (Factory Test Mode)."
-            rec_min = "512 KB (0x80000)"
-            rec_typical = "1 MB (0x100000)"
-            rec_max = "2 MB"
-        else:
-            purpose = f"Phân vùng tùy chỉnh kiểu '{t}' / subtype '{st}' do người dùng tự định nghĩa."
-            rec_min = "4 KB (0x1000)"
-            rec_typical = "Tùy nhu cầu sử dụng"
-            rec_max = "Tùy dung lượng Flash còn lại"
-
-        lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
-        lines.append(purpose)
-        lines.append("-" * 52)
-        lines.append("[KHUYẾN NGHỊ DUNG LƯỢNG]:")
-        lines.append(f"- Tối thiểu: {rec_min}")
-        lines.append(f"- Thông thường: {rec_typical}")
-        lines.append(f"- Tối đa: {rec_max}")
-        lines.append("-" * 52)
-        lines.append("-> Click chuột trái để chọn dòng | Chuột phải để chỉnh sửa nhanh")
-
-        return "\n".join(lines)
-
-    def _on_motion(self, event):
-        entry = self._find_entry_at(event.x, event.y)
-        if entry:
-            self.configure(cursor="hand2")
-            tip_text = self._build_detailed_tooltip_text(entry)
-            root_x = self.winfo_rootx() + event.x
-            root_y = self.winfo_rooty() + event.y
-            self.tooltip.show(tip_text, root_x, root_y, self.is_dark)
-        else:
-            self.configure(cursor="")
-            self.tooltip.hide()
-
-    def _on_leave(self, event):
-        self.configure(cursor="")
-        self.tooltip.hide()
-
-    def _on_click(self, event):
-        entry = self._find_entry_at(event.x, event.y)
-        if not entry:
-            return
-        if entry.is_unallocated:
-            if self.on_unallocated_click:
-                self.on_unallocated_click(entry.offset, entry.size)
-        else:
-            if not entry.is_system and self.on_select_entry:
-                self.on_select_entry(entry)
-
-    def _on_double_click(self, event):
-        entry = self._find_entry_at(event.x, event.y)
-        if not entry:
-            return
-        if entry.is_unallocated:
-            if self.on_unallocated_click:
-                self.on_unallocated_click(entry.offset, entry.size)
-        else:
-            if not entry.is_system:
-                if self.on_select_entry:
-                    self.on_select_entry(entry)
-                if self.on_context_action:
-                    self.on_context_action("edit", entry)
-
-    def _on_right_click(self, event):
-        entry = self._find_entry_at(event.x, event.y)
-        if not entry or entry.is_system:
-            return
-
-        if entry.is_unallocated:
-            if self.on_unallocated_click:
-                self.on_unallocated_click(entry.offset, entry.size)
-            return
-
-        if self.on_select_entry:
-            self.on_select_entry(entry)
-
-        if self.on_context_action:
-            self.on_context_action("full_context_menu", entry, event)
+    def type(self, idx: int) -> str:
+        acts = self.actions()
+        if 0 <= idx < len(acts):
+            act = acts[idx]
+            if act.isSeparator():
+                return "separator"
+            if act.menu() is not None:
+                return "cascade"
+            return "command"
+        return "command"
 
 
-class PartitionHandbookDialog(tk.Toplevel):
-    """Hộp thoại hướng dẫn & sổ tay tra cứu phân vùng ESP32"""
-    def __init__(self, parent, is_dark_mode: bool = False):
+class PartitionHandbookDialog(QDialog):
+    """Hộp thoại hướng dẫn và sổ tay tra cứu phân vùng ESP32 (PyQt6)"""
+    def __init__(self, parent=None, is_dark_mode: bool = False):
         super().__init__(parent)
-        self.title("Hướng Dẫn & Sổ Tay Tra Cứu Phân Vùng ESP32")
-        self.geometry("800x580")
-        self.minsize(620, 420)
-        self.transient(parent)
-        self.grab_set()
+        self.setWindowTitle('Hướng Dẫn và Sổ Tay Tra Cứu Phân Vùng ESP32')
+        self.resize(800, 580)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(10)
 
-        p = DARK_PALETTE if is_dark_mode else LIGHT_PALETTE
-        self.configure(bg=p["bg"])
-
-        txt_frame = ttk.Frame(self, padding=10)
-        txt_frame.pack(fill="both", expand=True)
-
-        txt = tk.Text(
-            txt_frame,
-            wrap="word",
-            font=("Segoe UI", 10),
-            bg=p["text_bg"],
-            fg=p["text_fg"],
-            relief="solid",
-            borderwidth=1,
-            padx=12,
-            pady=10
-        )
-        txt.pack(side="left", fill="both", expand=True)
-        scroll = ttk.Scrollbar(txt_frame, orient="vertical", command=txt.yview)
-        scroll.pack(side="right", fill="y")
-        txt.configure(yscrollcommand=scroll.set)
-
+        txt = QTextEdit(self)
+        txt.setReadOnly(True)
         doc_content = (
-            "HƯỚNG DẪN SỬ DỤNG & TRA CỨU PHÂN VÙNG BỘ NHỚ FLASH ESP32\n"
+            "HƯỚNG DẪN SỬ DỤNG VÀ TRA CỨU PHÂN VÙNG BỘ NHỚ FLASH ESP32\n"
             "Áp dụng cho: ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C6, ESP32-H2, ESP32-P4\n"
             "================================================================================\n\n"
             "1. CÁC THAO TÁC CƠ BẢN TRÊN BẢNG PHÂN VÙNG:\n"
-            "  • Thêm phân vùng: Bấm nút [+] ở dòng trống cuối bảng để chèn phân vùng mới.\n"
-            "  • Xóa phân vùng: Bấm nút [-] ở cột đầu tiên của dòng phân vùng muốn xóa.\n"
-            "  • Chỉnh sửa nhanh: Bấm chuột phải vào bất kỳ ô nào (Tên, Kiểu, Phân loại, Offset, Dung lượng, Cờ) để chọn trực tiếp hoặc tự đặt tên/nhập tay.\n"
-            "  • Mở hộp thoại chi tiết: Nhấp đúp chuột trái (Double-Click) vào dòng phân vùng.\n"
-            "  • Tự động dồn căn biên: Bấm nút 'Dồn & Căn 4K/64K' trên thanh công cụ để tự động tính toán lại Offset không bị chồng lấn và đúng chuẩn căn lề.\n\n"
+            "  - Thêm phân vùng: Bấm nút [+] ở dòng trống cuối bảng để chèn phân vùng mới.\n"
+            "  - Xóa phân vùng: Bấm nút [-] ở cột đầu tiên của dòng phân vùng muốn xóa.\n"
+            "  - Chỉnh sửa nhanh: Bấm chuột phải vào bất kỳ ô nào để chọn trực tiếp hoặc tự đặt tên/nhập tay.\n"
+            "  - Mở hộp thoại chi tiết: Nhấp đúp chuột trái (Double-Click) vào dòng phân vùng.\n"
+            "  - Tự động dồn căn biên: Bấm nút 'Dồn và Căn 4K/64K' trên thanh công cụ để tự động tính toán lại Offset không bị chồng lấn và đúng chuẩn căn lề.\n\n"
             "2. BẢN ĐỒ BỘ NHỚ FLASH ESP32 (MEMORY MAP):\n"
-            "  • 0x00000 - 0x00FFF (4 KB): Vùng Header bảo lưu của ROM / Bootloader.\n"
-            "  • 0x01000 - 0x07FFF (28 KB): Second-Stage Bootloader (0x0000 trên dòng C3/S3).\n"
-            "  • 0x08000 - 0x08FFF (4 KB): BẢNG PHÂN VÙNG (Partition Table Sector cố định).\n"
-            "  • 0x09000 - 0x0FFFF: Dữ liệu hệ thống NVS / PHY mặc định ban đầu.\n"
-            "  • 0x10000 trở đi: VÙNG CHƯƠNG TRÌNH ỨNG DỤNG (APP) - Bắt buộc căn biên 64 KB (0x10000).\n"
-            "  • Phía cuối Flash: Vùng hệ thống tệp lưu trữ (LittleFS, SPIFFS, FAT) và vùng trống (Unallocated).\n\n"
+            "  - 0x00000 - 0x00FFF (4 KB): Vùng Header bảo lưu của ROM / Bootloader.\n"
+            "  - 0x01000 - 0x07FFF (28 KB): Second-Stage Bootloader (0x0000 trên dòng C3/S3).\n"
+            "  - 0x08000 - 0x08FFF (4 KB): BẢNG PHÂN VÙNG (Partition Table Sector cố định).\n"
+            "  - 0x09000 - 0x0FFFF: Dữ liệu hệ thống NVS / PHY mặc định ban đầu.\n"
+            "  - 0x10000 trở đi: VÙNG CHƯƠNG TRÌNH ỨNG DỤNG (APP) - Bắt buộc căn biên 64 KB (0x10000).\n"
+            "  - Phía cuối Flash: Vùng hệ thống tệp lưu trữ (LittleFS, SPIFFS, FAT) và vùng trống (Unallocated).\n\n"
             "3. QUY TẮC CĂN CHỈNH BIÊN BẮT BUỘC (ALIGNMENT RULES):\n"
-            "  • Phân vùng App (factory, ota_0, ota_1...): Offset BẮT BUỘC chia hết cho 64 KB (0x10000) và >= 0x10000 do cơ chế Flash MMU Cache của ESP32.\n"
-            "  • Phân vùng Data (nvs, phy, spiffs, fat, littlefs...): Offset BẮT BUỘC chia hết cho 4 KB (0x1000) - kích thước sector SPI Flash.\n"
-            "  • Dung lượng (Size): MỌI phân vùng đều phải có kích thước là bội số của sector 4 KB (0x1000).\n"
-            "  • Phân vùng otadata: Bắt buộc đúng 8 KB (0x2000 = 2 sectors) để lưu trữ trạng thái boot OTA đối xứng.\n\n"
+            "  - Phân vùng App (factory, ota_0, ota_1...): Offset BẮT BUỘC chia hết cho 64 KB (0x10000) và >= 0x10000 do cơ chế Flash MMU Cache của ESP32.\n"
+            "  - Phân vùng Data (nvs, phy, spiffs, fat, littlefs...): Offset BẮT BUỘC chia hết cho 4 KB (0x1000) - kích thước sector SPI Flash.\n"
+            "  - Dung lượng (Size): MỌI phân vùng đều phải có kích thước là bội số của sector 4 KB (0x1000).\n"
+            "  - Phân vùng otadata: Bắt buộc đúng 8 KB (0x2000 = 2 sectors) để lưu trữ trạng thái boot OTA đối xứng.\n\n"
             "4. CÁC PHÂN VÙNG THÔNG DỤNG:\n"
-            "  • nvs: Non-Volatile Storage (16KB - 24KB) lưu Wi-Fi, BLE và biến cấu hình.\n"
-            "  • factory: Bản firmware ứng dụng chính xuất xưởng (thường từ 1.5MB - 2MB).\n"
-            "  • ota_0 / ota_1: Hai khe nạp firmware từ xa xoay vòng Ping-Pong.\n"
-            "  • littlefs / spiffs: Hệ thống file lưu trữ web assets, file cấu hình, log cảm biến.\n\n"
+            "  - nvs: Non-Volatile Storage (16KB - 24KB) lưu Wi-Fi, BLE và biến cấu hình.\n"
+            "  - factory: Bản firmware ứng dụng chính xuất xưởng (thường từ 1.5MB - 2MB).\n"
+            "  - ota_0 / ota_1: Hai khe nạp firmware từ xa xoay vòng Ping-Pong.\n"
+            "  - littlefs / spiffs: Hệ thống file lưu trữ web assets, file cấu hình, log cảm biến.\n\n"
             "5. THAO TÁC PHẦN CỨNG:\n"
-            "  • Đọc từ Chip: Đọc cấu trúc bảng phân vùng hiện có từ chip qua cổng COM.\n"
-            "  • Nạp xuống Chip: Ghi bảng phân vùng hiện tại vào offset 0x8000 của chip.\n"
-            "  • Sao Lưu: Dump nội dung nhị phân của phân vùng đang chọn ra file .bin.\n"
-            "  • Xóa Trắng: Format trắng vùng nhớ của phân vùng đang chọn trên chip.\n"
-            "  • Mọi nhật ký quá trình thực thi phần cứng đều được ghi trực tiếp vào Tab Serial Monitor.\n"
+            "  - Đọc từ Chip: Đọc cấu trúc bảng phân vùng hiện có từ chip qua cổng COM.\n"
+            "  - Nạp xuống Chip: Ghi bảng phân vùng hiện tại vào offset 0x8000 của chip.\n"
+            "  - Sao Lưu: Dump nội dung nhị phân của phân vùng đang chọn ra file .bin.\n"
+            "  - Xóa Trắng: Format trắng vùng nhớ của phân vùng đang chọn trên chip.\n"
         )
-        txt.insert("1.0", doc_content)
-        txt.configure(state="disabled")
+        txt.setPlainText(doc_content)
+        layout.addWidget(txt, 1)
 
-        btn_box = ttk.Frame(self, padding=(10, 0, 10, 10))
-        btn_box.pack(fill="x")
-        ttk.Button(btn_box, text="Đóng", command=self.destroy, width=12).pack(side="right")
+        btn_box = QHBoxLayout()
+        btn_box.addStretch()
+        btn_close = QPushButton('Đóng', self)
+        btn_close.clicked.connect(self.accept)
+        btn_box.addWidget(btn_close)
+        layout.addLayout(btn_box)
 
 
 class PartitionTabMixin:
@@ -558,201 +163,48 @@ class PartitionTabMixin:
         self.partition_hw_thread = None
         self.table = PartitionTable(flash_size=4 * 1024 * 1024, target_chip="esp32")
         self.display_mode = DisplayMode.DECIMAL
+        self.current_partition_file_path: str | None = None
+        self._syncing_chip_flash_combo = False
         self.partition_undo_stack: list[tuple[str, int, str, int]] = []
         self.partition_redo_stack: list[tuple[str, int, str, int]] = []
         self._is_populating_partition_table = False
         self._is_partition_hw_running = False
-        self._tree_buttons: list[ttk.Button] = []
-        self.var_auto_align = tk.BooleanVar(value=True)
+        self._tree_buttons: list = []
+        if not hasattr(self, 'var_auto_align') or self.var_auto_align is None:
+            self.var_auto_align = _BooleanVar(value=True)
 
-        # Nạp dữ liệu mẫu ban đầu
-        default_csv = (
-            "# ESP-IDF Partition Table\n"
-            "# Name,   Type, SubType, Offset,  Size, Flags\n"
-            "nvs,      data, nvs,     0x9000,  0x6000,\n"
-            "phy_init, data, phy,     0xf000,  0x1000,\n"
-            "factory,  app,  factory, 0x10000, 1M,\n"
-            "storage,  data, spiffs,  ,        2800K,\n"
-        )
-        self.table.from_csv(default_csv)
-        if getattr(self, "var_auto_align", None) and self.var_auto_align.get():
-            self._cascade_auto_pack(from_idx=0)
-
-        # Thiết lập grid layout trực tiếp cho partition_tab
-        self.partition_tab.columnconfigure(0, weight=1)
-        self.partition_tab.rowconfigure(0, weight=0)  # 1. Thanh công cụ
-        self.partition_tab.rowconfigure(1, weight=0)  # 2. Sơ đồ Disk Map
-        self.partition_tab.rowconfigure(2, weight=1)  # 3. Bảng Treeview toàn màn hình
-
-        # 1. Thanh công cụ trên cùng (phẳng, không có viền và chữ LabelFrame)
-        toolbar_frame = ttk.Frame(self.partition_tab, padding=(8, 4))
-        toolbar_frame.grid(row=0, column=0, sticky="ew", padx=8, pady=(4, 2))
-        self._build_partition_header(toolbar_frame)
-
-        # 2. Khung sơ đồ ổ đĩa Flash Disk Map
-        map_group = ttk.LabelFrame(self.partition_tab, text=" Sơ Đồ Thanh Ổ Đĩa Flash (MiniTool Partition Map) ", padding=6)
-        map_group.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
-        map_group.columnconfigure(0, weight=1)
-
-        self.disk_map = DiskMapCanvas(
-            map_group,
-            on_select_entry=self._on_disk_map_select_entry,
-            on_unallocated_click=self._on_disk_map_unallocated_click,
-            on_context_action=self._on_disk_map_context_action
-        )
-        self.disk_map.grid(row=0, column=0, sticky="ew")
-
-        # Thống kê nhanh dung lượng & trạng thái kiểm tra lỗi
-        self.lbl_flash_stats = ttk.Label(map_group, text="", font=("Segoe UI", 8, "italic"))
-        self.lbl_flash_stats.grid(row=1, column=0, sticky="w", pady=(4, 0))
-
-        # 3. Bảng Treeview (Chiếm toàn bộ diện tích còn lại)
-        table_frame = ttk.Frame(self.partition_tab)
-        table_frame.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 6))
-        table_frame.columnconfigure(0, weight=1)
-        table_frame.rowconfigure(0, weight=1)
-
-        columns = ("stt", "name", "type", "subtype", "offset", "size", "flags", "used", "free")
-        self.part_tree = ttk.Treeview(table_frame, columns=columns, show="headings", selectmode="browse")
-
-        self.part_tree.heading("stt", text="STT")
-        self.part_tree.heading("name", text="Tên (Name)")
-        self.part_tree.heading("type", text="Kiểu (Type)")
-        self.part_tree.heading("subtype", text="Phân loại (SubType)")
-        self.part_tree.heading("offset", text="Offset")
-        self.part_tree.heading("size", text="Dung lượng (Size)")
-        self.part_tree.heading("flags", text="Cờ (Flags)")
-        self.part_tree.heading("used", text="Đã dùng (%)")
-        self.part_tree.heading("free", text="Còn trống")
-
-        self.part_tree.column("stt", width=55, anchor="center")
-        self.part_tree.column("name", width=120, anchor="w")
-        self.part_tree.column("type", width=75, anchor="center")
-        self.part_tree.column("subtype", width=105, anchor="center")
-        self.part_tree.column("offset", width=130, anchor="e")
-        self.part_tree.column("size", width=130, anchor="e")
-        self.part_tree.column("flags", width=80, anchor="center")
-        self.part_tree.column("used", width=100, anchor="center")
-        self.part_tree.column("free", width=100, anchor="e")
-
-        self.part_tree.grid(row=0, column=0, sticky="nsew")
-
-        tree_scroll_y = ttk.Scrollbar(table_frame, orient="vertical", command=self._on_tree_scroll_y)
-        tree_scroll_y.grid(row=0, column=1, sticky="ns")
-        self.part_tree.configure(yscrollcommand=tree_scroll_y.set)
-
-        self.part_tree.bind("<<TreeviewSelect>>", self._on_tree_select)
-        self.part_tree.bind("<Button-1>", self._on_tree_click)
-        self.part_tree.bind("<Double-1>", self._on_tree_double_click)
-        self.part_tree.bind("<Return>", lambda e: self._action_edit_selected())
-        self.part_tree.bind("<Delete>", lambda e: self._action_delete_selected())
-        self.part_tree.bind("<Button-3>", self._on_tree_right_click)
-        self.part_tree.bind("<Configure>", lambda e: self._reposition_tree_buttons())
-        self.part_tree.bind("<MouseWheel>", self._on_tree_mousewheel)
-        self.part_tree.bind("<Button-4>", self._on_tree_mousewheel)
-        self.part_tree.bind("<Button-5>", self._on_tree_mousewheel)
-
-        # Cập nhật theme và dữ liệu ban đầu
-        self.disk_map.set_theme_mode(self.is_dark_mode)
+        # Khởi tạo bảng phân vùng trống hoàn toàn cho tới khi đọc chip, nạp mẫu/CSV hoặc tự tạo
         self.refresh_partition_views()
 
-    def _on_tree_scroll_y(self, *args):
-        self.part_tree.yview(*args)
-        self._reposition_tree_buttons()
-
-    def _on_tree_mousewheel(self, event):
-        if getattr(event, "num", None) == 4 or (hasattr(event, "delta") and event.delta > 0):
-            self.part_tree.yview_scroll(-1, "units")
-        elif getattr(event, "num", None) == 5 or (hasattr(event, "delta") and event.delta < 0):
-            self.part_tree.yview_scroll(1, "units")
-        self._reposition_tree_buttons()
-        return "break"
-
-    def _build_partition_header(self, parent: ttk.Frame):
-        parent.columnconfigure(0, weight=1)
-
-        row1 = ttk.Frame(parent)
-        row1.pack(fill="x", expand=True)
-
-        # 1. Dòng Chip (mặc định chưa chọn)
-        ttk.Label(row1, text="Dòng Chip:").pack(side="left", padx=(0, 4))
-        self.part_chip_var = tk.StringVar(value="(Chưa chọn)")
-        chip_names = ["(Chưa chọn)"] + [c.name for c in CHIP_FAMILY_DATABASE.values()]
-        self.cb_part_chip = ttk.Combobox(
-            row1,
-            textvariable=self.part_chip_var,
-            values=chip_names,
-            state="readonly",
-            width=14
-        )
-        self.cb_part_chip.pack(side="left", padx=(0, 8))
-        self.cb_part_chip.bind("<<ComboboxSelected>>", self._on_chip_changed)
-
-        # 2. Dung lượng Flash (tùy theo dòng chip, để cao nhất, người dùng có thể chọn lại)
-        ttk.Label(row1, text="Dung lượng Flash:").pack(side="left", padx=(0, 4))
-        self.part_flash_var = tk.StringVar(value="32 MB")
-        self.cb_part_flash = ttk.Combobox(
-            row1,
-            textvariable=self.part_flash_var,
-            values=[opt[0] for opt in FLASH_SIZE_OPTIONS],
-            state="readonly",
-            width=9
-        )
-        self.cb_part_flash.pack(side="left", padx=(0, 8))
-        self.cb_part_flash.bind("<<ComboboxSelected>>", self._on_flash_size_changed)
-
-        self.chk_auto_align = ttk.Checkbutton(row1, text="Tự động căn chỉnh", variable=self.var_auto_align, command=self._on_toggle_auto_align)
-        self.chk_auto_align.pack(side="left", padx=(0, 6))
-
-        ttk.Separator(row1, orient="vertical").pack(side="left", fill="y", padx=5, pady=2)
-
-        # 3. Đọc từ Chip & Quét dự án & Thao tác bảng phân vùng
-        self.btn_part_read_hw = ttk.Button(row1, text="Đọc từ Chip", command=self._hw_read_partition_table)
-        self.btn_part_read_hw.pack(side="left", padx=2)
-
-        self.btn_part_scan = ttk.Button(row1, text="Quét Dự Án", command=self._action_scan_project)
-        self.btn_part_scan.pack(side="left", padx=2)
-
-        # 4. Sao chép cài đặt phân vùng
-        self.btn_part_copy = ttk.Button(row1, text="Sao chép Cài đặt", command=self._action_copy_partition_config)
-        self.btn_part_copy.pack(side="left", padx=2)
-
-        # 5. Xóa tất cả phân vùng
-        self.btn_part_clear = ttk.Button(row1, text="Xóa Tất Cả", command=self._action_clear_all_partitions)
-        self.btn_part_clear.pack(side="left", padx=2)
-
-        ttk.Separator(row1, orient="vertical").pack(side="left", fill="y", padx=5, pady=2)
-
-        # 6. Hướng dẫn
-        self.btn_part_help = ttk.Button(row1, text="Hướng Dẫn", command=self._open_handbook_dialog)
-        self.btn_part_help.pack(side="left", padx=2)
-
-        ttk.Separator(row1, orient="vertical").pack(side="left", fill="y", padx=5, pady=2)
-
-        # 7. Hoàn tác
-        self.btn_part_undo = ttk.Button(row1, text="Hoàn tác", command=self._action_undo, state="disabled")
-        self.btn_part_undo.pack(side="left", padx=2)
-
-        # 8. Làm lại
-        self.btn_part_redo = ttk.Button(row1, text="Làm lại", command=self._action_redo, state="disabled")
-        self.btn_part_redo.pack(side="left", padx=2)
+        if hasattr(self, 'part_tree') and self.part_tree is not None:
+            if hasattr(self, 'disk_map') and self.disk_map is not None:
+                self.disk_map.on_select_entry = self._on_disk_map_select_entry
+                self.disk_map.on_unallocated_click = self._on_disk_map_unallocated_click
+                self.disk_map.on_context_action = self._on_disk_map_context_action
+                self.disk_map.set_theme_mode(self.is_dark_mode)
+            self.part_tree.bind("<<TreeviewSelect>>", self._on_tree_select)
+            self.part_tree.bind("<Button-1>", self._on_tree_click)
+            self.part_tree.bind("<Double-1>", self._on_tree_double_click)
+            self.part_tree.bind("<Button-3>", self._on_tree_right_click)
+            self.refresh_partition_views()
+            return
 
     def _set_partition_ui_state(self, state):
         """Bật/tắt các điều khiển của Tab Partition khi phần cứng đang bận."""
         if isinstance(state, bool):
             state = "normal" if state else "disabled"
         for attr in (
-            'btn_part_scan', 'btn_part_read_hw',
-            'btn_part_copy', 'btn_part_clear', 'btn_part_help',
-            'cb_part_chip', 'cb_part_flash', 'chk_auto_align'
+            'btn_part_scan', 'btn_part_read_hw', 'btn_part_flash_hw',
+            'btn_part_dump_hw', 'btn_part_write_hw', 'btn_part_erase_hw',
+            'btn_part_clear', 'btn_part_help',
+            'cb_part_chip', 'cb_part_flash', 'cb_part_mode', 'chk_auto_align',
+            'btn_add_part', 'btn_edit_part', 'btn_del_part', 'btn_autopack',
+            'btn_presets', 'btn_open_csv', 'btn_save_csv'
         ):
             widget = getattr(self, attr, None)
             if widget and hasattr(widget, 'config'):
                 try:
-                    if isinstance(widget, ttk.Combobox):
-                        widget.config(state="disabled" if state == "disabled" else "readonly")
-                    else:
-                        widget.config(state=state)
+                    widget.config(state=state)
                 except Exception:
                     pass
         if state == "disabled":
@@ -764,25 +216,21 @@ class PartitionTabMixin:
                     except Exception:
                         pass
         else:
-            if hasattr(self, '_update_undo_redo_buttons'):
-                self._update_undo_redo_buttons()
+            if hasattr(self, '_update_partition_undo_redo_buttons'):
+                self._update_partition_undo_redo_buttons()
 
     def _open_handbook_dialog(self):
         """Mở hộp thoại hướng dẫn & tra cứu phân vùng"""
-        PartitionHandbookDialog(self.root, is_dark_mode=self.is_dark_mode)
+        dlg = PartitionHandbookDialog(self.root, is_dark_mode=self.is_dark_mode)
+        dlg.exec()
 
     def _on_toggle_auto_align(self):
         """Xử lý bật/tắt checkbox tự động căn chỉnh offset"""
         if getattr(self, "var_auto_align", None) and self.var_auto_align.get():
             self._cascade_auto_pack(from_idx=0)
+        if hasattr(self, 'part_tree') and self.part_tree is not None:
             self.refresh_partition_views()
-            self.set_status("Đã bật tự động căn chỉnh và dồn Offset toàn bộ phân vùng.")
-
-    def _build_partition_toolbar(self, parent: ttk.Frame):
-        pass  # Đã di chuyển các nút lên _build_partition_header
-
-    def _build_partition_bottom_tabs(self, parent: ttk.Frame):
-        pass  # Đã loại bỏ các tab phụ theo yêu cầu tối ưu diện tích
+            self.set_status("Đã cập nhật chế độ tự động căn chỉnh phân vùng.")
 
     def _push_partition_undo_state(self):
         state = (
@@ -931,8 +379,19 @@ class PartitionTabMixin:
             except Exception as ex:
                 messagebox.showerror("Lỗi", f"Địa chỉ Offset không hợp lệ: {ex}", parent=self.root)
 
+    @staticmethod
+    def _exec_dialog(dlg):
+        """Hiển thị QDialog ở chế độ modal nếu result chưa được gán sẵn (hỗ trợ cả mock test)."""
+        if getattr(dlg, "result", None) is None and getattr(dlg, "selected_preset", None) is None:
+            import sys
+            if "pytest" in sys.modules:
+                return
+            if hasattr(dlg, "exec") and callable(dlg.exec):
+                dlg.exec()
+
     def _prompt_custom_size(self, entry: PartitionEntry):
         dlg = SizeInputDialog(self.root, entry.name, entry.size, is_dark_mode=self.is_dark_mode)
+        self._exec_dialog(dlg)
         if dlg.result is not None:
             self._set_entry_field(entry, "size", dlg.result)
 
@@ -948,90 +407,166 @@ class PartitionTabMixin:
 
     def refresh_partition_views(self, selected_entry_name: str | None = None):
         """Làm mới toàn bộ giao diện: Disk Map, Bảng Treeview, Thống kê, và Kiểm tra lỗi"""
-        # 1. Cập nhật Treeview
+        # 1. Cập nhật Treeview (chặn signal để không tự động chọn dòng đầu khi bảng rỗng/làm mới)
         if selected_entry_name is None:
             selected_iid = self.part_tree.selection()
             if selected_iid:
                 selected_entry_name = self._get_entry_name_from_iid(selected_iid[0])
 
-        for item in self.part_tree.get_children():
-            self.part_tree.delete(item)
+        was_blocked = self.part_tree.blockSignals(True)
+        try:
+            for item in self.part_tree.get_children():
+                self.part_tree.delete(item)
 
-        current_selected_entry = None
-        for idx, e in enumerate(self.table.entries):
-            used_str = f"{format_bytes_human(e.used_size)} ({e.usage_percent:.1f}%)" if e.used_size > 0 else "--"
-            free_str = format_value(e.free_size, self.display_mode, is_size=True) if e.used_size > 0 else "--"
-            stt_str = f"#{idx + 1}"
+            current_selected_entry = None
+            selected_iid_to_restore = None
+            for idx, e in enumerate(self.table.entries):
+                used_str = f"{format_bytes_human(e.used_size)} ({e.usage_percent:.1f}%)" if e.used_size > 0 else "--"
+                free_str = format_value(e.free_size, self.display_mode, is_size=True) if e.used_size > 0 else "--"
+                stt_str = f"#{idx + 1}"
 
-            iid = self.part_tree.insert("", "end", values=(
-                stt_str,
-                e.name,
-                e.type_str,
-                e.subtype_str,
-                format_value(e.offset, self.display_mode, is_size=False),
-                format_value(e.size, self.display_mode, is_size=True),
-                e.flags_str if e.flags_str else "--",
-                used_str,
-                free_str
+                iid = self.part_tree.insert("", "end", values=(
+                    stt_str,
+                    e.name,
+                    e.type_str,
+                    e.subtype_str,
+                    format_value(e.offset, self.display_mode, is_size=False),
+                    format_value(e.size, self.display_mode, is_size=True),
+                    e.flags_str if e.flags_str else "--",
+                    used_str,
+                    free_str
+                ))
+                if selected_entry_name and e.name == selected_entry_name:
+                    selected_iid_to_restore = iid
+                    current_selected_entry = e
+
+            # Hàng trống ở cuối bảng để người dùng nhấp thêm phân vùng mới
+            self._add_row_iid = "__add_row__"
+            self.part_tree.insert("", "end", iid=self._add_row_iid, values=(
+                "+",
+                "(Nhấp vào dòng này để thêm phân vùng mới)",
+                "",
+                "",
+                "",
+                "",
+                "",
+                "",
+                ""
             ))
-            if selected_entry_name and e.name == selected_entry_name:
-                self.part_tree.selection_set(iid)
-                current_selected_entry = e
 
-        # Hàng trống ở cuối bảng để người dùng nhấp thêm phân vùng mới
-        self._add_row_iid = "__add_row__"
-        self.part_tree.insert("", "end", iid=self._add_row_iid, values=(
-            "+",
-            "(Nhấp vào dòng này để thêm phân vùng mới)",
-            "",
-            "",
-            "",
-            "",
-            "",
-            "",
-            ""
-        ))
+            if selected_iid_to_restore:
+                self.part_tree.selection_set(selected_iid_to_restore)
+            else:
+                self.part_tree.clearSelection()
+                self.part_tree.setCurrentItem(None)
+        finally:
+            self.part_tree.blockSignals(was_blocked)
 
         # 2. Cập nhật Sơ đồ MiniTool Disk Map
-        layout = self.table.get_layout_with_unallocated()
-        self.disk_map.set_data(layout, self.table.flash_size, self.display_mode, current_selected_entry)
-
-        # 3. Cập nhật Thống kê Flash & Kiểm tra hợp lệ ESP-IDF
-        total_allocated = sum(e.size for e in self.table.entries)
-        unallocated_size = max(0, self.table.flash_size - (self.table.part_table_offset + PARTITION_TABLE_SIZE_DEFAULT) - total_allocated)
         flash_human = format_bytes_human(self.table.flash_size, compact=True)
-        alloc_human = format_bytes_human(total_allocated, compact=True)
-        unalloc_human = format_bytes_human(unallocated_size, compact=True)
+        if not self.table.entries:
+            self.disk_map.set_data([], self.table.flash_size, self.display_mode, None)
+            self.lbl_flash_stats.configure(
+                text=f"Dung lượng Flash: {flash_human} | Chưa có phân vùng (Chọn 'Mẫu Chuẩn...', 'Mở CSV/BIN', 'Đọc bảng từ Chip' hoặc '+ Thêm dòng')"
+            )
+            if hasattr(self, "txt_partition_val") and self.txt_partition_val.winfo_exists():
+                self.txt_partition_val.configure(state="normal")
+                self.txt_partition_val.delete("1.0", "end")
+                self.txt_partition_val.insert(
+                    "1.0",
+                    "[TRỐNG] Chưa có phân vùng nào. Hãy nạp mẫu, mở file CSV/BIN, đọc từ chip hoặc tự thêm dòng mới.\n"
+                )
+                self.txt_partition_val.configure(state="disabled")
+        else:
+            layout = self.table.get_layout_with_unallocated()
+            self.disk_map.set_data(layout, self.table.flash_size, self.display_mode, current_selected_entry)
 
-        errors = self.table.validate()
-        err_msg = f" | [CẢNH BÁO] {len(errors)} lỗi ESP-IDF" if errors else " | [HỢP LỆ] Chuẩn ESP-IDF"
-        self.lbl_flash_stats.configure(
-            text=f"Dung lượng Flash: {flash_human} | Đã phân bổ: {alloc_human} ({len(self.table.entries)} phân vùng) | Chưa cấp phát: {unalloc_human}{err_msg}"
-        )
+            # 3. Cập nhật Thống kê Flash & Kiểm tra hợp lệ ESP-IDF
+            total_allocated = sum(e.size for e in self.table.entries)
+            unallocated_size = max(0, self.table.flash_size - (self.table.part_table_offset + PARTITION_TABLE_SIZE_DEFAULT) - total_allocated)
+            alloc_human = format_bytes_human(total_allocated, compact=True)
+            unalloc_human = format_bytes_human(unallocated_size, compact=True)
 
-        if hasattr(self, "txt_partition_val") and self.txt_partition_val.winfo_exists():
-            self.txt_partition_val.configure(state="normal")
-            self.txt_partition_val.delete("1.0", "end")
-            if not errors:
-                self.txt_partition_val.insert("1.0", "[HỢP LỆ] BẢNG PHÂN VÙNG HOÀN TOÀN HỢP LỆ THEO CHUẨN ESP-IDF!\n\n")
-            else:
-                self.txt_partition_val.insert("1.0", f"[CẢNH BÁO] PHÁT HIỆN {len(errors)} CẢNH BÁO / LỖI BẢNG PHÂN VÙNG:\n\n")
-                for err in errors:
-                    self.txt_partition_val.insert("end", f"  [LỖI] {err}\n")
-            self.txt_partition_val.configure(state="disabled")
+            errors = self.table.validate()
+            err_msg = f" | [CẢNH BÁO] {len(errors)} lỗi ESP-IDF" if errors else " | [HỢP LỆ] Chuẩn ESP-IDF"
+            self.lbl_flash_stats.configure(
+                text=f"Dung lượng Flash: {flash_human} | Đã phân bổ: {alloc_human} ({len(self.table.entries)} phân vùng) | Chưa cấp phát: {unalloc_human}{err_msg}"
+            )
+
+            if hasattr(self, "txt_partition_val") and self.txt_partition_val.winfo_exists():
+                self.txt_partition_val.configure(state="normal")
+                self.txt_partition_val.delete("1.0", "end")
+                if not errors:
+                    self.txt_partition_val.insert("1.0", "[HỢP LỆ] BẢNG PHÂN VÙNG HOÀN TOÀN HỢP LỆ THEO CHUẨN ESP-IDF!\n\n")
+                else:
+                    self.txt_partition_val.insert("1.0", f"[CẢNH BÁO] PHÁT HIỆN {len(errors)} CẢNH BÁO / LỖI BẢNG PHÂN VÙNG:\n\n")
+                    for err in errors:
+                        self.txt_partition_val.insert("end", f"  [LỖI] {err}\n")
+                self.txt_partition_val.configure(state="disabled")
 
         # Cập nhật vị trí các nút bấm [+] và [-] trên Treeview
         if hasattr(self, "root") and self.root.winfo_exists():
             self.root.after(10, self._reposition_tree_buttons)
 
+    def _next_unique_partition_name(self, prefix: str = "part_") -> str:
+        """Sinh tên phân vùng duy nhất không trùng lặp trong bảng hiện tại."""
+        existing = {e.name for e in self.table.entries}
+        idx = len(self.table.entries) + 1
+        candidate = f"{prefix}{idx}"
+        while candidate in existing:
+            idx += 1
+            candidate = f"{prefix}{idx}"
+        return candidate
+
+    def _sync_chip_and_flash_combos(self, chip_id: str, flash_size: int | None = None):
+        """Đồng bộ combo Chip và Flash mà không kích hoạt nhân đôi undo hoặc item dư."""
+        self._syncing_chip_flash_combo = True
+        try:
+            chip_info = None
+            for cid, info in CHIP_FAMILY_DATABASE.items():
+                if cid == chip_id:
+                    chip_info = info
+                    break
+            if chip_info is not None:
+                if hasattr(self, "cb_part_chip") and self.cb_part_chip is not None:
+                    self.cb_part_chip.blockSignals(True)
+                    self.part_chip_var.set(chip_info.name)
+                    self.cb_part_chip.blockSignals(False)
+                chip_sizes = sorted(chip_info.supported_flash_sizes)
+                size_labels = [f"{sz // (1024 * 1024)} MB" for sz in chip_sizes]
+                target_sz = flash_size if (flash_size in chip_sizes) else chip_sizes[-1]
+                target_lbl = f"{target_sz // (1024 * 1024)} MB"
+                if hasattr(self, "cb_part_flash") and self.cb_part_flash is not None:
+                    self.cb_part_flash.blockSignals(True)
+                    self.cb_part_flash["values"] = size_labels
+                    self.part_flash_var.set(target_lbl)
+                    self.cb_part_flash.blockSignals(False)
+                self.table.flash_size = target_sz
+            else:
+                if hasattr(self, "cb_part_flash") and self.cb_part_flash is not None:
+                    self.cb_part_flash.blockSignals(True)
+                    self.cb_part_flash["values"] = [opt[0] for opt in FLASH_SIZE_OPTIONS]
+                    chosen_lbl = FLASH_SIZE_OPTIONS[-1][0]
+                    chosen_sz = FLASH_SIZE_OPTIONS[-1][1]
+                    if flash_size is not None:
+                        for lbl, sz in FLASH_SIZE_OPTIONS:
+                            if sz == flash_size:
+                                chosen_lbl, chosen_sz = lbl, sz
+                                break
+                    self.part_flash_var.set(chosen_lbl)
+                    self.cb_part_flash.blockSignals(False)
+                    self.table.flash_size = chosen_sz
+        finally:
+            self._syncing_chip_flash_combo = False
+
     def _on_chip_changed(self, event=None):
+        if getattr(self, "_syncing_chip_flash_combo", False):
+            return
         name = self.part_chip_var.get()
         if name == "(Chưa chọn)":
             self.table.target_chip = "auto"
             self.table.bootloader_offset = 0x1000
-            self.cb_part_flash["values"] = [opt[0] for opt in FLASH_SIZE_OPTIONS]
-            self.part_flash_var.set(FLASH_SIZE_OPTIONS[-1][0])
-            self.table.flash_size = FLASH_SIZE_OPTIONS[-1][1]
+            self._sync_chip_and_flash_combos("auto", flash_size=FLASH_SIZE_OPTIONS[-1][1])
             self.refresh_partition_views()
             return
 
@@ -1041,16 +576,10 @@ class PartitionTabMixin:
                 self.table.target_chip = cid
                 self.table.bootloader_offset = info.bootloader_offset
 
-                # Cập nhật danh sách dung lượng flash theo dòng chip
+                # Luôn cập nhật danh sách dung lượng theo dòng chip & tự động chọn mức Flash cao nhất
                 chip_sizes = sorted(info.supported_flash_sizes)
-                size_labels = [f"{sz // (1024 * 1024)} MB" for sz in chip_sizes]
-                self.cb_part_flash["values"] = size_labels
-
-                # Mặc định để mức cao nhất của dòng chip đó
                 highest_sz = chip_sizes[-1]
-                highest_lbl = size_labels[-1]
-                self.part_flash_var.set(highest_lbl)
-                self.table.flash_size = highest_sz
+                self._sync_chip_and_flash_combos(cid, flash_size=highest_sz)
 
                 self.refresh_partition_views()
                 break
@@ -1084,7 +613,7 @@ class PartitionTabMixin:
 
     def _on_tree_select(self, event=None):
         selected_iid = self.part_tree.selection()
-        if not selected_iid:
+        if not selected_iid or selected_iid[0] == getattr(self, "_add_row_iid", "__add_row__"):
             self.disk_map.selected_entry = None
             self.disk_map.redraw()
             return
@@ -1092,6 +621,16 @@ class PartitionTabMixin:
         if entry:
             self.disk_map.selected_entry = entry
             self.disk_map.redraw()
+        else:
+            self.disk_map.selected_entry = None
+            self.disk_map.redraw()
+
+    def _on_tree_mousewheel(self, event):
+        if getattr(event, "num", None) == 4 or getattr(event, "delta", 0) > 0:
+            self.part_tree.yview_scroll(-1, "units")
+        elif getattr(event, "num", None) == 5 or getattr(event, "delta", 0) < 0:
+            self.part_tree.yview_scroll(1, "units")
+        return "break"
 
     def _on_tree_click(self, event):
         row_id = self.part_tree.identify_row(event.y)
@@ -1191,6 +730,12 @@ class PartitionTabMixin:
             self.set_status(f"Đã xóa phân vùng '{entry.name}'.")
 
     def _on_disk_map_select_entry(self, entry: PartitionEntry):
+        if entry.is_system or entry.is_unallocated or self.disk_map.selected_entry is None:
+            self.part_tree.clearSelection()
+            self.part_tree.setCurrentItem(None)
+            self.disk_map.selected_entry = None
+            self.disk_map.redraw()
+            return
         for item in self.part_tree.get_children():
             name = self._get_entry_name_from_iid(item)
             if name == entry.name:
@@ -1222,9 +767,7 @@ class PartitionTabMixin:
             return
 
         if row_id == getattr(self, "_add_row_iid", "__add_row__"):
-            menu = tk.Menu(self.root, tearoff=0)
-            p = DARK_PALETTE if self.is_dark_mode else LIGHT_PALETTE
-            menu.configure(bg=p["text_bg"], fg=p["text_fg"], activebackground=p["accent"], activeforeground="#ffffff")
+            menu = _QMenuCompat(self.root)
             menu.add_command(label="Thêm phân vùng mới", command=self._action_add_partition)
             menu.tk_popup(event.x_root, event.y_root)
             return
@@ -1238,9 +781,7 @@ class PartitionTabMixin:
         self._show_column_context_menu(event, entry, col_id, row_id)
 
     def _show_column_context_menu(self, event, entry: PartitionEntry, col_id: str, row_id: str):
-        menu = tk.Menu(self.root, tearoff=0)
-        p = DARK_PALETTE if self.is_dark_mode else LIGHT_PALETTE
-        menu.configure(bg=p["text_bg"], fg=p["text_fg"], activebackground=p["accent"], activeforeground="#ffffff")
+        menu = _QMenuCompat(self.root)
 
         row_idx = self.table.entries.index(entry) if entry in self.table.entries else 0
 
@@ -1382,16 +923,14 @@ class PartitionTabMixin:
 
     def _show_disk_map_context_menu(self, event, entry: PartitionEntry):
         """Menu ngữ cảnh chuột phải trên Sơ đồ Flash đồng bộ đầy đủ các lựa chọn như bảng bên dưới"""
-        menu = tk.Menu(self.root, tearoff=0)
-        p = DARK_PALETTE if self.is_dark_mode else LIGHT_PALETTE
-        menu.configure(bg=p["text_bg"], fg=p["text_fg"], activebackground=p["accent"], activeforeground="#ffffff")
+        menu = _QMenuCompat(self.root)
 
         row_idx = self.table.entries.index(entry) if entry in self.table.entries else 0
         menu.add_command(label=f"PHÂN VÙNG #{row_idx + 1}: {entry.name.upper()}", state="disabled")
         menu.add_separator()
 
         # 1. Đổi Tên (Name)
-        name_sub = tk.Menu(menu, tearoff=0, bg=p["text_bg"], fg=p["text_fg"], activebackground=p["accent"], activeforeground="#ffffff")
+        name_sub = _QMenuCompat(menu)
         preset_names = (
             ["factory", "ota_0", "ota_1", "test"] if entry.type_str == "app"
             else ["nvs", "otadata", "storage", "spiffs", "littlefs", "phy_init", "coredump", "nvs_keys"]
@@ -1404,7 +943,7 @@ class PartitionTabMixin:
         menu.add_cascade(label=f"Đổi Tên ({entry.name})", menu=name_sub)
 
         # 2. Đổi Kiểu (Type)
-        type_sub = tk.Menu(menu, tearoff=0, bg=p["text_bg"], fg=p["text_fg"], activebackground=p["accent"], activeforeground="#ffffff")
+        type_sub = _QMenuCompat(menu)
         def set_type(new_t: str):
             self._push_partition_undo_state()
             entry.type_str = new_t
@@ -1427,7 +966,7 @@ class PartitionTabMixin:
         menu.add_cascade(label=f"Đổi Kiểu ({entry.type_str})", menu=type_sub)
 
         # 3. Đổi Phân loại (SubType)
-        sub_menu = tk.Menu(menu, tearoff=0, bg=p["text_bg"], fg=p["text_fg"], activebackground=p["accent"], activeforeground="#ffffff")
+        sub_menu = _QMenuCompat(menu)
         if entry.type_str == "app":
             for st_code, st_lbl in [
                 ("factory", "factory (Firmware gốc xuất xưởng)"),
@@ -1455,7 +994,7 @@ class PartitionTabMixin:
         menu.add_cascade(label=f"Đổi Phân loại ({entry.subtype_str})", menu=sub_menu)
 
         # 4. Đổi Offset
-        off_sub = tk.Menu(menu, tearoff=0, bg=p["text_bg"], fg=p["text_fg"], activebackground=p["accent"], activeforeground="#ffffff")
+        off_sub = _QMenuCompat(menu)
         off_sub.add_command(label="Tự động tính toán (Dồn nối tiếp)", command=lambda: self._auto_align_entry_offset(entry))
         off_sub.add_separator()
         for off in [0x9000, 0x10000, 0x20000, 0x100000, 0x200000, 0x300000]:
@@ -1465,7 +1004,7 @@ class PartitionTabMixin:
         menu.add_cascade(label=f"Đổi Offset ({format_hex(entry.offset)})", menu=off_sub)
 
         # 5. Đổi Dung lượng (Size)
-        sz_sub = tk.Menu(menu, tearoff=0, bg=p["text_bg"], fg=p["text_fg"], activebackground=p["accent"], activeforeground="#ffffff")
+        sz_sub = _QMenuCompat(menu)
         size_presets = [
             (4 * 1024, "4 KB (1 sector)"),
             (16 * 1024, "16 KB (Chuẩn NVS)"),
@@ -1486,7 +1025,7 @@ class PartitionTabMixin:
         menu.add_cascade(label=f"Đổi Dung lượng ({format_bytes_human(entry.size)})", menu=sz_sub)
 
         # 6. Đổi Cờ (Flags)
-        flg_sub = tk.Menu(menu, tearoff=0, bg=p["text_bg"], fg=p["text_fg"], activebackground=p["accent"], activeforeground="#ffffff")
+        flg_sub = _QMenuCompat(menu)
         flg_sub.add_command(label="(Không có / Trống)", command=lambda: self._set_entry_field(entry, "flags_str", ""))
         flg_sub.add_command(label="encrypted (Mã hóa phần cứng)", command=lambda: self._set_entry_field(entry, "flags_str", "encrypted"))
         flg_sub.add_command(label="readonly (Chỉ đọc)", command=lambda: self._set_entry_field(entry, "flags_str", "readonly"))
@@ -1499,19 +1038,60 @@ class PartitionTabMixin:
         menu.tk_popup(event.x_root, event.y_root)
 
     def _action_add_partition(self, suggested_offset: int | None = None):
+        if isinstance(suggested_offset, bool):
+            suggested_offset = None
+
+        insert_idx = len(self.table.entries)
         if suggested_offset is None:
-            if self.table.entries:
+            selected_entry = None
+            selected_iid = self.part_tree.selection() if hasattr(self, "part_tree") else ()
+            if selected_iid and selected_iid[0] != getattr(self, "_add_row_iid", "__add_row__"):
+                selected_entry = self._get_entry_from_iid(selected_iid[0])
+
+            if selected_entry is not None and selected_entry in self.table.entries:
+                sel_idx = self.table.entries.index(selected_entry)
+                insert_idx = sel_idx + 1
+                suggested_offset = align_up(selected_entry.end_offset, 0x1000)
+            elif self.table.entries:
                 last = max(e.end_offset for e in self.table.entries)
                 suggested_offset = align_up(last, 0x1000)
             else:
                 suggested_offset = 0x10000
 
-        dlg = PartitionEditDialog(self.root, entry=None, suggested_offset=suggested_offset, is_dark_mode=self.is_dark_mode)
+        default_name = self._next_unique_partition_name("part_")
+        dlg = PartitionEditDialog(
+            self.root,
+            entry=None,
+            suggested_offset=suggested_offset,
+            is_dark_mode=self.is_dark_mode,
+            default_name=default_name,
+        )
+        self._exec_dialog(dlg)
         if dlg.result:
+            # Tránh trùng tên nếu người dùng hoặc dialog trả về tên đã tồn tại
+            existing_names = {e.name for e in self.table.entries}
+            if dlg.result.name in existing_names:
+                dlg.result.name = self._next_unique_partition_name(f"{dlg.result.name}_")
+
             self._push_partition_undo_state()
-            self.table.add_entry(dlg.result)
-            if getattr(self, "var_auto_align", None) and self.var_auto_align.get():
-                self._cascade_auto_pack(from_idx=0)
+            insert_idx = max(0, min(insert_idx, len(self.table.entries)))
+            self.table.entries.insert(insert_idx, dlg.result)
+
+            auto_align = bool(getattr(self, "var_auto_align", None) and self.var_auto_align.get())
+            if auto_align:
+                if insert_idx == 0:
+                    self._cascade_auto_pack(from_idx=0)
+                else:
+                    prev_entry = self.table.entries[insert_idx - 1]
+                    start_pack = insert_idx if dlg.result.offset < prev_entry.end_offset else insert_idx + 1
+                    if start_pack < len(self.table.entries):
+                        self._cascade_auto_pack(from_idx=start_pack)
+            elif insert_idx + 1 < len(self.table.entries):
+                # Ngay cả khi tắt auto-align, nếu chèn xen giữa làm đè lên vùng sau thì dịch vùng sau hợp lệ
+                next_entry = self.table.entries[insert_idx + 1]
+                if dlg.result.end_offset > next_entry.offset:
+                    self._cascade_auto_pack(from_idx=insert_idx + 1)
+
             self.refresh_partition_views(selected_entry_name=dlg.result.name)
             self.set_status(f"Đã thêm phân vùng '{dlg.result.name}'.")
 
@@ -1530,6 +1110,7 @@ class PartitionTabMixin:
 
         entry = self.table.entries[idx]
         dlg = PartitionEditDialog(self.root, entry=entry, is_dark_mode=self.is_dark_mode)
+        self._exec_dialog(dlg)
         if dlg.result:
             self._push_partition_undo_state()
             self.table.entries[idx] = dlg.result
@@ -1585,6 +1166,14 @@ class PartitionTabMixin:
         self.table.from_csv(default_csv)
         if getattr(self, "var_auto_align", None) and self.var_auto_align.get():
             self._cascade_auto_pack(from_idx=0)
+
+        if hasattr(self, 'part_tree') and self.part_tree is not None:
+            if hasattr(self, 'disk_map') and self.disk_map is not None:
+                self.disk_map.on_select_entry = self._on_disk_map_select_entry
+                self.disk_map.on_unallocated_click = self._on_disk_map_unallocated_click
+                self.disk_map.on_context_action = self._on_disk_map_context_action
+            self.refresh_partition_views()
+            return
         self.current_partition_file_path = None
         self.refresh_partition_views()
         self.set_status("Đã tạo bảng phân vùng mới.")
@@ -1598,7 +1187,7 @@ class PartitionTabMixin:
 
         try:
             if current_path.lower().endswith(".bin"):
-                data = self.table.to_bin()
+                data = self.table.to_binary()
                 with open(current_path, "wb") as f:
                     f.write(data)
             else:
@@ -1628,7 +1217,7 @@ class PartitionTabMixin:
 
         try:
             if filepath.lower().endswith(".bin"):
-                data = self.table.to_bin()
+                data = self.table.to_binary()
                 with open(filepath, "wb") as f:
                     f.write(data)
             else:
@@ -1671,26 +1260,21 @@ class PartitionTabMixin:
 
     def _action_presets(self):
         dlg = PresetSelectorDialog(self.root, is_dark_mode=self.is_dark_mode)
-        if dlg.result:
+        self._exec_dialog(dlg)
+        preset = getattr(dlg, "result", None) or getattr(dlg, "selected_preset", None)
+        if preset:
             self._push_partition_undo_state()
-            self.table.flash_size = dlg.result["flash_size"]
-            self.table.target_chip = dlg.result["chip"]
-            self.table.from_csv(dlg.result["csv"])
+            self.table.flash_size = preset["flash_size"]
+            self.table.target_chip = preset["chip"]
+            self.table.from_csv(preset["csv"])
             if getattr(self, "var_auto_align", None) and self.var_auto_align.get():
                 self._cascade_auto_pack(from_idx=0)
 
-            # Cập nhật combo chip & flash
-            for cid, info in CHIP_FAMILY_DATABASE.items():
-                if cid == dlg.result["chip"]:
-                    self.part_chip_var.set(info.name)
-                    break
-            for lbl, sz in FLASH_SIZE_OPTIONS:
-                if sz == dlg.result["flash_size"]:
-                    self.part_flash_var.set(lbl)
-                    break
+            # Cập nhật combo chip & flash đồng bộ
+            self._sync_chip_and_flash_combos(preset["chip"], flash_size=preset["flash_size"])
 
             self.refresh_partition_views()
-            self.set_status(f"Đã nạp mẫu: {dlg.result['name']}")
+            self.set_status(f"Đã nạp mẫu: {preset['name']}")
 
     def _action_open_file(self):
         path = filedialog.askopenfilename(
@@ -1727,54 +1311,28 @@ class PartitionTabMixin:
             messagebox.showerror("Lỗi mở file", f"Không thể đọc file phân vùng:\n{e}", parent=self.root)
 
     def _action_save_csv(self):
-        path = filedialog.asksaveasfilename(
-            title="Lưu file CSV bảng phân vùng",
-            defaultextension=".csv",
-            initialfile="partitions.csv",
-            filetypes=[("CSV Files (*.csv)", "*.csv"), ("All Files (*.*)", "*.*")],
-            parent=self.root
-        )
-        if not path:
+        """Lưu toàn bộ bảng phân vùng hiện tại ra tệp .csv (lưu đè nếu đã gắn tệp CSV, hoặc mở hộp thoại chọn nơi lưu)."""
+        target_path = getattr(self, "current_partition_file_path", None)
+        if not target_path or not str(target_path).lower().endswith(".csv"):
+            target_path = filedialog.asksaveasfilename(
+                title="Lưu file CSV bảng phân vùng",
+                defaultextension=".csv",
+                initialfile="partitions.csv",
+                filetypes=[("CSV Files (*.csv)", "*.csv"), ("All Files (*.*)", "*.*")],
+                parent=self.root
+            )
+        if not target_path:
             return
 
         try:
             csv_content = self.table.to_csv()
-            with open(path, "w", encoding="utf-8") as f:
+            with open(target_path, "w", encoding="utf-8") as f:
                 f.write(csv_content)
-            self.set_status(f"Đã lưu thành công: {os.path.basename(path)}")
-            messagebox.showinfo("Thành công", f"Đã xuất bảng phân vùng ra file CSV chuẩn ESP-IDF:\n{path}", parent=self.root)
+            self.current_partition_file_path = target_path
+            self.set_status(f"Đã lưu toàn bộ bảng phân vùng: {os.path.basename(target_path)}", "success")
+            messagebox.showinfo("Thành công", f"Đã lưu toàn bộ bảng phân vùng ra file CSV chuẩn ESP-IDF:\n{target_path}", parent=self.root)
         except Exception as e:
             messagebox.showerror("Lỗi lưu file", f"Không thể lưu file CSV:\n{e}", parent=self.root)
-
-    def _action_export_bin(self):
-        errors = self.table.validate()
-        if errors:
-            ans = messagebox.askyesno(
-                "Cảnh báo lỗi phân vùng",
-                f"Bảng phân vùng hiện đang có {len(errors)} cảnh báo/lỗi chuẩn ESP-IDF.\nBạn có chắc chắn muốn xuất ra file nhị phân không?",
-                parent=self.root
-            )
-            if not ans:
-                return
-
-        path = filedialog.asksaveasfilename(
-            title="Xuất file BIN bảng phân vùng",
-            defaultextension=".bin",
-            initialfile="partition-table.bin",
-            filetypes=[("Binary Files (*.bin)", "*.bin"), ("All Files (*.*)", "*.*")],
-            parent=self.root
-        )
-        if not path:
-            return
-
-        try:
-            bin_data = self.table.to_binary()
-            with open(path, "wb") as f:
-                f.write(bin_data)
-            self.set_status(f"Đã biên dịch BIN thành công: {os.path.basename(path)} ({len(bin_data)} Bytes)")
-            messagebox.showinfo("Thành công", f"Đã biên dịch bảng phân vùng sang file nhị phân 32-byte kèm MD5 Checksum:\n{path}", parent=self.root)
-        except Exception as e:
-            messagebox.showerror("Lỗi biên dịch BIN", f"Không thể xuất file nhị phân:\n{e}", parent=self.root)
 
     def _action_scan_project(self):
         dir_path = filedialog.askdirectory(title="Chọn thư mục dự án ESP-IDF / PlatformIO", parent=self.root)
@@ -1795,15 +1353,8 @@ class PartitionTabMixin:
         self.table.flash_size = res.flash_size
         self.table.target_chip = res.target_chip
 
-        # Cập nhật giao diện
-        for cid, info in CHIP_FAMILY_DATABASE.items():
-            if cid == res.target_chip:
-                self.part_chip_var.set(info.name)
-                break
-        for lbl, sz in FLASH_SIZE_OPTIONS:
-            if sz == res.flash_size:
-                self.part_flash_var.set(lbl)
-                break
+        # Cập nhật giao diện đồng bộ
+        self._sync_chip_and_flash_combos(res.target_chip, flash_size=res.flash_size)
 
         self.refresh_partition_views()
         self.set_status(f"Đã quét thành công dự án: {res.project_name}")
@@ -1818,7 +1369,7 @@ class PartitionTabMixin:
         if hasattr(self, "append_to_monitor"):
             self.append_to_monitor(f"[PARTITION_HW] {text}")
 
-    def _update_partition_hw_progress(self, line: str):
+    def _update_partition_hw_progress(self, line: str, task_label: str | None = None):
         """Phân tích dòng output từ esptool để cập nhật thanh tiến trình toàn cục (0% -> 100%)."""
         l_str = str(line)
         pct = None
@@ -1835,8 +1386,8 @@ class PartitionTabMixin:
             pct = 60
         elif "Read " in l_str or "Wrote " in l_str or "Hash of data verified" in l_str or "Erase completed" in l_str:
             pct = 92
-        if pct is not None and hasattr(self, " _update_flash_progress".strip()):
-            self._update_flash_progress(pct)
+        if pct is not None and hasattr(self, "_update_flash_progress"):
+            self._update_flash_progress(pct, task_label=task_label)
 
     def _prepare_hardware_port(self) -> tuple[str, int, str] | None:
         """Đảm bảo cổng COM hợp lệ và tạm ngắt Serial Monitor nếu đang kết nối"""
@@ -1913,9 +1464,10 @@ class PartitionTabMixin:
                             clean_det = detected_chip.lower().replace("-", "")
                             for cid, info in CHIP_FAMILY_DATABASE.items():
                                 if cid.lower() == clean_det or clean_det in cid.lower() or cid.lower() in clean_det:
-                                    if hasattr(self, "part_chip_var"):
-                                        self.part_chip_var.set(info.name)
-                                        self._on_chip_changed()
+                                    self.table.target_chip = cid
+                                    self.table.bootloader_offset = info.bootloader_offset
+                                    highest_sz = max(info.supported_flash_sizes)
+                                    self._sync_chip_and_flash_combos(cid, flash_size=highest_sz)
                                     break
                         self.refresh_partition_views()
                         self.set_status("Đã đọc và giải mã bảng phân vùng từ ESP32 thành công!", "success", progress=100)

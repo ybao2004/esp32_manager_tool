@@ -1,0 +1,228 @@
+# -*- coding: utf-8 -*-
+"""
+Trình hiển thị nhật ký thời gian thực (High-Performance LogView) cho PyQt6.
+Tối ưu hiệu năng cao với bộ gom lô (Batch Dispatcher), tô màu phân cấp lỗi ESP-IDF (I/W/E),
+hỗ trợ dấu thời gian và tự động cuộn thông minh.
+"""
+from PyQt6.QtWidgets import QPlainTextEdit, QWidget
+from PyQt6.QtGui import QTextCharFormat, QColor, QTextCursor, QFont
+from PyQt6.QtCore import QTimer, Qt
+from datetime import datetime
+from collections import deque
+from modules.config import So_dong_serial_toi_da
+from modules.ui.theme.tokens import ThemeTokens
+from modules.ui.theme.manager import ThemeManager
+
+
+class LogView(QPlainTextEdit):
+    def __init__(self, parent: QWidget = None):
+        super().__init__(parent)
+        self.setProperty("role", "log")
+        self.setReadOnly(True)
+        self.setMaximumBlockCount(So_dong_serial_toi_da)
+        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+
+        self.autoscroll = True
+        self.timestamps = False
+
+        self._current_tokens: ThemeTokens = ThemeManager.instance().tokens
+        self._queue: deque[tuple[str, str | None]] = deque()
+
+        # Timer gom lô (Batch Flush) 40ms để tránh nghẽn GUI khi log dồn dập
+        self._flush_timer = QTimer(self)
+        self._flush_timer.setInterval(40)
+        self._flush_timer.timeout.connect(self._flush_queue)
+        self._flush_timer.start()
+
+        self._formats: dict[str, QTextCharFormat] = {}
+        self._update_formats(self._current_tokens)
+
+        ThemeManager.instance().theme_changed.connect(self._on_theme_changed)
+
+    def _update_formats(self, tokens: ThemeTokens):
+        self._current_tokens = tokens
+        font = QFont(tokens.font_mono, 9)
+
+        # Định dạng text thông thường (Info - tự động nhận màu QSS theo Light/Dark)
+        f_norm = QTextCharFormat()
+        f_norm.setFont(font)
+        self._formats["info"] = f_norm
+
+        # Định dạng tiêu đề (Header - In đậm, tự nhận màu QSS theo Light/Dark)
+        f_hdr = QTextCharFormat()
+        font_bold = QFont(tokens.font_mono, 9)
+        font_bold.setBold(True)
+        f_hdr.setFont(font_bold)
+        self._formats["header"] = f_hdr
+
+        # Định dạng Warning (Vàng / Cam)
+        f_warn = QTextCharFormat()
+        f_warn.setFont(font)
+        f_warn.setForeground(QColor(tokens.warning))
+        self._formats["warning"] = f_warn
+
+        # Định dạng Error (Đỏ)
+        f_err = QTextCharFormat()
+        f_err.setFont(font)
+        f_err.setForeground(QColor(tokens.danger))
+        self._formats["error"] = f_err
+
+        # Định dạng Success (Xanh lá)
+        f_succ = QTextCharFormat()
+        f_succ.setFont(font)
+        f_succ.setForeground(QColor(tokens.success))
+        self._formats["success"] = f_succ
+
+        # Định dạng Mờ / Debug (Xám)
+        f_muted = QTextCharFormat()
+        f_muted.setFont(font)
+        f_muted.setForeground(QColor(tokens.text_secondary))
+        self._formats["muted"] = f_muted
+
+    def append_line(self, line: str, level: str | None = None):
+        """Đưa dòng log vào hàng đợi để xả vào văn bản."""
+        if line is None:
+            return
+        clean_text = str(line).rstrip("\r\n")
+
+        # Thêm dấu thời gian nếu được bật
+        if self.timestamps and clean_text:
+            ts = datetime.now().strftime("[%H:%M:%S.%f]")[:-3] + "] "
+            clean_text = ts + clean_text
+
+        # Tự động nhận diện cấp độ nếu không truyền
+        if not level:
+            s_stripped = clean_text.strip()
+            if s_stripped.startswith("E (") or "[LỖI]" in s_stripped or "error" in s_stripped.lower():
+                level = "error"
+            elif s_stripped.startswith("W (") or "[CẢNH BÁO]" in s_stripped or "warning" in s_stripped.lower():
+                level = "warning"
+            elif s_stripped.startswith("I (") or "[HỢP LỆ]" in s_stripped:
+                level = "info"
+            elif s_stripped.startswith("D (") or s_stripped.startswith("V ("):
+                level = "muted"
+            elif "thành công" in s_stripped.lower() or "ok" in s_stripped.lower():
+                level = "success"
+            else:
+                level = "info"
+
+        self._queue.append((clean_text, level))
+
+    def append_text(self, text: str):
+        """Ghi nhận chuỗi văn bản (có thể chứa nhiều dòng)."""
+        if not text:
+            return
+        for line in str(text).splitlines():
+            self.append_line(line)
+
+    def _flush_queue(self):
+        if not self._queue:
+            return
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+
+        # Xả tối đa 500 dòng một nhịp timer để giữ FPS mượt mà
+        count = 0
+        while self._queue and count < 500:
+            text_line, level = self._queue.popleft()
+            fmt = self._formats.get(level or "info", self._formats["info"])
+            if cursor.position() > 0:
+                cursor.insertText("\n")
+            cursor.insertText(text_line, fmt)
+            count += 1
+
+        if self.autoscroll:
+            self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+
+    def clear_log(self):
+        self._queue.clear()
+        self.clear()
+
+    # Compatibility methods with legacy tk.Text interface
+    def insert(self, pos, text: str, tag=None):
+        lvl = "info"
+        if isinstance(tag, (list, tuple)):
+            for t in tag:
+                if t in ("red", "green", "blue", "warning", "header"):
+                    lvl = t
+                    break
+        elif isinstance(tag, str):
+            lvl = tag
+        level_map = {
+            "red": "error",
+            "green": "success",
+            "blue": "info",
+            "warning": "warning",
+            "header": "header"
+        }
+        eff_lvl = level_map.get(lvl, "info")
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        fmt = self._formats.get(eff_lvl, self._formats.get("info", QTextCharFormat()))
+        cursor.insertText(str(text), fmt)
+
+    def index(self, pos="end-1c") -> str:
+        self._flush_queue()
+        lines = max(1, self.blockCount())
+        return f"{lines}.0"
+
+    def delete(self, start="1.0", end="end"):
+        self._flush_queue()
+        if start in ("1.0", 0) and end in ("end", "end-1c", None):
+            self.clear_log()
+        else:
+            try:
+                line_count = int(str(end).split(".")[0])
+                cursor = self.textCursor()
+                cursor.movePosition(QTextCursor.MoveOperation.Start)
+                for _ in range(line_count):
+                    cursor.movePosition(QTextCursor.MoveOperation.Down, QTextCursor.MoveMode.KeepAnchor)
+                cursor.removeSelectedText()
+            except Exception:
+                self.clear_log()
+
+    def winfo_exists(self) -> bool:
+        return True
+
+    def winfo_toplevel(self):
+        return self.window()
+
+    def config(self, **kwargs):
+        if "state" in kwargs:
+            self.setReadOnly(kwargs["state"] == "disabled")
+
+    def configure(self, **kwargs):
+        self.config(**kwargs)
+
+    def see(self, pos):
+        self._flush_queue()
+        self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
+
+    def get(self, start="1.0", end="end") -> str:
+        self._flush_queue()
+        return self.toPlainText()
+
+    def tag_configure(self, tag, **kwargs):
+        if not hasattr(self, "_tags"):
+            self._tags = {}
+        if tag not in self._tags:
+            self._tags[tag] = {}
+        self._tags[tag].update(kwargs)
+
+    def tag_cget(self, tag, opt):
+        if not hasattr(self, "_tags"):
+            self._tags = {}
+        return self._tags.get(tag, {}).get(opt, 14 if opt == "lmargin2" else "")
+
+    def cget(self, key):
+        if key == "font":
+            return "Consolas 10"
+        return ""
+
+    def text(self) -> str:
+        """Trả về toàn bộ văn bản hiện tại (dùng cho các bài test)."""
+        self._flush_queue()
+        return self.toPlainText()
+
+    def _on_theme_changed(self, tokens: ThemeTokens):
+        self._update_formats(tokens)

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Esp32 manager tool v1.4 - Configuration & Constants
+Esp32 manager tool v1.7 - Configuration & Constants
 """
 import os
 import sys
@@ -23,7 +23,7 @@ CONFIG_FILENAME = "settings_esp32_manager_tool.json"
 CONFIG_FILE = os.path.join(CONFIG_DIR, CONFIG_FILENAME)
 
 APP_NAME = "Esp32 manager tool"
-APP_VERSION = "1.4"
+APP_VERSION = "1.7"
 APP_AUTHOR = "@ybao04"
 APP_LICENSE = "GPL-3.0"
 GITHUB_REPO = "ybao2004/esp32_manager_tool"
@@ -84,6 +84,13 @@ DARK_PALETTE = {
 
 COMMON_BAUDS = ["Tự động", "9600", "57600", "74880", "115200", "230400", "460800", "921600"]
 FLASH_BAUDS = ["921600", "460800", "230400", "115200"]
+FLASH_SIZE_OPTIONS = [
+    ("2 MB", 2 * 1024 * 1024),
+    ("4 MB (Chuẩn)", 4 * 1024 * 1024),
+    ("8 MB", 8 * 1024 * 1024),
+    ("16 MB", 16 * 1024 * 1024),
+    ("32 MB", 32 * 1024 * 1024),
+]
 FLASH_CHIP_TARGETS = [
     "auto", "esp32", "esp32s2", "esp32s3", "esp32c2", "esp32c3",
     "esp32c5", "esp32c6", "esp32c61", "esp32h2", "esp32h21",

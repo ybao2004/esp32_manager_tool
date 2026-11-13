@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Esp32 manager tool v1.4 - Main Entry Point (PyQt6 Edition)
+Esp32 manager tool v1.7 - Main Entry Point (PyQt6 Edition)
 Ứng dụng GUI toàn diện: Kiểm tra phần cứng, Serial Monitor, Nạp Flash Firmware, Quản lý Phân vùng (Partition Wizard), Sao lưu & Nhân bản (Backup / Clone).
 """
 import sys
@@ -16,28 +16,14 @@ from modules.app_core import InspectorApp, main
 
 if __name__ == '__main__':
     multiprocessing.freeze_support()
-    
+
     if os.name == 'nt':
         import ctypes
         # Đặt AppUserModelID riêng để Windows gán đúng icon trên Taskbar thay vì gom nhóm icon Python
         try:
-            myappid = 'mytool.esp32managertool.1.4'
+            myappid = 'ybao04.esp32managertool.1.7'
             ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
         except Exception:
             pass
 
-        try:
-            # Per-Monitor V2 keeps icons and controls crisp when moving the app
-            # between displays with different Windows scaling factors.
-            if not ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4)):
-                raise OSError("Per-Monitor V2 DPI awareness was not applied")
-        except Exception:
-            try:
-                ctypes.windll.shcore.SetProcessDpiAwareness(2)
-            except Exception:
-                try:
-                    ctypes.windll.user32.SetProcessDPIAware()
-                except Exception:
-                    pass
-                
     main()

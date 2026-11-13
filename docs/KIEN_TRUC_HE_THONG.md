@@ -1,129 +1,69 @@
-# TÀI LIỆU KIẾN TRÚC HỆ THỐNG - ESP32 MANAGER TOOL (v1.3)
+# KIẾN TRÚC HỆ THỐNG & THIẾT KẾ PHẦN MỀM (v1.7)
 
-Tài liệu chi tiết về kiến trúc phần mềm, mô hình phân lớp, thiết kế đa luồng và các nguyên lý cốt lõi của **Esp32 manager tool**.
+> Tài liệu mô tả kiến trúc thuần PyQt6 của **ESP32 Manager Tool v1.7**, cấu trúc module, quản lý chủ đề Engineering và cơ chế an toàn đa luồng.
 
 ---
 
-## 1. TỔNG QUAN KIẾN TRÚC (HIGH-LEVEL ARCHITECTURE)
+## 1. TỔNG QUAN KIẾN TRÚC TỔNG THỂ
 
-Ứng dụng được xây dựng theo mô hình **Component-based Mixin Architecture** kết hợp giao diện đồ họa **Tkinter/ttk**, sử dụng **esptool** và **PySerial** làm engine phần cứng cấp thấp.
+Từ phiên bản v1.7, **ESP32 Manager Tool** chạy hoàn toàn trên **PyQt6** (đã loại bỏ 100% thư viện `tkinter` và `ttk`). Lớp điều phối chính `InspectorApp` (`modules/app_core.py`) kết hợp lớp cửa sổ gốc `MainWindow` (`modules/ui/main_window.py`) cùng 5 lớp Mixin nghiệp vụ chuyên biệt theo mô hình:
 
-```
-+-------------------------------------------------------------------------+
-|                                main.py                                  |
-|   - Thiết lập High-DPI Per-Monitor V2 & AppUserModelID Win32            |
-|   - Multiprocessing freeze support & Khởi chạy ứng dụng                 |
-+-------------------------------------------------------------------------+
-                                    |
-                                    v
-+-------------------------------------------------------------------------+
-|                  modules/app_core.py (InspectorApp)                     |
-|                   Bộ điều khiển trung tâm & Vòng đời                     |
-+-------------------------------------------------------------------------+
-       |                  |                  |                  |
-       v                  v                  v                  v
-+--------------+   +--------------+   +--------------+   +--------------+
-| TabInspector |   |  TabMonitor  |   |  TabFlasher  |   | TabPartition |
-|   (Tab 1)    |   |   (Tab 2)    |   |   (Tab 3)    |   |   (Tab 4)    |
-+--------------+   +--------------+   +--------------+   +--------------+
-       |                  |                  |                  |
-       +------------------+------------------+------------------+
-                                  |
-       +--------------------------+--------------------------+
-       |                          |                          |
-       v                          v                          v
-+---------------+        +------------------+       +------------------+
-|  esptool_util |        |   serial_util    |       | modules/partition|
-|  & stream_util|        |  (PySerial COM)  |       |   (Model, Spec,  |
-+---------------+        +------------------+       |  BIN Compiler)   |
-       |                          |                 +------------------+
-       v                          v                          |
-+----------------------------------------------------+       |
-|                  ESP32 / ESP8266                   |<------+
-|               Phần cứng qua cổng COM               |
-+----------------------------------------------------+
+```text
+InspectorApp (modules/app_core.py)
+ ├── MainWindow (modules/ui/main_window.py — QMainWindow, Sidebar, Stack 6 Trang, Unified Bottom ProgressBar)
+ ├── InspectorTabMixin (modules/tabs/tab_inspector.py)
+ ├── MonitorTabMixin (modules/tabs/tab_monitor.py)
+ ├── FlasherTabMixin (modules/tabs/tab_flasher.py)
+ ├── PartitionTabMixin (modules/tabs/tab_partition.py)
+ └── BackupCloneTabMixin (modules/tabs/tab_backup_clone.py)
 ```
 
----
-
-## 2. PHÂN TÍCH CÁC MODULE CHÍNH
-
-### 2.1. Lớp Điều Khiển Trung Tâm (Core Application)
-- **`main.py`**: Điểm khởi động ứng dụng. Gọi Windows API (`ctypes`) để bật chế độ Per-Monitor V2 DPI Awareness và AppUserModelID độc lập nhằm đảm bảo giao diện sắc nét trên mọi tỷ lệ màn hình (100% đến 200%).
-- **`modules/app_core.py`**: Chứa lớp `InspectorApp` kế thừa các Mixin chức năng (`InspectorTabMixin`, `MonitorTabMixin`, `FlasherTabMixin`, `PartitionTabMixin`, `SettingsDialogMixin`).
-  - Quản lý trạng thái chia sẻ (cổng COM hiện hành, baudrate, giao diện Sáng/Tối).
-  - Điều phối vòng đời ứng dụng, các cờ luồng (`is_detecting`, `is_flashing`, `stop_serial_thread`).
-  - Đảm bảo an toàn khi thoát (`on_closing`), đóng cổng Serial và giải phóng tài nguyên.
-- **`modules/config.py`**: Hằng số hệ thống, bảng màu (`DARK_PALETTE`, `LIGHT_PALETTE`), dải Baudrate, cấu hình phím điều khiển F1–F15 và đường dẫn file cấu hình JSON người dùng.
-
-### 2.2. Lớp Tương Tác Phần Cứng & Luồng (Hardware & Stream Utilities)
-- **`modules/esptool_util.py`**:
-  - Wrapper đa luồng an toàn thực thi các lệnh `esptool` mà không gây đóng băng (freeze) giao diện người dùng Tkinter.
-  - Xử lý các lệnh: đọc thông tin chip (`chip_id`, `flash_id`), đọc MAC, nạp flash (`write_flash`), xóa flash (`erase_flash`, `erase_region`), đọc phân vùng (`read_flash`).
-- **`modules/stream_util.py`**:
-  - Đón bắt luồng `stdout`/`stderr`, lọc bỏ mã thoát màu ANSI (ANSI Escape Codes), giải mã ký tự UTF-8 gia tăng (`incrementaldecoder`) và chèn mốc thời gian (timestamp).
-- **`modules/serial_util.py`**:
-  - Quét và liệt kê cổng COM của hệ thống qua PySerial, tự động lọc và ưu tiên các vi mạch cầu nạp thông dụng (CH340, CP210x, FTDI, ESP JTAG).
-- **`modules/mac_database.py`**:
-  - Cơ sở dữ liệu tĩnh chứa 335 mã tiền tố OUI được IEEE cấp cho Espressif Systems.
-  - Hỗ trợ đối soát và suy luận địa chỉ MAC Wi-Fi Station, Wi-Fi AP và Bluetooth từ Base MAC.
-- **`modules/binary_scanner.py`**:
-  - Kiểm tra tính toàn vẹn của file firmware `.bin` (Magic byte `0xE9`, SPI mode, Flash size, target chip).
-  - Hỗ trợ quét thư mục dự án và phân tích file manifest cấu hình.
-- **`modules/update_util.py`**:
-  - Kết nối GitHub Releases API (`ybao2004/esp32_manager_tool`) để kiểm tra phiên bản mới theo chuẩn semantic version.
-  - Tải trực tiếp bản cập nhật qua HTTP Stream với callback thanh tiến trình thời gian thực.
-- **`modules/win32_util.py`**:
-  - Nhúng icon đa độ phân giải trực tiếp vào Handle cửa sổ Windows (`WM_SETICON`) để tránh vỡ hạt icon.
-
-### 2.3. Lớp Quản Lý Phân Vùng (Partition Engine - `modules/partition/`)
-- **`partition_model.py`**:
-  - Định nghĩa thực thể `PartitionEntry` và `PartitionTable`.
-  - Phân tích và tạo file định dạng `partitions.csv` chuẩn ESP-IDF.
-  - Biên dịch trực tiếp cấu trúc nhị phân 32-byte (`struct.pack`) kèm mã băm MD5 Checksum (Magic `0xAA50`, Subtype, Offset, Size, Flags).
-  - Thuật toán `auto_pack()`: Dồn biên tự động và căn lề 64 KB (`0x10000`) cho App, 4 KB (`0x1000`) cho Data.
-  - Bộ kiểm tra tính hợp lệ toàn diện (`validate()`): Kiểm tra trùng lặp tên, độ dài tên, địa chỉ offset tối thiểu, thiếu otadata, vượt dung lượng flash.
-- **`chip_database.py`**:
-  - Bảng thông số phần cứng của toàn bộ các dòng vi điều khiển Espressif (dung lượng Flash tối đa, offset mặc định của bootloader và partition table).
-- **`unit_formatter.py`**:
-  - Chuyển đổi linh hoạt giữa các định dạng: số nguyên thập phân, Hexadecimal, chuỗi dung lượng (`64K`, `1M`, `4MB`), tính toán số Sector 4 KB.
-- **`project_scanner.py`**:
-  - Quét tự động thư mục dự án ESP-IDF / PlatformIO để tìm file `partitions.csv` và các file `.bin` đã biên dịch trong thư mục `build/`.
-
-### 2.4. Lớp Hộp Thoại & Giao Diện Người Dùng (Tabs & Dialogs)
-- **`modules/tabs/`**:
-  - `tab_inspector.py`: Tab 1 - Kiểm tra phần cứng toàn diện.
-  - `tab_monitor.py`: Tab 2 - Serial Monitor, điều khiển thiết bị qua lệnh F1–F15, Wi-Fi và TCP Server.
-  - `tab_flasher.py`: Tab 3 - Nạp đa file `.bin` với thanh tiến trình và công cụ xóa Flash.
-  - `tab_partition.py`: Tab 4 - Partition Wizard với MiniTool Disk Map tương tác trực quan.
-- **`modules/dialogs/`**:
-  - `settings_dialog.py`: Hộp thoại cấu hình hệ thống đa tab (Chung, Phím chức năng, Cập nhật, Giới thiệu).
-  - `partition_dialogs.py`: Hộp thoại thêm/sửa phân vùng và nạp mẫu phân vùng mẫu (Preset).
-  - `layout_util.py`: Căn chỉnh vị trí cửa sổ con tương đối so với cửa sổ cha.
+### Lợi ích của mô hình tách UI Page + Business Mixin
+- **Tách biệt giao diện và xử lý phần cứng:** Lớp trang `modules/ui/pages/*.py` chỉ xây dựng widget PyQt6, ràng buộc sự kiện và cung cấp lớp tương thích (`_ComboCompat`, `_TreeCompat`,...) để các lớp Mixin nghiệp vụ gọi ổn định.
+- **Dễ kiểm thử tự động không cần phần cứng thật:** Các kiểm thử trong `tests/` khởi tạo `InspectorApp` ở chế độ offscreen PyQt6 (`QT_QPA_PLATFORM=offscreen`) kết hợp bộ giả lập phần cứng (`tests/mock_hardware/`).
 
 ---
 
-## 3. CƠ CHẾ AN TOÀN VÀ ĐỒNG BỘ ĐA LUỒNG (SAFETY & THREADING)
+## 2. PHÂN HỆ GIAO DIỆN PYQT6 & HỆ THỐNG CHỦ ĐỀ (`modules/ui/`)
 
-1. **Tránh xung đột cổng Serial giữa Monitor và esptool:**
-   - Cổng Serial là tài nguyên đơn quyền truy cập (Exclusive Resource).
-   - Khi thực hiện kiểm tra phần cứng, nạp flash, hoặc đọc/ghi phân vùng, hệ thống tự động tạm ngắt kết nối Serial Monitor (`serial_connection.close()`) và cắm cờ `is_detecting` / `is_flashing`.
-   - Sau khi tác vụ esptool hoàn tất, hệ thống tự động phục hồi kết nối Serial nếu trước đó đang mở.
-2. **Kiểm tra an toàn Flash trước khi ghi (Safety Checks):**
-   - **Chống chồng lấn địa chỉ (Overlap Detection):** Kiểm tra dải `[Offset, Offset + Size]` của tất cả các file trước khi nạp để tránh trường hợp file này ghi đè phá hủy dữ liệu của file khác.
-   - **Căn lề Sector 4 KB:** Mọi thao tác xóa vùng (`erase-region`) bắt buộc phải có địa chỉ bắt đầu và độ dài chia hết cho 4096 bytes (kích thước sector vật lý nhỏ nhất của chip Flash SPI).
-3. **Luồng giao diện bất đồng bộ:**
-   - Mọi hoạt động I/O tốn thời gian (kết nối mạng, tải bản cập nhật, giao tiếp cổng COM, chạy esptool) đều chạy trên background thread (`threading.Thread(daemon=True)`).
-   - Dữ liệu trả về được đưa vào hàng đợi hoặc cập nhật lên UI an toàn thông qua phương thức `root.after()`.
+### 2.1. Theme Engine Engineering Sáng / Tối (`modules/ui/theme/`)
+- `tokens.py`: Định nghĩa bảng màu **Kỹ thuật Chuyên sâu (`engineering`)** cho hai chế độ `light` và `dark`, kích thước bo góc, chữ viết monospace/UI, và ép mọi giá trị cấu hình theme cũ (nếu có) về `"engineering"`.
+- `qss.py`: Sinh stylesheet QSS thống nhất toàn ứng dụng; loại bỏ viền xanh focus gây chói mắt quanh `QTableWidget`, `QLineEdit` ô F1-F15 và các combobox.
+- `manager.py`:
+  - `EngineeringProxyStyle`: Lớp `QProxyStyle` tự vẽ trực tiếp vector cho `PE_IndicatorCheckBox` và `PE_IndicatorRadioButton` trên `QPainter` có khử răng cưa, bảo đảm hình vuông/tròn đầy đặn, không bị cắt mép ở mọi tỷ lệ DPI.
+  - `ThemeManager` & `_WeakSignal`: Phát tín hiệu yếu an toàn mỗi khi chuyển giữa Engineering Sáng và Engineering Tối.
+- `icons.py`: Bộ render biểu tượng vector từ `icons/fluent/*.svg` qua `QSvgRenderer`, kèm hàm `bind_themed_icon(target, name, size, role)` tự động tô lại màu icon cho nút bấm và tiêu đề `Card` ngay khi đổi chế độ Sáng/Tối.
+
+### 2.2. Hệ thống Widget Chuyên Dụng (`modules/ui/widgets/`)
+- `sidebar.py`: Thanh điều hướng dọc thu gọn (`52px`) / mở rộng (`190px`).
+- `card.py`: Khung thẻ có icon tiêu đề tự đổi màu theo theme, giảm khoảng cách dư thừa.
+- `disk_map.py`: `DiskMapWidget` vẽ phân vùng tỷ lệ Flash theo 2 lượt (nền/nhãn phân vùng trước, khung viền chọn đôi độ tương phản cao vẽ sau cùng trên toàn khối) tránh lỗi đứt nét hay mất viền ở biên khối.
+- `connection_bar.py`, `log_view.py`, `collapsible.py`, `key_value_table.py`, `info_bar.py`, `progress_row.py`.
+
+### 2.3. Hệ thống Hộp thoại & Icon Cửa sổ / Taskbar
+- `modules/ui/dialogs/` & `modules/ui/dialogs_service.py`: Hộp thoại thuần PyQt6 (`PartitionEditDialog`, `PresetDialog`, `SizeInputDialog`, `EraseRegionDialog`, `AboutDialog`, `UpdateDialog`).
+- `modules/app_core.py` & `main.py`: Gọi `SetCurrentProcessExplicitAppUserModelID` của Windows Shell cùng Win32 `LoadImageW` + `WM_SETICON` (`set_window_icon_native`) để bảo đảm biểu tượng ứng dụng hiển thị đồng nhất cả trên thanh tiêu đề cửa sổ lẫn Windows Taskbar.
 
 ---
 
-## 4. BỘ KIỂM THỬ ĐƠN VỊ (UNIT TEST SUITE)
+## 3. PHÂN HỆ NGHIỆP VỤ & AN TOÀN ĐA LUỒNG
 
-Dự án tích hợp bộ kiểm thử tự động với `pytest` bao gồm 50 ca kiểm thử:
-- `tests/test_app_tabs.py`: Kiểm thử khởi tạo và tích hợp các Mixin tab.
-- `tests/test_audit_regressions.py`: Kiểm thử hồi quy các lỗi đã từng rà soát trong báo cáo audit.
-- `tests/test_core_utils.py`: Kiểm thử các module tiện ích cốt lõi (stream, mac_database, serial_util).
-- `tests/test_partition_wizard.py`: Kiểm thử cấu trúc 32-byte, tính mã MD5, thuật toán auto_pack, validator bảng phân vùng.
-- `tests/test_release_safety.py`: Kiểm thử các rào chắn an toàn khi nạp flash và xóa vùng nhớ.
-- `tests/test_update_util.py`: Kiểm thử bộ so sánh phiên bản và xử lý phản hồi từ GitHub API.
+1. **Điều phối luồng UI an toàn (`UiDispatcher` — `modules/ui/dispatch.py`):**
+   - Mọi luồng nền (`esptool`, Serial reader, tải bản cập nhật, nháy LED 5s) tuyệt đối không cập nhật widget Qt trực tiếp mà đẩy callback qua hàng đợi an toàn `UiDispatcher.instance().post(...)` về luồng chính Qt (`QTimer` / signal).
+2. **Độc quyền tài nguyên cổng Serial (`Exclusive COM Access`):**
+   - Khi chạy tác vụ `esptool` tại Tab 1, Tab 3, Tab 4 hoặc Tab 5, hệ thống tạm đóng kết nối Serial Monitor đang mở (nếu trùng cổng), thực thi qua `subprocess` của `esptool`, rồi khôi phục trạng thái giao diện qua `set_global_busy_state(...)`.
+3. **Nháy LED nhận diện Board Gốc an toàn (Tab 5):**
+   - Mở kết nối PySerial với cờ thụ động `dtr = False, rts = False` và `rtscts = False, dsrdtr = False` nhằm gửi chuỗi xung TX (~10 Hz tối đa 5 giây) mà không kéo chân `EN/GPIO0` gây reset mạch. Tự hủy lập tức khi đổi tab, chọn cổng khác, đóng cửa sổ hoặc khởi chạy tác vụ phần cứng khác.
+4. **Kiểm tra an toàn Flash & Engine Phân vùng (`modules/partition/`):**
+   - `partition_model.py`: Đóng gói/giải mã cấu trúc 32-byte `PartitionEntry`, kiểm tra Magic `0xAA50` và băm `MD5` theo đúng chuẩn ESP-IDF.
+   - `chip_database.py`: Danh mục thông số họ chip ESP32, Bootloader Offset (`0x1000`, `0x0`, `0x2000`) và dải dung lượng Flash hỗ trợ.
+   - `unit_formatter.py`: Căn lề 4 KB (`0x1000`) và 64 KB (`0x10000`), kiểm tra trùng lặp địa chỉ trước khi ghi/xóa Flash.
+
+---
+
+## 4. HỆ THỐNG KIỂM THỬ TỰ ĐỘNG (`tests/`)
+
+Bộ kiểm thử sử dụng `pytest` với môi trường offscreen PyQt6 (`tests/mock_hardware/app_harness.py`) và thiết bị giả lập (`mock_serial.py`, `mock_esptool.py`, `mock_registry.py`):
+- Kiểm thử lõi & phân vùng: `test_core_utils.py`, `test_partition_wizard.py`, `test_update_util.py`, `test_audit_regressions.py`, `test_release_safety.py`.
+- Kiểm thử tích hợp End-to-End giả lập & đối kháng: `test_e2e_mock_tier1..4.py`, `test_challenger_m1_verification.py`, `test_tier5_adversarial_core.py`, `test_tier5_adversarial_hardware.py`.
+- Kiểm thử giao diện & tính năng v1.7: `test_app_tabs.py`, `test_ui_foundation.py`, `test_ui_widgets.py`, `test_ui_v15.py`, `test_v17_features.py`.

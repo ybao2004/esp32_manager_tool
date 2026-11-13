@@ -12,9 +12,15 @@ import os
 import re
 import tempfile
 import threading
+import time
 from datetime import datetime
-from modules import qt_toolkit as tk
-from modules.qt_toolkit import ttk, messagebox, filedialog
+from modules.ui.models import BooleanVar as _BooleanVar, StringVar as _StringVar, END
+from modules.ui import dialogs_service as messagebox
+from modules.ui import dialogs_service as filedialog
+from modules.backup_utils import (
+    compute_bytes_hashes, smart_trim_trailing_ff,
+    infer_bootloader_offset_for_chip, build_backup_metadata_report
+)
 
 from modules.config import (
     DARK_PALETTE, LIGHT_PALETTE, FLASH_BAUDS, REPORT_FONT_SIZE,
@@ -36,126 +42,13 @@ from modules.partition.partition_model import (
 from modules.tabs.tab_partition import DiskMapCanvas
 
 
-def compute_bytes_hashes(data: bytes) -> dict[str, str]:
-    """Tính toán đồng thời mã băm MD5 và SHA-256 cho khối dữ liệu nhị phân."""
-    return {
-        "md5": hashlib.md5(data).hexdigest(),
-        "sha256": hashlib.sha256(data).hexdigest(),
-    }
+class _TkCompat:
+    BooleanVar = _BooleanVar
+    StringVar = _StringVar
+    END = END
 
 
-def smart_trim_trailing_ff(
-    data: bytes,
-    min_size: int = 4096,
-    align_bytes: int = 4096,
-    min_keep_bytes: int | None = None
-) -> bytes:
-    """
-    Cắt bỏ chuỗi byte trống (0xFF) dư thừa ở cuối phân vùng để tối ưu dung lượng file .bin
-    và tăng tốc độ nạp khi nhân bản sang các mạch đích, vẫn đảm bảo căn biên sector 4KB.
-    """
-    if min_keep_bytes is not None:
-        min_size = min_keep_bytes
-    if not data:
-        return data
-    stripped = data.rstrip(b"\xff")
-    if not stripped:
-        # Toàn bộ phân vùng đang trống (toàn 0xFF), giữ tối thiểu 1 sector (4KB)
-        return data[:min(len(data), max(1, min_size))]
-    aligned_len = align_up(len(stripped), align_bytes) if align_bytes > 1 else len(stripped)
-    final_len = min(len(data), max(min_size, aligned_len))
-    return data[:final_len]
-
-
-def infer_bootloader_offset_for_chip(chip_name: str) -> int:
-    """Xác định địa chỉ Offset chuẩn của Second-Stage Bootloader theo từng dòng chip ESP."""
-    norm = (chip_name or "").upper().replace("-", "").replace("_", "")
-    if any(k in norm for k in ("ESP32P4", "ESP32C5")):
-        return 0x2000
-    if any(k in norm for k in ("ESP32S3", "ESP32C2", "ESP32C3", "ESP32C6", "ESP32H2", "ESP8266")):
-        return 0x0000
-    return 0x1000
-
-
-def build_backup_metadata_report(
-    manifest: dict | None = None,
-    *,
-    chip_info: dict | None = None,
-    saved_items: list[dict] | None = None,
-    backup_dir: str = "",
-    timestamp_str: str = "",
-) -> str:
-    """Tạo nội dung file báo cáo thông tin sao lưu (backup_info.txt) đầy đủ, rõ ràng."""
-    if manifest is None:
-        manifest = {
-            "timestamp": timestamp_str or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "source_port": (chip_info or {}).get("source_port", "N/A"),
-            "baudrate": (chip_info or {}).get("baudrate", "460800"),
-            "source_chip": (chip_info or {}).get("chip_name", "ESP32"),
-            "source_revision": (chip_info or {}).get("revision", "N/A"),
-            "source_crystal": (chip_info or {}).get("crystal", "N/A"),
-            "source_mac": (chip_info or {}).get("mac", "N/A"),
-            "flash_size_human": (chip_info or {}).get("flash_size", "N/A"),
-            "flash_size_bytes": (chip_info or {}).get("flash_size_bytes", 0),
-            "smart_trim": True,
-            "regions": [
-                {
-                    "name": it.get("name", "unknown"),
-                    "type": it.get("type", it.get("type_str", "N/A")),
-                    "subtype": it.get("subtype", it.get("subtype_str", "N/A")),
-                    "filename": it.get("filename", "N/A"),
-                    "offset": it.get("offset", 0),
-                    "offset_hex": it.get("offset_hex") or format_hex(int(it.get("offset", 0))),
-                    "partition_size": it.get("partition_size", it.get("original_size", 0)),
-                    "partition_size_human": it.get("partition_size_human") or format_bytes_human(int(it.get("partition_size", it.get("original_size", 0)))),
-                    "saved_size": it.get("saved_size", 0),
-                    "saved_size_human": it.get("saved_size_human") or format_bytes_human(int(it.get("saved_size", 0))),
-                    "md5": it.get("md5", "N/A"),
-                    "sha256": it.get("sha256", "N/A"),
-                }
-                for it in (saved_items or [])
-            ],
-        }
-    lines = [
-        "=" * 82,
-        f"HỒ SƠ SAO LƯU PHẦN CỨNG & FIRMWARE - {APP_NAME.upper()} v{APP_VERSION}",
-        "=" * 82,
-        f"Thời gian sao lưu     : {manifest.get('timestamp', 'N/A')}",
-        f"Cổng COM sao lưu      : {manifest.get('source_port', 'N/A')} (@ {manifest.get('baudrate', 'N/A')} bps)",
-        f"Dòng Chip gốc         : {manifest.get('source_chip', 'N/A')}",
-        f"Phiên bản Silicon     : {manifest.get('source_revision', 'N/A')}",
-        f"Tần số thạch anh      : {manifest.get('source_crystal', 'N/A')}",
-        f"Địa chỉ MAC gốc       : {manifest.get('source_mac', 'N/A')}",
-        f"Kích thước Flash chip : {manifest.get('flash_size_human', 'N/A')} ({manifest.get('flash_size_bytes', 0):,} Bytes)",
-        f"Chế độ cắt trống 0xFF : {'Bật (Smart Trim 4KB)' if manifest.get('smart_trim') else 'Tắt (Giữ nguyên kích thước vùng)'}",
-        "-" * 82,
-        "DANH SÁCH CÁC PHÂN VÙNG / TỆP NHỊ PHÂN ĐÃ SAO LƯU:",
-        "-" * 82,
-    ]
-
-    regions = manifest.get("regions", [])
-    for idx, reg in enumerate(regions, 1):
-        lines.extend([
-            f"[{idx:02d}] Phân vùng: {reg.get('name', 'unknown')} "
-            f"(Type: {reg.get('type', 'N/A')} | SubType: {reg.get('subtype', 'N/A')})",
-            f"     • Tên file .bin         : {reg.get('filename', 'N/A')}",
-            f"     • Địa chỉ bắt đầu       : {reg.get('offset_hex', '0x0')} ({reg.get('offset', 0):,} Bytes)",
-            f"     • Dung lượng phân vùng  : {reg.get('partition_size_human', 'N/A')} ({reg.get('partition_size', 0):,} Bytes)",
-            f"     • Dung lượng file lưu   : {reg.get('saved_size_human', 'N/A')} ({reg.get('saved_size', 0):,} Bytes)",
-            f"     • Mã băm MD5            : {reg.get('md5', 'N/A')}",
-            f"     • Mã băm SHA-256        : {reg.get('sha256', 'N/A')}",
-            "-" * 82,
-        ])
-
-    if regions:
-        pair_args = " ".join(f"{r.get('offset_hex', '0x0')} \"{r.get('filename', '')}\"" for r in regions)
-        lines.extend([
-            "LỆNH ESPTOOL KHÔI PHỤC / NHÂN BẢN MẪU:",
-            f"  esptool --port <COM_ĐÍCH> --baud 460800 write-flash -z {pair_args}",
-            "=" * 82,
-        ])
-
-    return "\n".join(lines) + "\n"
+tk = _TkCompat
 
 
 class BackupCloneTabMixin:
@@ -168,9 +61,15 @@ class BackupCloneTabMixin:
         """Khởi tạo giao diện Tab 5 bên trong self.backup_tab."""
         self.backup_hw_thread = None
         self._is_backup_hw_running = False
+        self._backup_has_loaded_source = False
+        self._syncing_backup_ports = False
+        self._led_blink_thread = None
+        self._led_blink_stop_event = threading.Event()
+        self._is_led_blinking = False
+        self._last_blink_port = ""
         self.backup_source_info = {
-            "chip_name": "ESP32",
-            "chip_line": "Chưa đọc từ chip (Đang hiển thị bố cục mặc định)",
+            "chip_name": "Chưa xác định",
+            "chip_line": "Chưa đọc từ chip",
             "revision": "N/A",
             "crystal": "N/A",
             "mac": "Chưa xác định",
@@ -181,302 +80,26 @@ class BackupCloneTabMixin:
         self.backup_last_saved_dir = ""
         self.backup_last_manifest: dict | None = None
 
-        self.var_backup_smart_trim = tk.BooleanVar(value=True)
-        self.var_clone_erase_first = tk.BooleanVar(value=False)
-        self.var_clone_source_mode = tk.StringVar(value="live_board")
+        if not hasattr(self, "var_backup_smart_trim") or self.var_backup_smart_trim is None:
+            self.var_backup_smart_trim = tk.BooleanVar(value=True)
+        if not hasattr(self, "var_clone_erase_first") or self.var_clone_erase_first is None:
+            self.var_clone_erase_first = tk.BooleanVar(value=False)
+        if not hasattr(self, "var_clone_source_mode") or self.var_clone_source_mode is None:
+            self.var_clone_source_mode = tk.StringVar(value="live_board")
         self.backup_selected_keys: set[str] = set()
         self.backup_region_hashes: dict[str, str] = {}
         self.clone_target_vars: dict[str, tk.BooleanVar] = {}
 
-        # Khởi tạo bảng phân vùng mẫu cho sơ đồ DiskMapCanvas của Tab 5
+        # Khởi tạo bảng phân vùng trống hoàn toàn cho tới khi đọc cấu trúc từ chip nguồn
         self.backup_table = PartitionTable(flash_size=4 * 1024 * 1024, target_chip="esp32")
-        default_csv = (
-            "# ESP-IDF Partition Table\n"
-            "nvs,      data, nvs,     0x9000,  0x6000,\n"
-            "phy_init, data, phy,     0xf000,  0x1000,\n"
-            "factory,  app,  factory, 0x10000, 1M,\n"
-            "storage,  data, spiffs,  0x110000, 1M,\n"
-        )
-        self.backup_table.from_csv(default_csv)
 
-        self.backup_tab.columnconfigure(0, weight=1)
-        self.backup_tab.rowconfigure(0, weight=0)  # 1. Thanh điều khiển Board gốc
-        self.backup_tab.rowconfigure(1, weight=0)  # 2. Thanh sơ đồ phân vùng DiskMapCanvas
-        self.backup_tab.rowconfigure(2, weight=1)  # 3. Khung chia đôi: Danh sách vùng sao lưu & Nhân bản đa mạch
-
-        # 1. Thanh điều khiển Board gốc trên cùng
-        top_bar = ttk.Frame(self.backup_tab, padding=(8, 4))
-        top_bar.grid(row=0, column=0, sticky="ew", padx=6, pady=(4, 2))
-        self._build_backup_top_bar(top_bar)
-
-        # 2. Thanh sơ đồ phân vùng trực quan (giống Tab 4)
-        map_group = ttk.LabelFrame(
-            self.backup_tab,
-            text=" Sơ Đồ Phân Vùng Trên Chip Gốc (Click vào từng khối để Chọn / Bỏ chọn Sao lưu) ",
-            padding=6
-        )
-        map_group.grid(row=1, column=0, sticky="ew", padx=8, pady=(0, 4))
-        map_group.columnconfigure(0, weight=1)
-
-        self.backup_disk_map = DiskMapCanvas(
-            map_group,
-            on_select_entry=self._on_backup_map_click_entry,
-            on_unallocated_click=None,
-            on_context_action=None
-        )
-        self.backup_disk_map.grid(row=0, column=0, sticky="ew")
-
-        self.lbl_backup_chip_summary = ttk.Label(
-            map_group,
-            text="",
-            font=("Segoe UI", 8, "italic")
-        )
-        self.lbl_backup_chip_summary.grid(row=1, column=0, sticky="w", pady=(4, 0))
-
-        # 3. Khung chính: Trái (Bảng tích chọn phân vùng) - Phải (Sao lưu & Sao chép trực tiếp sang nhiều Board)
-        body_frame = ttk.Frame(self.backup_tab)
-        body_frame.grid(row=2, column=0, sticky="nsew", padx=8, pady=(0, 6))
-        body_frame.columnconfigure(0, weight=5)
-        body_frame.columnconfigure(1, weight=4)
-        body_frame.rowconfigure(0, weight=1)
-
-        self._build_backup_regions_panel(body_frame)
-        self._build_backup_actions_and_clone_panel(body_frame)
-
-        # Chọn mặc định toàn bộ các phân vùng (bao gồm Bootloader & Partition Table)
-        for reg in self._get_all_backup_regions():
-            self.backup_selected_keys.add(reg["key"])
-
-        self.backup_disk_map.set_theme_mode(getattr(self, "is_dark_mode", False))
-        self.refresh_backup_views()
-
-    def _build_backup_top_bar(self, parent: ttk.Frame):
-        row = ttk.Frame(parent)
-        row.pack(fill="x", expand=True)
-
-        ttk.Label(row, text="Board Gốc (COM):", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 4))
-        self.backup_src_port_var = tk.StringVar(value="")
-        self.cb_backup_src_port = ttk.Combobox(
-            row,
-            textvariable=self.backup_src_port_var,
-            values=[],
-            state="readonly",
-            width=10,
-            postcommand=self._refresh_backup_ports
-        )
-        self.cb_backup_src_port.pack(side="left", padx=(0, 4))
-        self.cb_backup_src_port.bind("<<ComboboxSelected>>", lambda e: self._refresh_clone_target_checkboxes())
-
-        self.btn_backup_refresh_com = ttk.Button(
-            row, text="Làm mới COM", width=12, command=self._refresh_backup_ports
-        )
-        self.btn_backup_refresh_com.pack(side="left", padx=(0, 8))
-
-        ttk.Label(row, text="Baudrate:").pack(side="left", padx=(0, 4))
-        self.backup_baud_var = tk.StringVar(value="460800")
-        self.cb_backup_baud = ttk.Combobox(
-            row,
-            textvariable=self.backup_baud_var,
-            values=FLASH_BAUDS,
-            state="readonly",
-            width=9
-        )
-        self.cb_backup_baud.pack(side="left", padx=(0, 8))
-
-        self.btn_backup_read_chip = ttk.Button(
-            row,
-            text="ĐỌC CẤU TRÚC & MAC TỪ CHIP GỐC",
-            style="Accent.TButton",
-            command=self._hw_probe_source_chip_for_backup
-        )
-        self.btn_backup_read_chip.pack(side="left", padx=(0, 8))
-
-        ttk.Separator(row, orient="vertical").pack(side="left", fill="y", padx=5, pady=2)
-
-        self.btn_backup_sel_all = ttk.Button(
-            row, text="Chọn Tất Cả", command=lambda: self._backup_select_all(True)
-        )
-        self.btn_backup_sel_all.pack(side="left", padx=2)
-
-        self.btn_backup_unsel_all = ttk.Button(
-            row, text="Bỏ Chọn", command=lambda: self._backup_select_all(False)
-        )
-        self.btn_backup_unsel_all.pack(side="left", padx=2)
-
-        self.btn_backup_sel_fw = ttk.Button(
-            row, text="Chỉ Chọn Firmware & Boot", command=self._backup_select_firmware_only
-        )
-        self.btn_backup_sel_fw.pack(side="left", padx=2)
-
-        self.chk_backup_trim = ttk.Checkbutton(
-            row,
-            text="Cắt trống 0xFF (Smart Trim)",
-            variable=self.var_backup_smart_trim
-        )
-        self.chk_backup_trim.pack(side="left", padx=(6, 0))
-
-    def _build_backup_regions_panel(self, parent: ttk.Frame):
-        left_group = ttk.LabelFrame(
-            parent,
-            text=" Danh Sách Phân Vùng & Dữ Liệu Cần Sao Lưu (Click dòng để Chọn [x] / Bỏ chọn [ ]) ",
-            padding=6
-        )
-        left_group.grid(row=0, column=0, sticky="nsew", padx=(0, 4))
-        left_group.columnconfigure(0, weight=1)
-        left_group.rowconfigure(0, weight=1)
-
-        cols = ("checked", "stt", "name", "type", "subtype", "offset", "size", "hash")
-        self.backup_tree = ttk.Treeview(left_group, columns=cols, show="headings", selectmode="browse")
-
-        self.backup_tree.heading("checked", text="Chọn")
-        self.backup_tree.heading("stt", text="STT")
-        self.backup_tree.heading("name", text="Tên Vùng")
-        self.backup_tree.heading("type", text="Kiểu")
-        self.backup_tree.heading("subtype", text="Phân loại")
-        self.backup_tree.heading("offset", text="Địa chỉ (Offset)")
-        self.backup_tree.heading("size", text="Dung lượng")
-        self.backup_tree.heading("hash", text="Mã băm SHA-256 / Trạng thái")
-
-        self.backup_tree.column("checked", width=48, anchor="center")
-        self.backup_tree.column("stt", width=42, anchor="center")
-        self.backup_tree.column("name", width=110, anchor="w")
-        self.backup_tree.column("type", width=70, anchor="center")
-        self.backup_tree.column("subtype", width=85, anchor="center")
-        self.backup_tree.column("offset", width=95, anchor="e")
-        self.backup_tree.column("size", width=95, anchor="e")
-        self.backup_tree.column("hash", width=165, anchor="w")
-
-        self.backup_tree.grid(row=0, column=0, sticky="nsew")
-        vsb = ttk.Scrollbar(left_group, orient="vertical", command=self.backup_tree.yview)
-        vsb.grid(row=0, column=1, sticky="ns")
-        self.backup_tree.configure(yscrollcommand=vsb.set)
-
-        self.backup_tree.bind("<ButtonRelease-1>", self._on_backup_tree_click)
-        self.backup_tree.bind("<space>", self._on_backup_tree_space)
-
-        # Thanh nút phụ dưới bảng phân vùng
-        bottom_left = ttk.Frame(left_group)
-        bottom_left.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-
-        self.btn_backup_to_folder = ttk.Button(
-            bottom_left,
-            text="SAO LƯU VÙNG ĐÃ CHỌN RA THƯ MỤC (KÈM SHA256/MAC)",
-            style="Accent.TButton",
-            command=self._hw_backup_selected_to_folder
-        )
-        self.btn_backup_to_folder.pack(side="left", padx=(0, 6))
-
-        self.btn_backup_full_chip = ttk.Button(
-            bottom_left,
-            text="Sao Lưu Toàn Bộ Flash (1 File .bin)",
-            command=self._hw_backup_full_flash_single_file
-        )
-        self.btn_backup_full_chip.pack(side="left", padx=(0, 6))
-
-        self.btn_backup_to_flasher = ttk.Button(
-            bottom_left,
-            text="Đẩy sang Tab Nạp Flash",
-            command=self._action_send_backup_to_flasher_tab
-        )
-        self.btn_backup_to_flasher.pack(side="left")
-
-    def _build_backup_actions_and_clone_panel(self, parent: ttk.Frame):
-        right_container = ttk.Frame(parent)
-        right_container.grid(row=0, column=1, sticky="nsew", padx=(4, 0))
-        right_container.columnconfigure(0, weight=1)
-        right_container.rowconfigure(0, weight=0)
-        right_container.rowconfigure(1, weight=1)
-
-        # Khung trên: Sao chép trực tiếp từ Board gốc sang 1 hoặc nhiều Board đích
-        clone_group = ttk.LabelFrame(
-            right_container,
-            text=" Sao Chép Trực Tiếp (Direct Clone: 1 Board Gốc -> Nhiều Board Đích) ",
-            padding=8
-        )
-        clone_group.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        clone_group.columnconfigure(0, weight=1)
-
-        mode_row = ttk.Frame(clone_group)
-        mode_row.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        ttk.Label(mode_row, text="Nguồn dữ liệu:", font=("Segoe UI", 9, "bold")).pack(side="left", padx=(0, 6))
-        ttk.Radiobutton(
-            mode_row,
-            text="Đọc trực tiếp từ Board Gốc",
-            variable=self.var_clone_source_mode,
-            value="live_board"
-        ).pack(side="left", padx=(0, 8))
-        ttk.Radiobutton(
-            mode_row,
-            text="Từ Thư mục Sao lưu đã lưu",
-            variable=self.var_clone_source_mode,
-            value="saved_folder"
-        ).pack(side="left")
-
-        target_hdr = ttk.Frame(clone_group)
-        target_hdr.grid(row=1, column=0, sticky="ew", pady=(2, 2))
-        ttk.Label(
-            target_hdr,
-            text="Tích chọn các cổng COM Đích (Board nhận sao chép):",
-            font=("Segoe UI", 9, "bold")
-        ).pack(side="left")
-        ttk.Button(
-            target_hdr,
-            text="Chọn hết cổng đích",
-            command=lambda: self._select_all_clone_targets(True)
-        ).pack(side="right", padx=(4, 0))
-
-        self.clone_target_ports_frame = ttk.Frame(clone_group)
-        self.clone_target_ports_frame.grid(row=2, column=0, sticky="ew", pady=2)
-
-        clone_ctrl = ttk.Frame(clone_group)
-        clone_ctrl.grid(row=3, column=0, sticky="ew", pady=(6, 0))
-        self.chk_clone_erase = ttk.Checkbutton(
-            clone_ctrl,
-            text="Xóa sạch Flash board đích trước khi chép (--erase-all)",
-            variable=self.var_clone_erase_first
-        )
-        self.chk_clone_erase.pack(side="left")
-
-        clone_btn_bar = ttk.Frame(clone_group)
-        clone_btn_bar.grid(row=4, column=0, sticky="ew", pady=(6, 0))
-        self.btn_direct_clone = ttk.Button(
-            clone_btn_bar,
-            text="SAO CHÉP TRỰC TIẾP SANG CÁC BOARD ĐÍCH",
-            style="Accent.TButton",
-            command=self._hw_start_direct_multi_board_clone
-        )
-        self.btn_direct_clone.pack(side="left", fill="x", expand=True)
-
-        # Khung dưới: Nhật ký Sao lưu & Nhân bản
-        log_group = ttk.LabelFrame(
-            right_container,
-            text=" Nhật Ký Sao Lưu, Mã Băm (MD5/SHA256) & Tiến Trình Nhân Bản ",
-            padding=6
-        )
-        log_group.grid(row=1, column=0, sticky="nsew")
-        log_group.columnconfigure(0, weight=1)
-        log_group.rowconfigure(0, weight=1)
-
-        self.backup_log_txt = tk.Text(
-            log_group,
-            height=10,
-            wrap="word",
-            font=("Consolas", REPORT_FONT_SIZE),
-            relief="flat",
-            borderwidth=1,
-            state="disabled"
-        )
-        self.backup_log_txt.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
-        vsb_log = ttk.Scrollbar(log_group, orient="vertical", command=self.backup_log_txt.yview)
-        vsb_log.grid(row=0, column=1, sticky="ns")
-        self.backup_log_txt.configure(yscrollcommand=vsb_log.set)
-
-        btn_clear_log = ttk.Button(
-            log_group,
-            text="Xóa Nhật Ký",
-            command=lambda: self.on_clear(self.backup_log_txt, clear_status=False)
-        )
-        btn_clear_log.grid(row=1, column=0, columnspan=2, sticky="e", pady=(4, 0))
+        if hasattr(self, 'backup_tree') and self.backup_tree is not None:
+            if hasattr(self, 'backup_disk_map') and self.backup_disk_map is not None:
+                self.backup_disk_map.on_select_entry = self._on_backup_map_click_entry
+                self.backup_disk_map.set_theme_mode(getattr(self, "is_dark_mode", False))
+            self.backup_tree.bind("<Button-1>", self._on_backup_tree_click)
+            self.refresh_backup_views()
+            return
 
     def log_backup(self, text: str, tag: str | None = None):
         """Ghi nhật ký vào khung log của Tab 5."""
@@ -493,7 +116,11 @@ class BackupCloneTabMixin:
         """
         Trả về danh sách toàn bộ các phân vùng có thể sao lưu trên chip gốc:
         Bao gồm Bootloader, Partition Table và tất cả các phân vùng trong self.backup_table.entries.
+        Trả về danh sách rỗng nếu chưa đọc từ chip và chưa có phân vùng nào.
         """
+        if not getattr(self, "_backup_has_loaded_source", False) and not self.backup_table.entries:
+            return []
+
         boot_off = int(self.backup_source_info.get("bootloader_offset", 0x1000))
         part_off = int(self.backup_source_info.get("part_table_offset", 0x8000))
         boot_size = max(0x1000, part_off - boot_off) if part_off > boot_off else 0x7000
@@ -537,19 +164,204 @@ class BackupCloneTabMixin:
         filtered = self.filter_ignored_ports(raw_ports) if hasattr(self, "filter_ignored_ports") else raw_ports
 
         if hasattr(self, "cb_backup_src_port") and self.cb_backup_src_port.winfo_exists():
-            self.cb_backup_src_port["values"] = filtered
-            curr_src = self.backup_src_port_var.get().strip()
-            top_port = self.port_cb.get().strip() if hasattr(self, "port_cb") else ""
-            if curr_src and curr_src in filtered:
-                self.backup_src_port_var.set(curr_src)
-            elif top_port and top_port in filtered:
-                self.backup_src_port_var.set(top_port)
-            elif filtered:
-                self.backup_src_port_var.set(filtered[0])
-            else:
-                self.backup_src_port_var.set("")
+            self._syncing_backup_ports = True
+            try:
+                self.cb_backup_src_port.blockSignals(True)
+                self.cb_backup_src_port["values"] = filtered
+                curr_src = self.backup_src_port_var.get().strip()
+                top_port = self.port_cb.get().strip() if hasattr(self, "port_cb") else ""
+                chosen = ""
+                if curr_src and curr_src in filtered:
+                    chosen = curr_src
+                elif top_port and top_port in filtered:
+                    chosen = top_port
+                elif filtered:
+                    chosen = filtered[0]
+                self.cb_backup_src_port.setCurrentText(chosen)
+                self.backup_src_port_var.set(chosen)
+                self.cb_backup_src_port.blockSignals(False)
+                if hasattr(self.cb_backup_src_port, "_sync_fit_width"):
+                    self.cb_backup_src_port._sync_fit_width()
+            finally:
+                self._syncing_backup_ports = False
 
         self._refresh_clone_target_checkboxes(filtered)
+
+    def _is_on_backup_tab(self) -> bool:
+        """Kiểm tra người dùng có đang đứng ở Tab 5 (Backup & Clone) hay không."""
+        if hasattr(self, "stack") and hasattr(self, "page_backup"):
+            return self.stack.currentWidget() is self.page_backup
+        if hasattr(self, "notebook") and hasattr(self, "backup_tab"):
+            try:
+                return self.notebook.stack.currentWidget() is self.backup_tab
+            except Exception:
+                pass
+        return False
+
+    def update_tab5_led_blink_visibility(self):
+        """Ẩn/hiện nút Nháy LED trên Tab 5 theo tùy chọn ẩn trong Cài đặt."""
+        enabled = bool(getattr(self, "tab5_led_blink_enabled", False))
+        btn = getattr(self, "btn_backup_blink_led", None)
+        if btn is not None and hasattr(btn, "setVisible"):
+            btn.setVisible(enabled)
+        if not enabled:
+            self._stop_board_led_blink()
+
+    def _stop_board_led_blink(self, join_timeout: float = 0.25):
+        """Dừng ngay tiến trình nháy LED Board Gốc và giải phóng cổng COM an toàn."""
+        stop_ev = getattr(self, "_led_blink_stop_event", None)
+        if stop_ev is not None:
+            stop_ev.set()
+        t = getattr(self, "_led_blink_thread", None)
+        if t is not None and t.is_alive() and threading.current_thread() is not t:
+            try:
+                t.join(timeout=join_timeout)
+            except Exception:
+                pass
+        self._is_led_blinking = False
+        btn = getattr(self, "btn_backup_blink_led", None)
+        if btn is not None:
+            try:
+                btn.setText("Nháy LED")
+            except Exception:
+                pass
+
+    def _start_board_led_blink(self, port: str, duration: float = 5.0) -> bool:
+        """
+        Gửi burst dữ liệu UART TX định kỳ (khoảng 10 Hz trong `duration` giây)
+        mà không tạo xung DTR/RTS reset chip, giúp nháy LED TX/RX nhận diện Board Gốc an toàn.
+        Chỉ hoạt động khi đang ở Tab 5 và tùy chọn ẩn đã được bật.
+        """
+        port = str(port or "").strip()
+        if not port or port == "Không có cổng COM":
+            return False
+        if not bool(getattr(self, "tab5_led_blink_enabled", False)):
+            return False
+        if not self._is_on_backup_tab():
+            return False
+        if self._is_backup_hw_running or (hasattr(self, "is_device_busy") and self.is_device_busy()):
+            return False
+        # Nếu Serial Monitor đang mở đúng cổng đó, không tranh chấp mở lại cổng
+        cur_ser = getattr(self, "serial_connection", None)
+        if cur_ser is not None and getattr(cur_ser, "is_open", False):
+            ser_port = str(getattr(cur_ser, "port", "") or "").strip().upper()
+            if ser_port == port.upper():
+                self.log_backup(f">> [NHÁY LED] Cổng {port} đang mở ở Serial Monitor, bỏ qua nháy LED.", tag=None)
+                return False
+
+        self._stop_board_led_blink()
+        self._led_blink_stop_event = threading.Event()
+        stop_ev = self._led_blink_stop_event
+        self._is_led_blinking = True
+        self._last_blink_port = port
+
+        btn = getattr(self, "btn_backup_blink_led", None)
+        if btn is not None:
+            try:
+                btn.setText("Dừng nháy (5s)")
+            except Exception:
+                pass
+
+        def safe_ui(fn):
+            try:
+                if hasattr(self, "ui_call") and callable(self.ui_call):
+                    self.ui_call(fn)
+                elif getattr(self, "root", None) and hasattr(self.root, "after"):
+                    self.root.after(0, fn)
+            except Exception:
+                pass
+
+        safe_ui(lambda p=port, d=int(round(duration)): self.set_status(
+            f"Đang nháy LED nhận diện Board Gốc {p} trong {d}s...", "info"
+        ))
+
+        def worker():
+            import serial
+            ser = None
+            try:
+                ser = serial.Serial()
+                ser.port = port
+                ser.baudrate = 115200
+                ser.timeout = 0.05
+                ser.write_timeout = 0.05
+                ser.rtscts = False
+                ser.dsrdtr = False
+                # Giữ DTR/RTS ở trạng thái thụ động để tránh reset ESP32 khi mở cổng
+                ser.dtr = False
+                ser.rts = False
+                ser.open()
+
+                start_t = time.monotonic()
+                while not stop_ev.is_set() and (time.monotonic() - start_t) < duration:
+                    if not self._is_on_backup_tab() or not getattr(self, "tab5_led_blink_enabled", False):
+                        break
+                    try:
+                        ser.write(b"\n")
+                        ser.flush()
+                    except Exception:
+                        break
+                    if stop_ev.wait(0.1):
+                        break
+            except Exception as ex:
+                err_msg = str(ex)
+                safe_ui(lambda p=port, m=err_msg: self.log_backup(
+                    f">> [NHÁY LED] Không thể mở {p}: {m}"
+                ))
+            finally:
+                if ser is not None:
+                    try:
+                        if getattr(ser, "is_open", False):
+                            ser.close()
+                    except Exception:
+                        pass
+
+                def _cleanup_ui():
+                    self._is_led_blinking = False
+                    b = getattr(self, "btn_backup_blink_led", None)
+                    if b is not None:
+                        try:
+                            b.setText("Nháy LED")
+                        except Exception:
+                            pass
+
+                safe_ui(_cleanup_ui)
+
+        self._led_blink_thread = threading.Thread(target=worker, daemon=True)
+        self._led_blink_thread.start()
+        return True
+
+    def _on_backup_src_port_selected_by_user(self, port_text: str = ""):
+        """Tự động nháy LED 5s khi người dùng chọn Board Gốc (chỉ trong Tab 5 và khi bật tính năng)."""
+        if getattr(self, "_syncing_backup_ports", False):
+            return
+        chosen = str(port_text or "").strip()
+        if not chosen and hasattr(self, "cb_backup_src_port"):
+            chosen = self.cb_backup_src_port.currentText().strip()
+        if chosen and hasattr(self, "backup_src_port_var"):
+            self.backup_src_port_var.set(chosen)
+        self._refresh_clone_target_checkboxes()
+        if chosen and self._is_on_backup_tab() and bool(getattr(self, "tab5_led_blink_enabled", False)):
+            self._start_board_led_blink(chosen, duration=5.0)
+        else:
+            self._stop_board_led_blink()
+
+    def _on_toggle_board_led_blink(self):
+        """Bấm nút 'Nháy LED' bên cạnh Board Gốc để nháy 5 giây hoặc dừng sớm."""
+        if getattr(self, "_is_led_blinking", False):
+            self._stop_board_led_blink()
+            self.set_status("Đã dừng nháy LED nhận diện Board Gốc.", "info")
+            return
+        port = self.backup_src_port_var.get().strip() if hasattr(self, "backup_src_port_var") else ""
+        if not port and hasattr(self, "cb_backup_src_port"):
+            port = self.cb_backup_src_port.currentText().strip()
+        if not port or port == "Không có cổng COM":
+            messagebox.showwarning(
+                "Chưa chọn Board Gốc",
+                "Vui lòng chọn cổng COM của Board Gốc trước khi nháy LED.",
+                parent=self.root,
+            )
+            return
+        self._start_board_led_blink(port, duration=5.0)
 
     def _refresh_clone_target_checkboxes(self, available_ports: list[str] | None = None):
         """Hiển thị danh sách các cổng COM Đích (loại trừ cổng COM đang làm Board Gốc)."""
@@ -569,26 +381,31 @@ class BackupCloneTabMixin:
 
         target_candidates = [p for p in available_ports if p.strip().upper() != src_port]
         if not target_candidates:
-            ttk.Label(
-                self.clone_target_ports_frame,
-                text="(Chưa phát hiện thêm cổng COM đích nào khác ngoài cổng Board gốc. Hãy cắm thêm mạch đích và bấm 'Làm mới COM')",
-                font=("Segoe UI", 8, "italic")
-            ).pack(anchor="w", padx=4, pady=2)
+            from PyQt6.QtWidgets import QLabel
+            lbl = QLabel("(Chưa phát hiện thêm cổng COM đích nào khác ngoài cổng Board gốc. Hãy cắm thêm mạch đích và bấm 'Quét COM')", self.clone_target_ports_frame)
+            lbl.setWordWrap(True)
+            lbl.setStyleSheet("font-style: italic; color: gray;")
+            if hasattr(self.clone_target_ports_frame, "_grid"):
+                self.clone_target_ports_frame._grid.addWidget(lbl, 0, 0)
             return
 
+        from PyQt6.QtWidgets import QCheckBox
         for idx, p_name in enumerate(target_candidates):
-            var = tk.BooleanVar(value=prev_states.get(p_name, True))
+            var = _BooleanVar(value=prev_states.get(p_name, True))
             self.clone_target_vars[p_name] = var
-            cb = ttk.Checkbutton(
-                self.clone_target_ports_frame,
-                text=f"Board Đích: {p_name}",
-                variable=var
-            )
-            cb.grid(row=idx // 3, column=idx % 3, sticky="w", padx=8, pady=2)
+            cb = QCheckBox(f"Board Đích: {p_name}", self.clone_target_ports_frame)
+            cb.setChecked(var.get())
+            cb.stateChanged.connect(lambda state, v=var: v.set(state == 2))
+            if hasattr(self.clone_target_ports_frame, "_grid"):
+                self.clone_target_ports_frame._grid.addWidget(cb, idx // 3, idx % 3)
 
     def _select_all_clone_targets(self, select: bool = True):
         for var in self.clone_target_vars.values():
             var.set(select)
+        if hasattr(self, "clone_target_ports_frame"):
+            for w in self.clone_target_ports_frame.winfo_children():
+                if hasattr(w, "setChecked"):
+                    w.setChecked(select)
 
     def refresh_backup_views(self):
         """Cập nhật thanh sơ đồ phân vùng DiskMapCanvas và bảng Treeview của Tab 5."""
@@ -597,57 +414,87 @@ class BackupCloneTabMixin:
 
         self._refresh_backup_ports()
 
-        # Cập nhật thanh sơ đồ phân vùng
-        layout_entries = self.backup_table.get_layout_with_unallocated()
-        selected_entry = None
-        for e in layout_entries:
-            if not e.is_unallocated:
-                k = f"part_{e.name}_{e.offset:X}"
-                if k in self.backup_selected_keys:
-                    selected_entry = e
-                    break
-        self.backup_disk_map.set_data(
-            layout_entries=layout_entries,
-            flash_size=self.backup_table.flash_size,
-            display_mode=DisplayMode.DECIMAL,
-            selected_entry=selected_entry
-        )
-
-        # Cập nhật bảng Treeview
-        for item in self.backup_tree.get_children():
-            self.backup_tree.delete(item)
-
         regions = self._get_all_backup_regions()
         for r in regions:
             r["selected"] = r["key"] in self.backup_selected_keys
         self.backup_regions = regions
+
+        if not regions:
+            self.backup_disk_map.set_checked_names(None)
+            self.backup_disk_map.set_data(
+                layout_entries=[],
+                flash_size=self.backup_table.flash_size,
+                display_mode=DisplayMode.DECIMAL,
+                selected_entry=None
+            )
+            was_blocked = self.backup_tree.blockSignals(True)
+            try:
+                for item in self.backup_tree.get_children():
+                    self.backup_tree.delete(item)
+                self.backup_tree.clearSelection()
+                self.backup_tree.setCurrentItem(None)
+            finally:
+                self.backup_tree.blockSignals(was_blocked)
+            self.lbl_backup_chip_summary.config(
+                text="Chưa đọc dữ liệu phân vùng từ chip nguồn (Chọn cổng Board Gốc và bấm 'Đọc Cấu Trúc Từ Chip Nguồn')."
+            )
+            return
+
+        # Cập nhật thanh sơ đồ phân vùng (sử dụng checked_names, không đóng khung dính chọn cứng)
+        layout_entries = self.backup_table.get_layout_with_unallocated()
+        checked_names: set[str] = set()
+        for r in regions:
+            if r["key"] in self.backup_selected_keys:
+                checked_names.add(r["name"])
+                if r["name"] == "bootloader":
+                    checked_names.add("Bootloader")
+                elif r["name"] == "partition_table":
+                    checked_names.add("Partition Table")
+
+        self.backup_disk_map.set_checked_names(checked_names)
+        self.backup_disk_map.set_data(
+            layout_entries=layout_entries,
+            flash_size=self.backup_table.flash_size,
+            display_mode=DisplayMode.DECIMAL,
+            selected_entry=None
+        )
+
+        # Cập nhật bảng Treeview
         selected_count = 0
         selected_bytes = 0
+        was_blocked = self.backup_tree.blockSignals(True)
+        try:
+            for item in self.backup_tree.get_children():
+                self.backup_tree.delete(item)
 
-        for idx, reg in enumerate(regions, 1):
-            key = reg["key"]
-            is_checked = key in self.backup_selected_keys
-            if is_checked:
-                selected_count += 1
-                selected_bytes += reg["size"]
+            for idx, reg in enumerate(regions, 1):
+                key = reg["key"]
+                is_checked = key in self.backup_selected_keys
+                if is_checked:
+                    selected_count += 1
+                    selected_bytes += reg["size"]
 
-            chk_symbol = "[x]" if is_checked else "[ ]"
-            hash_info = self.backup_region_hashes.get(key, "Sẵn sàng sao lưu" if is_checked else "Bỏ qua")
-            self.backup_tree.insert(
-                "",
-                "end",
-                iid=key,
-                values=(
-                    chk_symbol,
-                    idx,
-                    reg["name"],
-                    reg["type"],
-                    reg["subtype"],
-                    format_hex(reg["offset"]),
-                    format_bytes_human(reg["size"]),
-                    hash_info,
+                chk_symbol = "[x]" if is_checked else "[ ]"
+                hash_info = self.backup_region_hashes.get(key, "Sẵn sàng sao lưu" if is_checked else "Bỏ qua")
+                self.backup_tree.insert(
+                    "",
+                    "end",
+                    iid=key,
+                    values=(
+                        chk_symbol,
+                        idx,
+                        reg["name"],
+                        reg["type"],
+                        reg["subtype"],
+                        format_hex(reg["offset"]),
+                        format_bytes_human(reg["size"]),
+                        hash_info,
+                    )
                 )
-            )
+            self.backup_tree.clearSelection()
+            self.backup_tree.setCurrentItem(None)
+        finally:
+            self.backup_tree.blockSignals(was_blocked)
 
         chip_lbl = self.backup_source_info.get("chip_line", "Chưa đọc từ chip")
         mac_lbl = self.backup_source_info.get("mac", "N/A")
@@ -663,15 +510,21 @@ class BackupCloneTabMixin:
         """Khi click vào một khối phân vùng trên thanh sơ đồ DiskMapCanvas -> Đảo chọn phân vùng đó."""
         if entry.is_unallocated:
             return
-        key = f"part_{entry.name}_{entry.offset:X}"
+        if entry.is_system:
+            boot_off = int(self.backup_source_info.get("bootloader_offset", 0x1000))
+            part_off = int(self.backup_source_info.get("part_table_offset", 0x8000))
+            if entry.type_str == "bootloader" or entry.name.lower() == "bootloader":
+                key = f"sys_bootloader_{boot_off:X}"
+            else:
+                key = f"sys_parttable_{part_off:X}"
+        else:
+            key = f"part_{entry.name}_{entry.offset:X}"
+
         if key in self.backup_selected_keys:
             self.backup_selected_keys.remove(key)
         else:
             self.backup_selected_keys.add(key)
         self.refresh_backup_views()
-        if self.backup_tree.exists(key):
-            self.backup_tree.selection_set(key)
-            self.backup_tree.see(key)
 
     def _on_backup_tree_click(self, event):
         iid = self.backup_tree.identify_row(event.y)
@@ -723,7 +576,7 @@ class BackupCloneTabMixin:
         if isinstance(state, bool):
             state = "normal" if state else "disabled"
         for attr in (
-            "cb_backup_src_port", "btn_backup_refresh_com", "cb_backup_baud",
+            "cb_backup_src_port", "btn_backup_blink_led", "btn_backup_refresh_com", "cb_backup_baud",
             "btn_backup_read_chip", "btn_backup_sel_all", "btn_backup_unsel_all",
             "btn_backup_sel_fw", "chk_backup_trim", "btn_backup_to_folder",
             "btn_backup_full_chip", "btn_backup_to_flasher", "btn_direct_clone",
@@ -732,14 +585,13 @@ class BackupCloneTabMixin:
             w = getattr(self, attr, None)
             if w and hasattr(w, "config"):
                 try:
-                    if isinstance(w, ttk.Combobox):
-                        w.config(state="disabled" if state == "disabled" else "readonly")
-                    else:
-                        w.config(state=state)
+                    w.config(state=state)
                 except Exception:
                     pass
 
     def _prepare_backup_source_port(self) -> tuple[str, int] | None:
+        if hasattr(self, "_stop_board_led_blink"):
+            self._stop_board_led_blink()
         port = self.backup_src_port_var.get().strip()
         if not port and hasattr(self, "port_cb"):
             port = self.port_cb.get().strip()
@@ -828,6 +680,7 @@ class BackupCloneTabMixin:
                 except OSError:
                     pass
 
+        self._backup_has_loaded_source = True
         return True
 
     def _hw_probe_source_chip_for_backup(self):
@@ -912,7 +765,7 @@ class BackupCloneTabMixin:
                     cur_done = base_done + (pct / 100.0) * cur_sz
                     overall = progress_start + ((cur_done / total_bytes) * (progress_end - progress_start))
                     safe_after(lambda p=overall, n=r_name, pc=pct: self.set_status(
-                        f"Đang sao lưu '{n}' ({pc}%)...", "warning", progress=p
+                        f"Đang sao lưu '{n}' ({pc}%)...", "warning", progress=p, task_label=f"Sao lưu '{n}'"
                     ))
 
             args = ["--port", port, "--baud", str(baud), "read-flash", format_hex(r_off), format_hex(r_size), dest_path]
@@ -1131,7 +984,7 @@ class BackupCloneTabMixin:
                         pct = int(m.group(1))
                         prog = 15 + int(pct * 0.8)
                         safe_after(lambda p=prog, pc=pct: self.set_status(
-                            f"Đang đọc toàn bộ Flash ({pc}%)...", "warning", progress=p
+                            f"Đang đọc toàn bộ Flash ({pc}%)...", "warning", progress=p, task_label="Sao lưu toàn bộ Flash"
                         ))
 
                 res = run_esptool_command(
@@ -1392,7 +1245,8 @@ class BackupCloneTabMixin:
                             pct = int(m.group(1))
                             cur_p = bp + (pct / 100.0) * sp
                             safe_after(lambda p=cur_p, port_lbl=tp, pc=pct, i=ti, tot=tt: self.set_status(
-                                f"Đang chép sang {port_lbl} [{i}/{tot}] ({pc}%)...", "warning", progress=p
+                                f"Đang chép sang {port_lbl} [{i}/{tot}] ({pc}%)...", "warning", progress=p,
+                                task_label=f"Nhân bản {port_lbl} [{i}/{tot}]"
                             ))
 
                     res = run_esptool_command(args, progress_callback=on_target_stream)

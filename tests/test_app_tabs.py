@@ -2,12 +2,12 @@ import gc
 import os
 import shutil
 import tempfile
-from modules import qt_toolkit as tk
-from modules.qt_toolkit import ttk
 import unittest
 from unittest.mock import Mock, patch
+from PyQt6.QtWidgets import QWidget
 
 from modules.app_core import InspectorApp
+from modules.tabs.tab_partition import _QMenuCompat
 from modules.help_content import quick_start_text, about_features_text
 from tests.mock_hardware.app_harness import HeadlessAppHarness, _global_after_queue
 
@@ -113,9 +113,23 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
             self.assertEqual(cols[2], "type")
             self.assertEqual(cols[3], "subtype")
 
+            # Tab 4 ban đầu phải trống hoàn toàn (chỉ có dòng "+ Thêm phân vùng mới")
+            self.assertEqual(len(app.table.entries), 0)
+            self.assertEqual(app.part_tree.get_children(), ["__add_row__"])
+
+            # Nạp mẫu chuẩn để kiểm tra các hàng hiển thị
+            app.table.from_csv(
+                "nvs, data, nvs, 0x9000, 0x6000,\n"
+                "phy_init, data, phy, 0xf000, 0x1000,\n"
+                "factory, app, factory, 0x10000, 1M,\n"
+                "storage, data, spiffs, , 2800K,\n"
+            )
+            app._cascade_auto_pack(from_idx=0)
+            app.refresh_partition_views()
+
             # Kiểm tra các hàng hiển thị số thứ tự sạch sẽ trong cột STT
             children = app.part_tree.get_children()
-            self.assertGreater(len(children), 0)
+            self.assertGreater(len(children), 1)
             first_row_vals = app.part_tree.item(children[0], "values")
             self.assertEqual(first_row_vals[0], "#1")
             self.assertEqual(first_row_vals[1], "nvs")
@@ -129,29 +143,31 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
             self.assertTrue(new_name.startswith("part_"))
 
             # Kiểm tra xóa dòng vừa chèn (mock messagebox.askyesno -> True)
-            with patch('modules.qt_toolkit.messagebox.askyesno', return_value=True):
+            with patch('modules.ui.dialogs_service.askyesno', return_value=True):
                 app._action_delete_by_row(new_child)
             self.assertEqual(len(app.table.entries), initial_count)
 
     def test_partition_context_menu_has_only_column_options(self):
         with patch('modules.app_core.set_window_icon_native'):
             app = InspectorApp(self.root)
+            app.table.from_csv("nvs, data, nvs, 0x9000, 0x6000,\n")
+            app.refresh_partition_views()
             entry = app.table.entries[0]
             event = Mock(x=10, y=10, x_root=100, y_root=100)
             row_id = app.part_tree.get_children()[0]
 
             for col in ['#2', '#3', '#4', '#5', '#6', '#7']:
                 created_menus = []
-                real_init = tk.Menu.__init__
+                real_init = _QMenuCompat.__init__
 
                 def capture_init(menu_inst, *args, **kwargs):
                     real_init(menu_inst, *args, **kwargs)
                     created_menus.append(menu_inst)
 
-                with patch.object(tk.Menu, '__init__', capture_init), patch('modules.qt_toolkit.Menu.tk_popup'):
+                with patch.object(_QMenuCompat, '__init__', capture_init), patch.object(_QMenuCompat, 'tk_popup'):
                     app._show_column_context_menu(event, entry, col, row_id)
                     self.assertGreater(len(created_menus), 0)
-                    menu = created_menus[-1]
+                    menu = created_menus[0]
                     last_index = menu.index('end')
                     labels = [menu.entrycget(i, 'label') for i in range(last_index + 1) if menu.type(i) == 'command']
                     # Không có các lựa chọn mở hộp thoại chi tiết hoặc phần cứng ở cuối
@@ -172,6 +188,8 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
     def test_partition_double_click_opens_dialog(self):
         with patch('modules.app_core.set_window_icon_native'):
             app = InspectorApp(self.root)
+            app.table.from_csv("nvs, data, nvs, 0x9000, 0x6000,\n")
+            app.refresh_partition_views()
             first_row = app.part_tree.get_children()[0]
             event = Mock(y=10)
 
@@ -275,9 +293,8 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
             self.assertTrue(hasattr(app, 'open_about_dialog'))
             self.assertTrue(hasattr(app, 'open_update_dialog'))
 
-            # 2. Controls frame is flat ttk.Frame, not LabelFrame
-            self.assertIsInstance(app.controls_frame, ttk.Frame)
-            self.assertNotIsInstance(app.controls_frame, ttk.LabelFrame)
+            # 2. Controls frame is QWidget
+            self.assertIsInstance(app.controls_frame, QWidget)
 
             # 3. clear_monitor_btn is located in tab_monitor
             self.assertTrue(hasattr(app, 'clear_monitor_btn'))
@@ -292,7 +309,7 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
             self.assertTrue(hasattr(app, '_action_save_as'))
 
     def test_size_unit_parsing_and_auto_pack(self):
-        from modules.dialogs.partition_dialogs import parse_with_unit
+        from modules.ui.dialogs.size_input_dialog import parse_with_unit
         self.assertEqual(parse_with_unit("64", "KB"), 64 * 1024)
         self.assertEqual(parse_with_unit("2", "MB"), 2 * 1024 * 1024)
         self.assertEqual(parse_with_unit("4096", "Bytes"), 4096)
@@ -300,6 +317,13 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
 
         with patch('modules.app_core.set_window_icon_native'):
             app = InspectorApp(self.root)
+            app.table.from_csv(
+                "nvs, data, nvs, 0x9000, 0x6000,\n"
+                "phy_init, data, phy, 0xf000, 0x1000,\n"
+                "factory, app, factory, 0x10000, 1M,\n"
+                "storage, data, spiffs, , 2800K,\n"
+            )
+            app._cascade_auto_pack(from_idx=0)
             self.assertTrue(hasattr(app, 'var_auto_align'))
             self.assertTrue(app.var_auto_align.get())
             # Test auto pack adjusts subsequent offsets properly
@@ -308,44 +332,39 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
             self.assertGreaterEqual(app.table.entries[1].offset, app.table.entries[0].end_offset)
 
     def test_streamlined_settings_and_standalone_dialogs(self):
-        with patch('modules.app_core.set_window_icon_native'), patch('modules.dialogs.settings_dialog.set_window_icon_native'):
+        from modules.ui.dialogs.about_update_dialogs import AboutDialog, UpdateDialog
+        with patch('modules.app_core.set_window_icon_native'):
             app = InspectorApp(self.root)
 
-            # 1. Hộp thoại Cài đặt tinh gọn: chỉ đúng 2 tab (Cài đặt chung, Nút chức năng)
+            # 1. Trang Cài đặt tinh gọn: đúng 2 tab phụ (Cài đặt chung, Phím chức năng)
             app.open_settings_dialog(0)
-            settings_toplevel = [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)][-1]
-            notebooks = [w for w in settings_toplevel.winfo_children() if isinstance(w, ttk.Notebook)]
-            self.assertEqual(len(notebooks), 1)
-            nb = notebooks[0]
-            tab_names = [nb.tab(i, 'text').strip() for i in range(len(nb.tabs()))]
-            self.assertEqual(len(tab_names), 2)
-            self.assertIn("Cài đặt chung", tab_names[0])
-            self.assertTrue(any("Nút chức năng" in name for name in tab_names))
-            settings_toplevel.destroy()
+            self.assertEqual(app.stack.currentIndex(), 5)
+            tabs = app.page_settings.tabs
+            self.assertEqual(tabs.count(), 2)
+            tab_names = [tabs.tabText(i) for i in range(tabs.count())]
+            self.assertTrue(any("Cài đặt Chung" in name or "Cài đặt chung" in name for name in tab_names))
+            self.assertTrue(any("F1" in name for name in tab_names))
 
             # 2. Hộp thoại Giới thiệu độc lập
-            app.open_about_dialog()
-            about_toplevel = [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)][-1]
-            self.assertIn("Giới thiệu", about_toplevel.title())
-            about_toplevel.destroy()
+            dlg_about = AboutDialog(app)
+            self.assertIn("Giới thiệu", dlg_about.windowTitle())
+            dlg_about.close()
 
             # 3. Hộp thoại Cập nhật độc lập
-            app.open_update_dialog()
-            update_toplevel = [w for w in self.root.winfo_children() if isinstance(w, tk.Toplevel)][-1]
-            self.assertIn("cập nhật", update_toplevel.title().lower())
-            update_toplevel.destroy()
-
-            # 4. Kiểm tra sự kiện MouseWheel sau khi đóng SettingsDialog không gây lỗi TclError
-            self.root.update()
-            try:
-                self.root.event_generate('<MouseWheel>', delta=120)
-                self.root.update()
-            except Exception as ex:
-                self.fail(f"MouseWheel generated error after settings dialog closed: {ex}")
+            dlg_update = UpdateDialog(app)
+            self.assertIn("cập nhật", dlg_update.windowTitle().lower())
+            dlg_update.close()
 
     def test_auto_align_cascade_on_field_change(self):
         with patch('modules.app_core.set_window_icon_native'):
             app = InspectorApp(self.root)
+            app.table.from_csv(
+                "nvs, data, nvs, 0x9000, 0x6000,\n"
+                "phy_init, data, phy, 0xf000, 0x1000,\n"
+                "factory, app, factory, 0x10000, 1M,\n"
+                "storage, data, spiffs, , 2800K,\n"
+            )
+            app._cascade_auto_pack(from_idx=0)
             self.assertTrue(app.var_auto_align.get())
 
             # Đổi kiểu phân vùng nvs từ data sang app -> offset phải tự động căn lên 0x10000 (64KB)
@@ -382,11 +401,25 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
             app = InspectorApp(self.root)
             self.assertTrue(hasattr(app, 'backup_tree'))
             self.assertTrue(hasattr(app, 'backup_disk_map'))
+            # Tab 5 ban đầu phải trống hoàn toàn trước khi đọc từ chip
+            self.assertEqual(len(app.backup_regions), 0)
+
+            # Giả lập đã đọc bảng phân vùng từ chip nguồn
+            app._backup_has_loaded_source = True
+            app.backup_table.from_csv(
+                "nvs, data, nvs, 0x9000, 0x6000,\n"
+                "phy_init, data, phy, 0xf000, 0x1000,\n"
+                "factory, app, factory, 0x10000, 1M,\n"
+                "storage, data, spiffs, 0x110000, 1M,\n"
+            )
+            app._action_backup_select_all(True)
             self.assertGreaterEqual(len(app.backup_regions), 5)
+            self.assertIsNone(app.backup_disk_map.selected_entry)
 
             # Kiểm tra chọn tất cả và chọn chỉ Firmware
             app._action_backup_select_all(True)
             self.assertTrue(all(r["selected"] for r in app.backup_regions))
+            self.assertIsNone(app.backup_disk_map.selected_entry)
 
             app._action_backup_select_firmware_only()
             by_name = {r["name"]: r["selected"] for r in app.backup_regions}
@@ -444,17 +477,17 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
             self.assertTrue(hasattr(app.notebook, "btn_toggle_sidebar"))
             self.assertTrue(hasattr(app.notebook, "stack"))
             self.assertFalse(app.notebook.is_sidebar_collapsed)
-            self.assertEqual(app.notebook.sidebar_frame.width(), 242)
+            self.assertEqual(app.notebook.sidebar_frame.width(), 190)
 
             # Thu gọn Sidebar về dạng chỉ hiển thị icon vector (52px)
             app.notebook.toggle_sidebar()
             self.assertTrue(app.notebook.is_sidebar_collapsed)
             self.assertEqual(app.notebook.sidebar_frame.width(), 52)
 
-            # Mở rộng lại Sidebar (242px)
+            # Mở rộng lại Sidebar (190px)
             app.notebook.toggle_sidebar()
             self.assertFalse(app.notebook.is_sidebar_collapsed)
-            self.assertEqual(app.notebook.sidebar_frame.width(), 242)
+            self.assertEqual(app.notebook.sidebar_frame.width(), 190)
 
             # Đảm bảo không có bất kỳ emoji Unicode nào trong toàn bộ thư mục modules/
             allowed_punct = set('•–—…“”‘’─│┌┐└┘├┤┬┴┼═║╔╗╚╝╠╣╦╩╬▪▫►◄▲▼◆◇○●★☆✓✗✕✖➔➜➡⬅⬆⬇↔↕≤≥≠≈±×÷°µΩΩ【】')

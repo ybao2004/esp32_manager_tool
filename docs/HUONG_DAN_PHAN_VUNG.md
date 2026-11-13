@@ -1,69 +1,50 @@
-# HƯỚNG DẪN QUẢN LÝ PHÂN VÙNG BỘ NHỚ FLASH ESP32 (PARTITION WIZARD)
+# HƯỚNG DẪN QUẢN LÝ PHÂN VÙNG (ESP32 PARTITION WIZARD - v1.7)
 
-> [!NOTE]
-> Trong **Esp32 manager tool (v1.3)**, công cụ **Partition Wizard** được tích hợp trực tiếp tại **Tab thứ 4** (ngay sau Tab Nạp Flash). Cung cấp giao diện trực quan phong cách MiniTool Partition Wizard, tự động tính toán Offset và biên dịch bảng phân vùng nhị phân 32-byte kèm MD5 Checksum tương thích 100% chuẩn ESP-IDF.
-
----
-
-## 1. Kiến Trúc Bảng Phân Vùng (Partition Table)
-Bảng phân vùng của ESP32 định nghĩa cách chia bộ nhớ Flash SPI thành các vùng nhớ chức năng riêng biệt:
-- **Name:** Nhãn định danh của phân vùng (tối đa 16 bytes ASCII).
-- **Type:** Kiểu phân vùng chính: `app` (mã chương trình thực thi) hoặc `data` (dữ liệu).
-- **SubType:** Phân loại chi tiết chức năng:
-  - Kiểu `app`: `factory`, `ota_0` -> `ota_15`, `test`.
-  - Kiểu `data`: `nvs`, `phy`, `ota` (otadata), `spiffs`, `littlefs`, `fat`, `coredump`, `nvs_keys`, `efuse`.
-- **Offset:** Địa chỉ bắt đầu trong bộ nhớ Flash (bắt buộc căn lề sector 64 KB = `0x10000` cho `app` và 4 KB = `0x1000` cho `data`).
-- **Size:** Kích thước của phân vùng (bội số của sector 4 KB = `0x1000`).
-- **Flags:** Cờ bổ sung: `encrypted` (mã hóa), `readonly` (chỉ đọc).
+Tab **Phân vùng** tích hợp bộ biên soạn & chẩn đoán phân vùng Flash ESP32 theo chuẩn **ESP-IDF (`gen_esp32part.py`)** với sơ đồ trực quan phong cách MiniTool Partition Wizard.
 
 ---
 
-## 2. Các Tính Năng Nổi Bật của Tab Partition Wizard (Tab 4)
+## 1. KHỞI TẠO & CẤU HÌNH DÒNG CHIP
 
-1. **Bố Cục Thanh Điều Khiển Tinh Giản:**
-   - Hàng 1: Lựa chọn **Dòng Chip**, **Dung lượng Flash** và **Chế độ hiển thị số liệu** (Thập phân, Hex, Song song).
-   - Hàng 2: Tích hợp trực tiếp các nút chức năng tinh gọn (loại bỏ icon gây rối mắt): `Dồn & Căn 4K/64K`, `Mẫu Chuẩn`, `Mở CSV / BIN`, `Xuất CSV`, `Xuất BIN`, `Quét Dự Án`, `Hoàn tác`, `Làm lại`.
-   - Các nút Thêm/Sửa/Xóa thừa thãi trên thanh công cụ được loại bỏ để tập trung thao tác trực tiếp vào từng dòng trong bảng.
+- **Trạng thái khởi đầu trống:** Khi vừa mở ứng dụng, bảng phân vùng và sơ đồ thanh ổ đĩa được giữ trống hoàn toàn để tránh nhầm lẫn dữ liệu mẫu cũ với chip đang thao tác.
+- **Chọn Chip tự chọn Flash cao nhất:** Khi chọn một dòng chip tại mục **Chip** (ví dụ `ESP32`, `ESP32-S3`, `ESP32-C3`, `ESP32-P4`), ứng dụng tự động cập nhật danh sách mức Flash hợp lệ của họ chip đó và tự chọn dung lượng **Flash lớn nhất** hỗ trợ.
+- **Đơn vị hiển thị:** Chuyển đổi qua lại giữa **Thập phân (KB/MB)** và **Thập lục phân (Hex)** tức thì.
+- **Tự căn 4K/64K (`Auto-Align`):** Khi bật, ứng dụng tự căn lề mỗi phân vùng theo sector vật lý:
+  - Phân vùng `app` (`factory`, `ota_0`, `ota_1`, `test`,...): Bắt buộc căn lề bội số **64 KB (`0x10000`)**.
+  - Phân vùng `data` (`nvs`, `otadata`, `phy_init`, `spiffs`, `littlefs`, `fat`,...): Bắt buộc căn lề bội số **4 KB (`0x1000`)**.
 
-2. **Sơ Đồ Thanh Ổ Đĩa Trực Quan & Tooltip Tra Cứu Chuyên Sâu (MiniTool Disk Map):**
-   - Biểu diễn trực quan tỷ lệ các phân vùng trên toàn bộ dung lượng chip Flash kèm vùng trống (*Unallocated Gaps*).
-   - **Tooltip tra cứu chi tiết khi di chuột:** Hiển thị bảng thông tin kỹ thuật toàn diện cho từng phân vùng:
-     - Tên, Kiểu, Phân loại, Offset, Dung lượng, Số sector vật lý (4KB) và quy tắc căn biên yêu cầu.
-     - **📌 Mục đích sử dụng:** Giải thích công dụng thực tế của phân vùng (NVS lưu Wi-Fi/biến, OTA để nạp từ xa, LittleFS lưu web tĩnh, coredump ghi nhận lỗi crash...).
-     - **💡 Khuyến nghị dung lượng:** Bảng hướng dẫn dung lượng tối thiểu, thông thường và tối đa phù hợp cho từng loại.
-   - Nhấp chuột vào khoảng trống Unallocated để tạo ngay phân vùng mới vừa vặn trong khe trống đó.
+---
 
-3. **Bảng Phân Vùng Tương Tác Nhanh (Smart Interactive Table):**
-   - **Cột Số Thứ Tự (`+ / -  STT`):**
-     - Hiển thị trực tiếp các nút bấm nhanh: `[+] [-]  #1`, `[+] [-]  #2`,...
-     - Nhấp chuột vào `[+]`: Tự động chèn ngay một phân vùng mới nối tiếp sau dòng đó (tự tính offset nối tiếp và căn lề).
-     - Nhấp chuột vào `[-]`: Xác nhận và xóa phân vùng tương ứng.
-     - Nhấp vào tiêu đề cột `+ / -  STT` để thêm nhanh phân vùng vào cuối bảng.
-   - **Menu Chuột Phải Ngữ Cảnh Thông Minh (Smart Column Context Menu):**
-     - Nhấp chuột phải vào từng cột cụ thể để mở menu thay đổi nhanh giá trị cho riêng cột đó:
-       - **Cột Tên (Name):** Danh sách tên chuẩn phổ biến (`nvs`, `otadata`, `factory`, `ota_0`, `storage`, `littlefs`,...), tùy chọn `✏️ Tự đặt tên...` và `(Chưa đặt tên / Trống)`.
-       - **Cột Kiểu (Type):** Đổi nhanh giữa `app` và `data` (tự động gợi ý subtype tương thích).
-       - **Cột Phân loại (SubType):** Danh sách subtype chuẩn phù hợp theo Kiểu App hoặc Data, kèm tùy chọn `✏️ Tự đặt SubType...`.
-       - **Cột Offset:** Nút `⚡ Tự động tính toán (Dồn nối tiếp dòng trước)`, các mốc Offset thông dụng và `✏️ Tự nhập Offset...`.
-       - **Cột Dung lượng (Size):** Danh sách các mốc dung lượng dựng sẵn (4KB, 16KB, 64KB, 1MB, 1.5MB, 2MB, 3MB...) và `✏️ Tự nhập dung lượng...` (hỗ trợ nhập `64K`, `1M`, `0x10000`).
-       - **Cột Cờ (Flags):** Bật/tắt nhanh cờ `encrypted` (mã hóa), `readonly` (chỉ đọc) hoặc `(Không có / Trống)`.
-     - Phía dưới menu ngữ cảnh của mọi cột đều tích hợp các tác vụ: Sao lưu (Dump), Xóa trắng (Erase Region), Nạp file `.bin` và Xóa phân vùng.
+## 2. THANH CÔNG CỤ NHẬP, THIẾT KẾ VÀ LƯU TỆP
 
-4. **Tự Động Dồn & Căn Lề Biên 4KB / 64KB (`Dồn & Căn 4K/64K`):**
-   - Tự động tính toán lại toàn bộ Offset nối tiếp nhau, đảm bảo không có phân vùng nào bị chồng lấn và tuân thủ tuyệt đối quy tắc căn biên của ESP-IDF (App căn 64KB, Data căn 4KB).
+- **Mẫu Chuẩn...:** Mở hộp thoại chọn mẫu chuẩn theo kịch bản thực tế (Minimal Factory, Dual OTA, LittleFS + OTA, AI/HMI 8MB-32MB,...).
+- **Quét Dự Án:** Quét thư mục dự án (PlatformIO, ESP-IDF, Arduino) để đọc bảng phân vùng và đối chiếu tỷ lệ chiếm dụng thực tế của các tệp `.bin` đã build.
+- **Mở CSV/BIN:** Đọc tệp `partitions.csv` hoặc tệp nhị phân bảng phân vùng chuẩn ESP-IDF `.bin` (hỗ trợ kiểm tra Magic Bytes `0xAA50` và `MD5`).
+- **Lưu CSV:** Lưu toàn bộ bảng phân vùng hiện có dưới định dạng `.csv` chuẩn ESP-IDF:
+  - Nếu bảng đang gắn với một tệp `.csv` đã mở/lưu trước đó, nhấn **Lưu CSV** sẽ lưu đè trực tiếp toàn bộ bảng vào tệp đó.
+  - Nếu là bảng mới tạo hoặc mở từ `.bin` / đọc từ chip, ứng dụng mở hộp thoại **Lưu file CSV bảng phân vùng** để chọn nơi lưu.
+- **Dồn và Căn 4K/64K:** Xếp khít toàn bộ bảng phân vùng theo chuẩn căn lề của ESP-IDF mà không chồng lấn.
+- **Hoàn tác / Làm lại:** Hỗ trợ lịch sử chỉnh sửa trong phiên (`Undo` / `Redo`).
 
-5. **Kiểm Tra Hợp Lệ Thời Gian Thực (Rule Validator):**
-   - Tự động phát hiện và cảnh báo: trùng tên, tên quá 16 bytes, phân vùng App đặt dưới 0x10000, Offset không chia hết cho 64KB/4KB, thiếu phân vùng `otadata` khi có khe `ota_X`, hoặc tổng dung lượng vượt quá kích thước chip Flash.
+---
 
-6. **Xuất / Nhập & Biên Dịch Đa Định Dạng:**
-   - Đọc và xuất file `partitions.csv` chuẩn ESP-IDF.
-   - Biên dịch trực tiếp bảng phân vùng sang file nhị phân `partition-table.bin` 32-byte struct kèm MD5 Checksum.
-   - Quét tự động thư mục dự án ESP-IDF / PlatformIO để trích xuất cấu hình và kích thước file `.bin` thực tế.
+## 3. SƠ ĐỒ THANH Ổ ĐĨA & CHỈNH SỬA DÒNG
 
-7. **Thao Tác Phần Cứng Trực Tiếp Qua Chip:**
-   - Đọc bảng phân vùng từ chip qua cổng COM.
-   - Nạp bảng phân vùng mới xuống địa chỉ `0x8000` của chip.
-   - Sao lưu (Dump) một phân vùng bất kỳ ra file `.bin`.
-   - Xóa trắng (Erase Region) phân vùng trên chip.
-   - Nạp file binary vào đúng Offset của phân vùng đang chọn.
-   - Cơ chế bảo vệ xung đột: Tự động tạm ngắt Serial Monitor an toàn khi thực thi tác vụ esptool và phục hồi sau khi hoàn tất.
+- **Sơ đồ MiniTool Partition Map:** Hiển thị vùng hệ thống (`Bootloader`, `Partition Table`), các phân vùng người dùng theo màu sắc phân loại (`app`, `nvs`, `phy`, `spiffs`/`fat`,...) và phần dung lượng còn trống (`Unallocated`). Khối đang được chọn có khung viền đôi độ tương phản cao đầy đủ trên cả nền Sáng và nền Tối.
+- **Kéo chỉnh ranh giới trực quan:** Kéo biên phân vùng trực tiếp trên thanh Disk Map hoặc nhấp đúp chuột để sửa kích thước.
+- **Nút `+ Thêm dòng`:**
+  - Thêm một phân vùng mới nằm **ngay dưới (ngay sau)** phân vùng đang chọn trên bảng (hoặc ở cuối bảng nếu chưa chọn dòng nào).
+  - Tự động gợi ý tên mới duy nhất không trùng lặp và tự động dịch chuyển hợp lệ nếu cần căn lề vùng phía sau.
+- **Sửa dòng / Xóa dòng / Xóa tất cả:** Cho phép điều chỉnh chi tiết từng phân vùng hoặc làm sạch bảng nhanh chóng.
+
+---
+
+## 4. THAO TÁC PHẦN CỨNG TRỰC TIẾP VỚI CHIP ESP32
+
+Mọi tác vụ phần cứng sử dụng chung thanh tiến trình ở đáy màn hình kèm tên tác vụ và ghi nhật ký chi tiết tại khung thu gọn **Nhật Ký Thao Tác Phần Cứng Phân Vùng**:
+
+1. **Đọc bảng từ Chip:** Đọc vùng bảng phân vùng tại `0x8000` (tự nhận diện vùng `0x10000` khi bootloader cần mở rộng trên S3/P4 nếu có), giải mã chuẩn ESP-IDF và hiển thị lên cả Disk Map lẫn bảng chi tiết.
+2. **Nạp bảng vào Chip:** Biên dịch bảng hiện tại sang nhị phân 3 KB kèm chữ ký `MD5` ở 32 byte cuối và nạp vào Flash qua `esptool`.
+3. **Dump vùng:** Sao lưu dữ liệu nhị phân thực tế của đúng phân vùng đang chọn thành file `.bin`.
+4. **Ghi vùng:** Nạp một file `.bin` (như `spiffs.bin`, `littlefs.bin`, `app.bin`, `nvs.bin`) vào đúng địa chỉ Offset của phân vùng đang chọn (kiểm tra dung lượng không vượt quá kích thước phân vùng).
+5. **Xóa vùng:** Xóa trắng dải địa chỉ của riêng phân vùng đang chọn với địa chỉ & độ dài đã được căn lề sector 4 KB an toàn.

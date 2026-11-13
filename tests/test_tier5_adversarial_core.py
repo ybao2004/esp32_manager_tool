@@ -11,7 +11,7 @@ import builtins
 import queue
 import time
 import threading
-from modules import qt_toolkit as tk
+from modules.ui import models as tk
 from unittest.mock import MagicMock, patch
 
 import pytest

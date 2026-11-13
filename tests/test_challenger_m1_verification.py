@@ -8,7 +8,6 @@ import re
 import sys
 import time
 import threading
-from modules import qt_toolkit as tk
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -16,7 +15,7 @@ import pytest
 # Ensure modules in path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from modules.dialogs.layout_util import fit_dialog
+from modules.ui.dialogs.size_input_dialog import SizeInputDialog
 from modules.app_core import InspectorApp
 from modules.tabs.tab_monitor import MonitorTabMixin
 from modules.tabs.tab_partition import PartitionTabMixin
@@ -27,49 +26,27 @@ from tests.mock_hardware.app_harness import HeadlessAppHarness
 @pytest.fixture
 def tk_root():
     root = HeadlessAppHarness.get_shared_root()
-    for child in list(root.winfo_children()):
-        try:
-            child.destroy()
-        except Exception:
-            pass
     yield root
-    for child in list(root.winfo_children()):
-        try:
-            child.destroy()
-        except Exception:
-            pass
 
 
 # ----------------------------------------------------------------------
-# F01: Test fit_dialog & SizeInputDialog signature
+# F01: Test SizeInputDialog instantiation and minimum size
 # ----------------------------------------------------------------------
 def test_f01_fit_dialog_signature(tk_root):
-    """Verify fit_dialog accepts minimum_width and minimum_height, rejects min_w/min_h."""
-    dialog = tk.Toplevel(tk_root)
-    dialog.withdraw()
+    """Verify SizeInputDialog sets minimum width and rejects unexpected kwargs."""
+    dlg = SizeInputDialog(None, partition_name="nvs", current_size_bytes=0x6000)
+    assert dlg.minimumWidth() >= 380
+    dlg.close()
 
-    # 1. New signature works cleanly
-    try:
-        fit_dialog(dialog, tk_root, minimum_width=340, minimum_height=190)
-    except TypeError as e:
-        pytest.fail(f"fit_dialog raised TypeError with valid kwargs: {e}")
-
-    # 2. Old signature min_w / min_h must raise TypeError (verifying the bug was real)
     with pytest.raises(TypeError, match="unexpected keyword argument"):
-        fit_dialog(dialog, tk_root, min_w=340, min_h=190)
-
-    dialog.destroy()
+        SizeInputDialog(None, min_w=340, min_h=190)
 
 
 def test_f01_size_input_dialog_instantiation(tk_root):
-    """Verify SizeInputDialog instantiates and calls fit_dialog without crashing."""
-    from modules.dialogs.partition_dialogs import SizeInputDialog
-
-    # Schedule destruction so wait_window doesn't hang
-    tk_root.after(50, lambda: [w.destroy() for w in tk_root.winfo_children() if isinstance(w, tk.Toplevel)])
-
+    """Verify SizeInputDialog instantiates without crashing."""
     dlg = SizeInputDialog(tk_root, partition_name="nvs", current_size_bytes=0x10000)
-    assert dlg.result is None  # Destroyed before OK, but instantiated without TypeError!
+    assert dlg.result is None
+    dlg.close()
 
 
 # ----------------------------------------------------------------------
@@ -183,7 +160,7 @@ def test_f04_on_closing_blocks_when_busy(headless_app):
 
     app._is_partition_hw_running = True
 
-    with patch('modules.qt_toolkit.messagebox.showwarning') as mock_warn:
+    with patch('modules.ui.dialogs_service.showwarning') as mock_warn:
         app.on_closing()
         mock_warn.assert_called_once()
         # Window still exists!

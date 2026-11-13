@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 HeadlessAppHarness: Test harness for headless PyQt6 lifecycle management.
-Initializes InspectorApp in an off-screen withdrawn PyQt6 QMainWindow root, pumps event loops,
+Initializes MainWindow/InspectorApp in an off-screen PyQt6 environment, pumps event loops,
 provides deterministic condition waiting, and ensures clean thread termination.
 """
 import gc
@@ -15,11 +15,82 @@ from unittest.mock import patch
 # Chạy PyQt6 ở chế độ offscreen headless khi chạy test
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from modules import qt_toolkit as tk
+from PyQt6.QtWidgets import QApplication, QWidget
+from modules.ui.dispatch import UiDispatcher
 from modules.app_core import InspectorApp
 
-# Hàng đợi after() an toàn đa luồng dùng chung với qt_toolkit
-_global_after_queue = tk._THREADSAFE_QUEUE
+_global_after_queue = queue.Queue()
+
+
+class _MockTk:
+    def call(self, *args, **kwargs):
+        return ()
+
+    def splitlist(self, arg):
+        return []
+
+
+class _MockRoot(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.tk = _MockTk()
+
+    def winfo_children(self):
+        return [c for c in self.findChildren(QWidget) if hasattr(c, "winfo_exists") and c.winfo_exists()]
+
+    def winfo_exists(self):
+        return True
+
+    def winfo_x(self):
+        return self.x()
+
+    def winfo_y(self):
+        return self.y()
+
+    def winfo_width(self):
+        return self.width() if self.width() > 0 else 1024
+
+    def winfo_height(self):
+        return self.height() if self.height() > 0 else 768
+
+    def geometry(self, geom=None):
+        pass
+
+    def minsize(self, w=0, h=0):
+        pass
+
+    def transient(self, master=None):
+        pass
+
+    def grab_set(self):
+        pass
+
+    def event_generate(self, event, **kwargs):
+        pass
+
+    def destroy(self):
+        pass
+
+    def withdraw(self):
+        pass
+
+    def update(self):
+        pass
+
+    def update_idletasks(self):
+        pass
+
+    def config(self, **kwargs):
+        pass
+
+    def after(self, ms, func=None, *args):
+        if func:
+            from modules.ui.dispatch import UiDispatcher
+            UiDispatcher.instance().post(func, *args, delay_ms=int(ms))
+        return "mock_timer"
+
+    def after_cancel(self, t):
+        pass
 
 
 class HeadlessAppHarness:
@@ -28,52 +99,30 @@ class HeadlessAppHarness:
     Guarantees no visual desktop windows appear and safely tears down background threads.
     """
 
+    _qapp = None
     _shared_root = None
 
     @classmethod
     def get_shared_root(cls):
-        if cls._shared_root is None or not cls._shared_root.winfo_exists():
-            try:
-                cls._shared_root = tk.Tk()
-                cls._shared_root.withdraw()
-            except Exception as exc:
-                raise RuntimeError(f"PyQt6 display environment unavailable: {exc}")
+        if cls._qapp is None:
+            cls._qapp = QApplication.instance() or QApplication(sys.argv)
+        if cls._shared_root is None:
+            cls._shared_root = _MockRoot()
         return cls._shared_root
 
     def __init__(self):
         self.root = self.get_shared_root()
         self.app = None
 
-    def _drain_after_queue(self):
-        """Execute all queued worker callbacks whose scheduled time has arrived."""
-        tk._drain_global_after_queue()
-
-    def start(self, auto_scan=False) -> InspectorApp:
+    def start(self, auto_scan: bool = False) -> InspectorApp:
         """
-        Instantiate InspectorApp with native window icon calls safely mocked out.
+        Instantiate InspectorApp in offscreen mode.
         Optionally triggers background tasks.
         """
-        while not _global_after_queue.empty():
-            try:
-                _global_after_queue.get_nowait()
-            except queue.Empty:
-                break
+        UiDispatcher.instance().drain()
 
-        for child in list(self.root.winfo_children()):
-            try:
-                child.destroy()
-            except Exception:
-                pass
-        try:
-            if self.root.winfo_exists():
-                self.root.update_idletasks()
-                self.root.update()
-        except Exception:
-            pass
-
-        with patch('modules.app_core.set_window_icon_native'), \
-             patch('modules.dialogs.settings_dialog.set_window_icon_native'):
-            self.app = InspectorApp(self.root)
+        with patch('modules.app_core.set_window_icon_native'):
+            self.app = InspectorApp(auto_start=auto_scan)
 
         self.app.saved_auto_select_new = True
         if hasattr(self.app, 'var_auto_connect_server'):
@@ -85,27 +134,25 @@ class HeadlessAppHarness:
         self.pump(5)
         return self.app
 
-    def pump(self, cycles=10, delay=0.005, **kwargs):
+    def pump(self, cycles: int = 10, delay: float = 0.005, **kwargs):
         """
-        Pump the PyQt6 event loop to process idle tasks and after() callbacks.
+        Pump the PyQt6 event loop to process idle tasks and dispatcher callbacks.
         """
         if 'times' in kwargs:
             cycles = kwargs['times']
         elif 'count' in kwargs:
             cycles = kwargs['count']
+
+        app = QApplication.instance()
         for _ in range(cycles):
-            self._drain_after_queue()
-            try:
-                if self.root.winfo_exists():
-                    self.root.update_idletasks()
-                    self.root.update()
-            except Exception:
-                break
+            UiDispatcher.instance().drain()
+            if app:
+                app.processEvents()
             if delay > 0:
                 time.sleep(delay)
-        self._drain_after_queue()
+        UiDispatcher.instance().drain()
 
-    def wait_for(self, condition_fn, timeout=4.0, poll_interval=0.02):
+    def wait_for(self, condition_fn, timeout: float = 4.0, poll_interval: float = 0.02):
         """
         Repeatedly pump the event loop until condition_fn() returns truthy,
         or raise TimeoutError if timeout expires.
@@ -116,12 +163,14 @@ class HeadlessAppHarness:
             try:
                 res = condition_fn()
                 if res:
+                    self.pump(5)
                     return res
             except Exception:
                 pass
-        self.pump(2)
+        self.pump(5)
         res = condition_fn()
         if res:
+            self.pump(5)
             return res
         raise TimeoutError(f"Condition not met within {timeout} seconds: {condition_fn}")
 
@@ -140,8 +189,6 @@ class HeadlessAppHarness:
                     self.app.is_detecting.clear()
                 if hasattr(self.app, '_is_partition_hw_running'):
                     self.app._is_partition_hw_running = False
-                if hasattr(self.app, 'is_backing_up') and self.app.is_backing_up.is_set():
-                    self.app.is_backing_up.clear()
                 if self.app.serial_connection and getattr(self.app.serial_connection, 'is_open', False):
                     self.app.on_serial_disconnect()
 
@@ -149,41 +196,10 @@ class HeadlessAppHarness:
                     th = getattr(self.app, th_name, None)
                     if th and th.is_alive():
                         th.join(timeout=0.3)
+                self.app.close()
             except Exception:
                 pass
 
         self.pump(3, delay=0.005)
-
-        while not _global_after_queue.empty():
-            try:
-                _global_after_queue.get_nowait()
-            except queue.Empty:
-                break
-
-        try:
-            self.root.config(menu="")
-        except Exception:
-            pass
-
-        for child in list(self.root.winfo_children()):
-            try:
-                child.destroy()
-            except Exception:
-                pass
-
-        while not _global_after_queue.empty():
-            try:
-                _global_after_queue.get_nowait()
-            except queue.Empty:
-                break
-
         gc.collect()
-
-        try:
-            if self.root.winfo_exists():
-                self.root.update_idletasks()
-                self.root.update()
-        except Exception:
-            pass
-
         self.app = None

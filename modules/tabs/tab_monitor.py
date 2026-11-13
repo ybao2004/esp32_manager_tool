@@ -6,8 +6,8 @@ import time
 import threading
 import codecs
 from datetime import datetime
-from modules import qt_toolkit as tk
-from modules.qt_toolkit import ttk, messagebox
+from modules.ui.models import END
+from modules.ui import dialogs_service as messagebox
 
 try:
     import serial
@@ -25,140 +25,10 @@ from modules.config import (
 )
 
 class MonitorTabMixin:
-    """Mixin cung cấp giao diện và logic Serial Monitor & Bảng điều khiển IoT (Thẻ 2)."""
+    """Mixin cung cấp logic điều khiển Serial Monitor & Bảng điều khiển IoT (Trang 2)."""
 
     def create_monitor_tab(self):
-        self.monitor_tab.rowconfigure(0, weight=1)
-        self.monitor_tab.columnconfigure(0, weight=1)
-        
-        paned_window = ttk.PanedWindow(self.monitor_tab, orient=tk.HORIZONTAL)
-        paned_window.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
-        
-        serial_pane = ttk.Frame(paned_window)
-        # Sửa thành tỷ lệ 5:1 (Khung Serial lớn gấp 5 lần Khung Điều khiển)
-        paned_window.add(serial_pane, weight=5) 
-        serial_pane.columnconfigure(0, weight=1)
-        serial_pane.rowconfigure(0, weight=1) 
-        
-        monitor_output_frame = ttk.Frame(serial_pane)
-        monitor_output_frame.grid(row=0, column=0, sticky="nsew", pady=2)
-        monitor_output_frame.columnconfigure(0, weight=1)
-        monitor_output_frame.rowconfigure(0, weight=1)
-        
-        self.monitor_txt = tk.Text(monitor_output_frame, width=70, wrap="word", font=("Consolas", REPORT_FONT_SIZE), relief="flat", borderwidth=1, state="disabled")
-        self.monitor_txt.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
-        vsb = ttk.Scrollbar(monitor_output_frame, orient="vertical", command=self.monitor_txt.yview)
-        vsb.grid(row=0, column=1, sticky="ns")
-        self.monitor_txt.configure(yscrollcommand=vsb.set)
-        
-        self.monitor_txt.tag_configure('server_rx', foreground='#008000')
-
-        net_ctrl_pane = ttk.Frame(paned_window)
-        paned_window.add(net_ctrl_pane, weight=1) 
-        net_ctrl_pane.columnconfigure(0, weight=1)
-        
-        wifi_frame = ttk.LabelFrame(net_ctrl_pane, text=" Cấu hình Mạng ", padding=(5, 5))
-        wifi_frame.grid(row=0, column=0, sticky="new", padx=(5,0), pady=(0, 2))
-        
-        wifi_frame.columnconfigure(0, weight=0) 
-        wifi_frame.columnconfigure(1, weight=1)
-        wifi_frame.columnconfigure(2, weight=0)
-        
-        # --- 1. WiFi ---
-        ttk.Label(wifi_frame, text="WiFi:").grid(row=0, column=0, sticky="w", padx=(0,5), pady=2)
-        self.wifi_cb = ttk.Combobox(wifi_frame, values=[])
-        self.wifi_cb.grid(row=0, column=1, columnspan=2, sticky="ew", pady=2)
-        
-        self.wifi_cb.bind("<<ComboboxSelected>>", self.on_wifi_selected)
-        self.wifi_cb.bind("<FocusOut>", self.on_wifi_selected)
-        
-        # --- 2. Mật khẩu ---
-        ttk.Label(wifi_frame, text="Mật khẩu:").grid(row=1, column=0, sticky="w", padx=(0,5), pady=2)
-        self.wifi_pass_entry = ttk.Entry(wifi_frame, show="*")
-        self.wifi_pass_entry.grid(row=1, column=1, sticky="ew", pady=2)
-        
-        self.var_show_pwd = tk.BooleanVar(value=False)
-        self.cb_show_pwd = ttk.Checkbutton(wifi_frame, text="Hiện", variable=self.var_show_pwd, command=self.toggle_pwd_visibility)
-        self.cb_show_pwd.grid(row=1, column=2, padx=(5, 0), sticky="w")
-        
-        # --- 3. IP Server ---
-        ttk.Label(wifi_frame, text="IP Server:").grid(row=2, column=0, sticky="w", padx=(0,5), pady=2)
-        self.ip_entry = ttk.Entry(wifi_frame)
-        self.ip_entry.insert(0, self.default_ip) 
-        self.ip_entry.grid(row=2, column=1, sticky="ew", pady=2)
-        
-        self.var_auto_connect_server = tk.BooleanVar(value=True)
-        self.cb_auto_server = ttk.Checkbutton(wifi_frame, text="auto_connect", variable=self.var_auto_connect_server)
-        self.cb_auto_server.grid(row=2, column=2, padx=(5, 0), sticky="w")
-        
-        # --- 4. Cổng ---
-        ttk.Label(wifi_frame, text="Cổng:").grid(row=3, column=0, sticky="w", padx=(0,5), pady=2)
-        self.port_entry = ttk.Entry(wifi_frame)
-        self.port_entry.insert(0, self.default_port) 
-        self.port_entry.grid(row=3, column=1, columnspan=2, sticky="ew", pady=2)
-        
-        # --- 5. Nút bấm Mạng ---
-        buttons_wifi_frame = ttk.Frame(wifi_frame)
-        buttons_wifi_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 5))
-        
-        self.btn_scan_wifi = ttk.Button(buttons_wifi_frame, text="Quét WiFi", command=self.on_wifi_scan, width=12)
-        self.btn_scan_wifi.grid(row=0, column=0, padx=(0, 5), sticky="w")
-        
-        self.btn_connect_wifi = ttk.Button(buttons_wifi_frame, text="Kết nối WiFi", command=self.toggle_wifi_connection, width=12)
-        self.btn_connect_wifi.grid(row=0, column=1, padx=(0, 5), sticky="w")
-        
-        self.btn_connect_server = ttk.Button(buttons_wifi_frame, text="Kết nối Server", command=self.toggle_server_connection, width=14)
-        self.btn_connect_server.grid(row=0, column=2, padx=(0, 5), sticky="w")
-        
-        # --- 6. Trạng thái kết nối ---
-        self.wifi_status_lbl = tk.Label(wifi_frame, text="Chưa kết nối")
-        self.wifi_status_lbl.grid(row=5, column=0, columnspan=3, sticky="w", padx=(0,5), pady=(2,0))
-        
-        ctrl_frame = ttk.LabelFrame(net_ctrl_pane, text=" Bảng Điều khiển ", padding=(5, 5))
-        ctrl_frame.grid(row=1, column=0, sticky="nsew", padx=(5,0), pady=(2, 0))
-        ctrl_frame.columnconfigure(0, weight=1)
-        ctrl_frame.columnconfigure(1, weight=1)
-        ctrl_frame.columnconfigure(2, weight=1) 
-        
-        self.f_buttons = [] 
-        for index, i in enumerate(sorted(CONTROL_CONFIG)): 
-            btn_text = self.control_labels.get(i, f"F{i}")
-            btn = ttk.Button(ctrl_frame, text=btn_text, command=lambda x=i: self.on_control_click(x))
-            btn.grid(row=index // 3, column=index % 3, sticky="ew", padx=2, pady=2, ipady=1)
-            self.f_buttons.append(btn) 
-
-        input_frame = ttk.LabelFrame(net_ctrl_pane, text=" Gửi dữ liệu Serial ", padding=(5,5))
-        input_frame.grid(row=2, column=0, sticky="ew", padx=(5,0), pady=(10, 0)) 
-        input_frame.columnconfigure(0, weight=1)
-        
-        self.serial_input = tk.Text(input_frame, height=5, width=15, font=("Consolas", REPORT_FONT_SIZE), wrap="word") 
-        self.serial_input.grid(row=0, column=0, columnspan=2, sticky="nsew", padx=0, pady=2)
-        self.serial_input.bind("<Shift-Return>", self.on_serial_newline)
-        self.serial_input.bind("<Return>", self.on_serial_send)
-        input_frame.rowconfigure(0, weight=1)
-        
-        self.var_crlf = tk.BooleanVar(value=True)
-        self.cb_crlf = ttk.Checkbutton(input_frame, text="Thêm \\r\\n", variable=self.var_crlf)
-        self.cb_crlf.grid(row=1, column=0, sticky="w", pady=(2,0))
-
-        buttons_send_frame = ttk.Frame(input_frame)
-        buttons_send_frame.grid(row=1, column=1, sticky="e", pady=(2,0))
-
-        self.clear_monitor_btn = ttk.Button(
-            buttons_send_frame,
-            text="Xóa màn hình",
-            command=lambda: self.on_clear(self.monitor_txt) if hasattr(self, "on_clear") else self.monitor_txt.delete("1.0", "end")
-        )
-        self.clear_monitor_btn.pack(side="left", padx=(0, 5))
-
-        self.reset_btn = ttk.Button(buttons_send_frame, text="Reset ESP", command=self.on_reset_esp)
-        self.reset_btn.pack(side="left", padx=(0, 5))
-
-        self.send_btn = ttk.Button(buttons_send_frame, text="Gửi", command=self.on_serial_send)
-        self.send_btn.pack(side="left")
-
-        self.req_status_lbl = tk.Label(net_ctrl_pane, text="Sẵn sàng.", font=("Segoe UI", 9, "italic"))
-        self.req_status_lbl.grid(row=3, column=0, sticky="w", padx=(5,0), pady=(5,0))
+        return
 
     def on_wifi_selected(self, event=None):
         ssid = self.wifi_cb.get().strip()
@@ -166,7 +36,7 @@ class MonitorTabMixin:
             orig_state = str(self.wifi_pass_entry.cget("state"))
             if orig_state == "disabled":
                 self.wifi_pass_entry.config(state="normal")
-            self.wifi_pass_entry.delete(0, tk.END)
+            self.wifi_pass_entry.delete(0, END)
             if ssid and ssid in self.saved_wifi_credentials:
                 self.wifi_pass_entry.insert(0, self.saved_wifi_credentials[ssid])
             if orig_state == "disabled":
@@ -487,7 +357,10 @@ class MonitorTabMixin:
             if event: return "break" 
             return 
         
-        self._send_serial_command(data, f"Đang gửi Serial: {data.strip()}...", "info")
+        cmd_clean = data.strip()
+        if hasattr(self, "page_monitor") and hasattr(self.page_monitor, "push_command_history"):
+            self.page_monitor.push_command_history(cmd_clean)
+        self._send_serial_command(data, f"Đang gửi Serial: {cmd_clean}...", "info")
         self.serial_input.delete("1.0", "end")
         if event: return "break" 
 

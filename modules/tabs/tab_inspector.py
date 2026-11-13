@@ -5,8 +5,8 @@ ESP Tool & Hardware Inspector v2.0 - Tab 1: Chip Inspector & Hardware Report Mix
 import re
 import threading
 from datetime import datetime
-from modules import qt_toolkit as tk
-from modules.qt_toolkit import ttk, messagebox, filedialog, font as tkfont
+from modules.ui import dialogs_service as messagebox
+from modules.ui import dialogs_service as filedialog
 
 try:
     import serial
@@ -29,31 +29,8 @@ class InspectorTabMixin:
     detect_thread = None
 
     def create_inspector_tab(self):
-        buttons_frame = ttk.LabelFrame(self.inspector_tab, text=" Tác vụ ", padding=(10, 5))
-        buttons_frame.grid(row=0, column=0, sticky="ew", padx=5, pady=5)
-        
-        self.detect_btn = ttk.Button(buttons_frame, text="KIỂM TRA TOÀN DIỆN", command=self.on_detect, style="Accent.TButton")
-        self.detect_btn.pack(side="left", padx=(0,5))
-        
-        ttk.Button(buttons_frame, text="Lưu Báo Cáo", command=self.on_save).pack(side="left", padx=5)
-        
-        self.clear_inspector_btn = ttk.Button(buttons_frame, text="Xóa", command=lambda: self.on_clear(self.inspector_txt))
-        self.clear_inspector_btn.pack(side="left", padx=5)
-        
-        self.var_debug = tk.BooleanVar(value=False)
-        ttk.Checkbutton(buttons_frame, text="Hiển thị Output Thô", variable=self.var_debug).pack(side="left", padx=(15,0))
-        
-        report_frame = ttk.Frame(self.inspector_tab)
-        report_frame.grid(row=1, column=0, sticky="nsew")
-        report_frame.columnconfigure(0, weight=1)
-        report_frame.rowconfigure(0, weight=1)
-        
-        self.inspector_txt = tk.Text(report_frame, width=100, wrap="word", font=("Consolas", REPORT_FONT_SIZE), relief="flat", borderwidth=1, state="disabled")
-        self.inspector_txt.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
-        vsb = ttk.Scrollbar(report_frame, orient="vertical", command=self.inspector_txt.yview)
-        vsb.grid(row=0, column=1, sticky="ns")
-        self.inspector_txt.configure(yscrollcommand=vsb.set)
-        self.inspector_txt.tag_configure('header', font=("Consolas", REPORT_FONT_SIZE, 'bold'))
+        """Đã chuyển toàn bộ dựng giao diện sang InspectorPage thuần PyQt6."""
+        return
 
     def log(self, s, tag=None): 
         self.inspector_txt.config(state="normal")
@@ -65,8 +42,13 @@ class InspectorTabMixin:
         text_widget.config(state="normal")
         text_widget.delete("1.0", "end")
         text_widget.config(state="disabled")
+        if text_widget is getattr(self, "inspector_txt", None) and hasattr(self, "page_inspector"):
+            try:
+                self.page_inspector.reset_kpi_and_tables()
+            except Exception:
+                pass
         if clear_status: 
-            self.set_status("Sẵn sàng.", "info", progress=0)
+            self.set_status("Sẵn sàng.", "info", progress=0, task_label="Tiến trình: Sẵn sàng")
         
     def on_save(self):
         content = self.inspector_txt.get("1.0", "end").strip()
@@ -110,9 +92,25 @@ class InspectorTabMixin:
         else:
             self.detect_btn.config(state="disabled")
             self.serial_toggle_btn.config(state="disabled")
-        self.set_status(f"Đang kiểm tra trên {port}...", "info", progress=5)
+        self.set_status(f"Đang kiểm tra trên {port}...", "info", progress=0, task_label=f"Kiểm tra phần cứng ({port})")
         self.detect_thread = threading.Thread(target=self._detect_thread, args=(port, self.baud_cb.get()), daemon=True)
         self.detect_thread.start()
+
+    def _post_detect_status(self, message: str, level: str = "info", progress=None):
+        """Gửi cập nhật thanh trạng thái về luồng giao diện chính an toàn."""
+        try:
+            if getattr(self, "root", None) and hasattr(self.root, "after"):
+                self.root.after(0, lambda m=message, lv=level, p=progress: self.set_status(m, lv, progress=p, task_label="Kiểm tra phần cứng"))
+            else:
+                self.set_status(message, level, progress=progress, task_label="Kiểm tra phần cứng")
+        except Exception:
+            pass
+
+    def _rerender_inspector_report(self):
+        """Vẽ lại báo cáo phần cứng từ dữ liệu đã quét gần nhất khi bật/tắt tùy chọn hiển thị."""
+        cached = getattr(self, "_last_inspected_info", None)
+        if cached:
+            self._display_formatted_report(cached)
 
     def _detect_thread(self, port, baud):
         has_error = False
@@ -126,26 +124,26 @@ class InspectorTabMixin:
                 self.root.after(0, lambda b=baud: self.baud_cb.set(b))
                 self.root.after(0, self.save_config)
             outputs = {}
-            self.set_status("Đang đọc toàn diện thông tin chip, flash, firmware & boot log...", "info", progress=20)
+            self._post_detect_status("Đang đọc toàn diện thông tin chip, flash, firmware & boot log...", "info", progress=20)
 
             def on_inspect_stream(line):
                 l_str = str(line)
                 if "Connecting" in l_str:
-                    self.set_status("Đang đồng bộ kết nối Bootloader...", "info", progress=25)
+                    self._post_detect_status("Đang đồng bộ kết nối Bootloader...", "info", progress=25)
                 elif "Chip type:" in l_str or "Connected to" in l_str:
-                    self.set_status("Đã kết nối chip, đang nạp Stub Flasher...", "info", progress=35)
+                    self._post_detect_status("Đã kết nối chip, đang nạp Stub Flasher...", "info", progress=35)
                 elif "Flash Memory Information" in l_str or "Detected flash size" in l_str:
-                    self.set_status("Đang đọc thông tin Flash & JEDEC...", "info", progress=45)
+                    self._post_detect_status("Đang đọc thông tin Flash & JEDEC...", "info", progress=45)
                 elif "Security Information" in l_str or "Flash Status & SFDP" in l_str:
-                    self.set_status("Đang đọc bảo mật phần cứng & SFDP...", "info", progress=55)
+                    self._post_detect_status("Đang đọc bảo mật phần cứng & SFDP...", "info", progress=55)
                 elif "eFuse & Silicon Details" in l_str:
-                    self.set_status("Đang đọc thanh ghi eFuse & định danh Silicon...", "info", progress=65)
+                    self._post_detect_status("Đang đọc thanh ghi eFuse & định danh Silicon...", "info", progress=65)
                 elif "Partition Table" in l_str or "Bootloader Image" in l_str:
-                    self.set_status("Đang đọc Bootloader & Bảng phân vùng Flash...", "info", progress=75)
+                    self._post_detect_status("Đang đọc Bootloader & Bảng phân vùng Flash...", "info", progress=75)
                 elif "Application Firmware Information" in l_str:
-                    self.set_status("Đang phân tích Header & Metadata của Firmware...", "info", progress=85)
+                    self._post_detect_status("Đang phân tích Header & Metadata của Firmware...", "info", progress=85)
                 elif "Hard resetting" in l_str:
-                    self.set_status("Đang thu thập nhật ký khởi động (Boot Log)...", "info", progress=92)
+                    self._post_detect_status("Đang thu thập nhật ký khởi động (Boot Log)...", "info", progress=92)
 
             with esptool_deep_inspection_context(
                 capture_boot_log=True,
@@ -159,7 +157,7 @@ class InspectorTabMixin:
 
             # Nếu lệnh flash_id chưa lấy được MAC và không bị lỗi kết nối, fallback đọc thêm read_mac
             if not is_conn_error and not re.search(r"MAC\s*[:=]\s*([0-9A-Fa-f:.]{12,17})", flash_out):
-                self.set_status("Đang đọc địa chỉ MAC...", "info", progress=95)
+                self._post_detect_status("Đang đọc địa chỉ MAC...", "info", progress=95)
                 outputs['read_mac'] = run_esptool_command(['--port', port, '--baud', baud, 'read-mac'])
 
             has_error = any(not esptool_command_succeeded(output) for output in outputs.values())
@@ -191,6 +189,7 @@ class InspectorTabMixin:
             self.is_detecting.clear()
 
     def _display_formatted_report(self, info):
+        self._last_inspected_info = info
         self.on_clear(self.inspector_txt, clear_status=False)
         if self.var_debug.get():
             self.log("--- OUTPUT THÔ TỪ ESPTOOL & BOOT LOG " + "-" * 37, 'header')
@@ -226,7 +225,8 @@ class InspectorTabMixin:
             man_display = "N/A"
             man_short = "N/A"
 
-        base_mac_hex = info.get('mac')
+        base_mac_raw = (info.get('mac') or "").replace(":", "").replace("-", "").strip()
+        base_mac_hex = base_mac_raw if len(base_mac_raw) == 12 else None
         base_mac_formatted = ":".join(base_mac_hex[i:i+2] for i in range(0, 12, 2)) if base_mac_hex else None
 
         # --- 1. THÔNG TIN ĐỘNG & ĐỊNH DANH SILICON ---
@@ -485,14 +485,18 @@ class InspectorTabMixin:
         else: 
             report_data.append(("  Nguồn gốc MAC (OUI)", "Không thể đối chiếu (thiếu MAC)", 'red'))
 
-        report_data.append(("Ý nghĩa Chỉ số MIPS & Năng lực Xử lý", None, 'header'))
-        report_data.extend([
-            ("", "• MIPS (Million Instructions Per Second): Đo lường số triệu chỉ thị lệnh vi xử lý có thể thực thi trong 1 giây.", None),
-            ("", "• Phân cấp hiệu năng ứng dụng thực tế:", None),
-            ("", "  - Dưới 200 MIPS (ESP8266): Tối ưu cho thiết bị IoT đơn giản, đọc cảm biến, truyền nhận HTTP/MQTT.", None),
-            ("", "  - 300 - 600 MIPS (ESP32/S3/C3/C6): Xử lý đa nhiệm FreeRTOS, bảo mật SSL/TLS, âm thanh số & AI/ML nhẹ.", None),
-            ("", "  - 1800+ MIPS (ESP32-P4): Xử lý giao diện cảm ứng độ nét cao (MIPI-DSI), hình ảnh Camera/H.264 & AI nâng cao.", None)
-        ])
+        extra_log_enabled = True
+        if hasattr(self, "page_inspector") and hasattr(self.page_inspector, "var_extra_log"):
+            extra_log_enabled = bool(self.page_inspector.var_extra_log.get())
+        if extra_log_enabled:
+            report_data.append(("Ý nghĩa Chỉ số MIPS & Năng lực Xử lý", None, 'header'))
+            report_data.extend([
+                ("", "• MIPS (Million Instructions Per Second): Đo lường số triệu chỉ thị lệnh vi xử lý có thể thực thi trong 1 giây.", None),
+                ("", "• Phân cấp hiệu năng ứng dụng thực tế:", None),
+                ("", "  - Dưới 200 MIPS (ESP8266): Tối ưu cho thiết bị IoT đơn giản, đọc cảm biến, truyền nhận HTTP/MQTT.", None),
+                ("", "  - 300 - 600 MIPS (ESP32/S3/C3/C6): Xử lý đa nhiệm FreeRTOS, bảo mật SSL/TLS, âm thanh số & AI/ML nhẹ.", None),
+                ("", "  - 1800+ MIPS (ESP32-P4): Xử lý giao diện cảm ứng độ nét cao (MIPI-DSI), hình ảnh Camera/H.264 & AI nâng cao.", None)
+            ])
         
         key_width = max((len(k) for k, v, t in report_data if k and not k.startswith("---") and k.strip() != ""), default=25) + 2
 
@@ -517,19 +521,27 @@ class InspectorTabMixin:
             else: 
                 tags = ('kv_hanging', tag) if tag else ('kv_hanging',)
                 self.inspector_txt.insert("end", f"{key+':':<{key_width}} {value}\n", tags)
-        self.inspector_txt.see("end")
+        if hasattr(self.inspector_txt, "verticalScrollBar"):
+            self.inspector_txt.verticalScrollBar().setValue(0)
         self.inspector_txt.config(state="disabled")
+        if hasattr(self, "page_inspector") and hasattr(self.page_inspector, "update_from_parsed_info"):
+            try:
+                self.page_inspector.update_from_parsed_info(
+                    info, chip_data, man_display, psram_str, base_mac_formatted, report_data
+                )
+            except Exception:
+                pass
                 
     def detect_baud_rate(self, port):
         test_bauds = ["115200", "74880", "230400", "460800", "921600", "9600"]
-        self.set_status("Đang dò tìm Baudrate...", "info")
+        self._post_detect_status("Đang dò tìm Baudrate...", "info")
         for baud in test_bauds:
-            self.set_status(f"Đang thử @ {baud} bps...", "info")
+            self._post_detect_status(f"Đang thử @ {baud} bps...", "info")
             try:
                 args = ['--port', port, '--baud', str(baud), 'flash-id']
                 output = run_esptool_command(args)
                 if "A fatal error occurred" not in output and ("Chip is" in output or "Chip type:" in output or "Detecting chip type" in output):
-                    self.set_status(f"Đã tìm thấy Baudrate: {baud}", "success")
+                    self._post_detect_status(f"Đã tìm thấy Baudrate: {baud}", "success")
                     return baud
             except Exception: 
                 continue

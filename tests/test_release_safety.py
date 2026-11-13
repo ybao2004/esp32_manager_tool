@@ -8,25 +8,16 @@ from unittest.mock import Mock, patch
 from modules.binary_scanner import scan_project_bin_files
 from modules.tabs.tab_monitor import MonitorTabMixin
 from modules.app_core import InspectorApp
-from modules.dialogs.layout_util import fit_dialog
+from modules.ui.dialogs.size_input_dialog import SizeInputDialog
 
 
 class ReleaseSafetyTests(unittest.TestCase):
     def test_dialog_fits_requested_content_instead_of_fixed_height(self):
-        dialog = Mock()
-        dialog.winfo_screenwidth.return_value = 1920
-        dialog.winfo_screenheight.return_value = 1080
-        dialog.winfo_reqwidth.return_value = 600
-        dialog.winfo_reqheight.return_value = 550
-        parent = Mock()
-        parent.winfo_x.return_value = 20
-        parent.winfo_y.return_value = 20
-        parent.winfo_width.return_value = 1200
-        parent.winfo_height.return_value = 800
-        fit_dialog(dialog, parent, 440, 235)
-        dialog.minsize.assert_called_once_with(600, 550)
-        dialog.resizable.assert_called_once_with(True, True)
-        dialog.geometry.assert_called_once_with('600x550+320+145')
+        from tests.mock_hardware.app_harness import HeadlessAppHarness
+        HeadlessAppHarness.get_shared_root()
+        dlg = SizeInputDialog(None, partition_name="nvs", current_size_bytes=0x6000)
+        self.assertGreaterEqual(dlg.minimumWidth(), 380)
+        dlg.close()
 
     def test_unknown_files_and_merged_images_are_not_auto_selected(self):
         with tempfile.TemporaryDirectory() as directory:

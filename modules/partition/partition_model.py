@@ -400,6 +400,10 @@ class PartitionTable:
 
         return bytes(records)
 
+    def to_bin(self) -> bytes:
+        """Tên gọi rút gọn tương thích ngược của to_binary()."""
+        return self.to_binary()
+
     def from_binary(self, data: bytes):
         """Đọc và giải mã trực tiếp từ file nhị phân partition-table.bin hoặc 4KB đọc từ ESP32"""
         self.clear()
