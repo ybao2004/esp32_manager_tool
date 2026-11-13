@@ -1,11 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-Trang Cài Đặt Hệ Thống (SettingsPage - v1.6).
-- Bố cục QTabWidget gồm 2 sub-tab gọn gàng, loại bỏ hiện tượng cuộn-lồng-cuộn:
+Trang Cài Đặt Hệ Thống (SettingsPage - v1.4).
+- Bố cục QTabWidget gồm 3 sub-tab chuyên biệt, gọn gàng, loại bỏ hiện tượng cuộn-lồng-cuộn:
   1. Sub-tab 1 ("Cài đặt Chung & Cổng COM"): Chia 2 cột cân đối:
-     - Cột Trái: Giao diện & Chủ đề (tự động áp dụng trực tiếp khi chọn), Cấu hình Server Mặc định, Thông tin Bản quyền v1.6 (GPL-3.0, @ybao04).
+     - Cột Trái: Giao diện & Chủ đề (tự động áp dụng trực tiếp khi chọn), Cấu hình Server Mặc định, Thông tin Bản quyền v1.4 (GPL-3.0, @ybao04).
      - Cột Phải: Quản lý Cổng COM (tự động quét, lọc Bluetooth, tích chọn cổng ẩn, nút [Làm mới danh sách] rộng vừa đủ 165px).
   2. Sub-tab 2 ("Phím chức năng F1-F15"): Bảng 15 dòng chiếm trọn chiều cao, dễ nhìn và dễ chỉnh sửa.
+  3. Sub-tab 3 ("Cập nhật Phần mềm"): Kiểm tra và tải trực tiếp bản phát hành mới từ GitHub không xung đột, không đè lấn giao diện.
 - Hàng nút dưới cùng cố định: [Khôi phục mặc định] (155px) và [Lưu Cài Đặt] (155px Primary) căn phải.
 """
 import os
@@ -27,6 +28,7 @@ from modules.update_util import (
     download_update_asset,
     get_running_executable_path,
     get_staged_update_path,
+    is_newer_version,
     is_running_frozen,
     is_same_target_as_running_exe,
     launch_windows_self_updater,
@@ -40,7 +42,7 @@ from modules.ui import dialogs_service as dlg
 
 
 class SettingsPage(QWidget):
-    """Trang Cài Đặt Hệ Thống ESP32 Manager Tool (v1.2)"""
+    """Trang Cài Đặt Hệ Thống ESP32 Manager Tool (v1.4)"""
 
     def __init__(self, core_app=None, parent: QWidget = None):
         super().__init__(parent)
@@ -612,9 +614,14 @@ class SettingsPage(QWidget):
                 self.btn_update_now.setVisible(bool(download_url))
                 self.btn_update_now.setEnabled(bool(download_url))
             else:
-                self.lbl_update_status.setText(
-                    f"Bạn đang sử dụng phiên bản mới nhất (v{APP_VERSION})."
-                )
+                if tag and is_newer_version(APP_VERSION, tag):
+                    self.lbl_update_status.setText(
+                        f"Bạn đang sử dụng phiên bản mới nhất (v{APP_VERSION}). Bản phát hành trên GitHub: {tag}."
+                    )
+                else:
+                    self.lbl_update_status.setText(
+                        f"Bạn đang sử dụng phiên bản mới nhất (v{APP_VERSION})."
+                    )
                 self.btn_update_now.setVisible(False)
 
             self._notify_update_availability(has_up, res)
@@ -630,6 +637,7 @@ class SettingsPage(QWidget):
                 f"Lỗi: {res.get('message', 'Không xác định')}"
             )
             self.btn_update_now.setVisible(False)
+            self._notify_update_availability(False, res)
 
     def _on_update_now_click(self):
         if self._update_download_in_progress:

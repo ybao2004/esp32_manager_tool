@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Esp32 manager tool v1.2 - Update Checker & Downloader Utility
+Esp32 manager tool v1.4 - Update Checker & Downloader Utility
 Kiểm tra phiên bản mới từ GitHub Releases API và tải trực tiếp file cập nhật.
 """
 from __future__ import annotations
@@ -61,10 +61,17 @@ def parse_version_tuple(ver_str: str) -> Tuple[int, ...]:
     if not ver_str:
         return (0,)
     # Tìm các cụm số nguyên liên tiếp
-    nums = re.findall(r"\d+", str(ver_str))
+    nums = [int(n) for n in re.findall(r"\d+", str(ver_str))]
     if not nums:
         return (0,)
-    return tuple(int(n) for n in nums)
+
+    # Chuẩn hóa các bản phát hành lịch sử v1.10 và v1.11 (bản vá nhánh v1.1 trước khi dự án chuẩn hóa về v1.2 / v1.3)
+    # v1.10 tương đương (1, 1, 0); v1.11 tương đương (1, 1, 1). Chỉ áp dụng cho đúng 2 số để không ảnh hưởng SemVer 3 số (như 1.10.0).
+    if len(nums) == 2 and nums[0] == 1 and nums[1] in (10, 11):
+        patch = nums[1] - 10
+        nums = [1, 1, patch]
+
+    return tuple(nums)
 
 
 def is_newer_version(latest_tag: str, current_version: str) -> bool:
@@ -80,14 +87,15 @@ def is_newer_version(latest_tag: str, current_version: str) -> bool:
     return t_latest_pad > t_current_pad
 
 
-def check_for_updates(current_version: str = "1.0", repo: str = DEFAULT_REPO) -> Dict[str, Any]:
+def check_for_updates(current_version: str = APP_VERSION, repo: str = DEFAULT_REPO) -> Dict[str, Any]:
     """
     Kiểm tra phiên bản phát hành mới nhất từ GitHub API.
     Không làm sập ứng dụng khi offline hoặc khi repo chưa có release nào.
     """
+    curr_ver = current_version if current_version else APP_VERSION
     api_url = f"https://api.github.com/repos/{repo}/releases/latest"
     headers = {
-        "User-Agent": f"Esp32ManagerTool/{current_version}",
+        "User-Agent": f"Esp32ManagerTool/{curr_ver}",
         "Accept": "application/vnd.github.v3+json"
     }
     req = urllib.request.Request(api_url, headers=headers)
@@ -121,7 +129,7 @@ def check_for_updates(current_version: str = "1.0", repo: str = DEFAULT_REPO) ->
                     download_url = data.get("zipball_url", "")
                     asset_name = f"{tag_name}.zip"
 
-                has_update = is_newer_version(tag_name, current_version)
+                has_update = is_newer_version(tag_name, curr_ver)
 
                 return {
                     "status": "success",
@@ -141,7 +149,7 @@ def check_for_updates(current_version: str = "1.0", repo: str = DEFAULT_REPO) ->
             return {
                 "status": "no_releases",
                 "has_update": False,
-                "latest_version": current_version,
+                "latest_version": curr_ver,
                 "release_name": "",
                 "release_notes": "",
                 "published_at": "",
@@ -149,26 +157,26 @@ def check_for_updates(current_version: str = "1.0", repo: str = DEFAULT_REPO) ->
                 "download_url": "",
                 "asset_name": "",
                 "asset_size": 0,
-                "message": f"Chưa có bản phát hành chính thức nào trên GitHub repository:\nhttps://github.com/{repo}\nBạn đang sử dụng phiên bản gốc (v{current_version})."
+                "message": f"Chưa có bản phát hành chính thức nào trên GitHub repository:\nhttps://github.com/{repo}\nBạn đang sử dụng phiên bản gốc (v{curr_ver})."
             }
         return {
             "status": "error",
             "has_update": False,
-            "latest_version": current_version,
+            "latest_version": curr_ver,
             "message": f"Lỗi máy chủ GitHub HTTP {e.code}: {e.reason}"
         }
     except urllib.error.URLError as e:
         return {
             "status": "error",
             "has_update": False,
-            "latest_version": current_version,
+            "latest_version": curr_ver,
             "message": f"Không thể kết nối Internet hoặc GitHub API:\n{e.reason}"
         }
     except Exception as e:
         return {
             "status": "error",
             "has_update": False,
-            "latest_version": current_version,
+            "latest_version": curr_ver,
             "message": f"Ngoại lệ khi kiểm tra cập nhật:\n{str(e)}"
         }
 

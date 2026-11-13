@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Cửa sổ chính của ứng dụng ESP32 Manager Tool (MainWindow) v1.9.
+Cửa sổ chính của ứng dụng ESP32 Manager Tool (MainWindow) v1.4.
 Kiến trúc thuần PyQt6 với Sidebar điều hướng thu gọn, Thanh kết nối toàn cục ConnectionBar,
 QStackedWidget chứa 6 trang giao diện Kỹ thuật (Sáng/Tối) và hệ thống quản lý tiến trình thống nhất.
 """
@@ -265,7 +265,7 @@ class MainWindow(
     BackupCloneTabMixin,
     AboutUpdateMixin
 ):
-    """Cửa sổ chính ứng dụng ESP32 Manager Tool v1.2"""
+    """Cửa sổ chính ứng dụng ESP32 Manager Tool v1.4"""
 
     def __init__(self, root=None, auto_start: bool = True, parent: Optional[QWidget] = None, progress_callback=None):
         QMainWindow.__init__(self, parent)

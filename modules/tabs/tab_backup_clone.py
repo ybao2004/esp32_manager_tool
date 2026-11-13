@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Esp32 manager tool v1.3 - Tab 5: Backup & Direct Multi-Board Clone Mixin
+Esp32 manager tool v1.4 - Tab 5: Backup & Direct Multi-Board Clone Mixin
 Sao lưu phân vùng / toàn bộ Flash từ chip kèm hồ sơ băm (MD5, SHA-256, MAC gốc, tên chip, thời gian, địa chỉ, dung lượng)
 và Sao chép trực tiếp (Direct Clone) từ 1 Board gốc sang 1 hoặc nhiều Board đích cùng lúc.
 """

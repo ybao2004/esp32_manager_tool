@@ -8,10 +8,12 @@ build/
 dist/
 *.spec.bak
 
-# Testing cache
+# Testing cache & local test suite
 .pytest_cache/
 .coverage
 htmlcov/
+tests/
+pytest.ini
 
 # Local settings and user config
 settings_*.json

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Hộp thoại Giới thiệu (AboutDialog) và Kiểm tra Cập nhật (UpdateDialog) thuần PyQt6 (v1.9).
+Hộp thoại Giới thiệu (AboutDialog) và Kiểm tra Cập nhật (UpdateDialog) thuần PyQt6 (v1.4).
 Thay thế hoàn toàn modules/dialogs/settings_dialog.py cũ.
 """
 import os
@@ -15,7 +15,7 @@ from modules.config import (
     APP_NAME, APP_VERSION, APP_AUTHOR, APP_LICENSE, GITHUB_REPO
 )
 from modules.help_content import about_features_text
-from modules.update_util import check_for_updates, download_update_asset
+from modules.update_util import check_for_updates, download_update_asset, is_newer_version
 from modules.ui import dialogs_service as dlg
 from modules.ui.dispatch import UiDispatcher
 from modules.ui.widgets.card import Card
@@ -194,10 +194,13 @@ class UpdateDialog(QDialog):
 
                     if has_up:
                         self.lbl_check_status.setText(f"Có bản cập nhật mới: {tag} (Hiện tại: v{APP_VERSION})")
-                        self.btn_download.setEnabled(True)
-                    else:
-                        self.lbl_check_status.setText(f"Bạn đang sử dụng phiên bản mới nhất (v{APP_VERSION}).")
                         self.btn_download.setEnabled(bool(res.get("download_url")))
+                    else:
+                        if tag and is_newer_version(APP_VERSION, tag):
+                            self.lbl_check_status.setText(f"Bạn đang sử dụng phiên bản mới nhất (v{APP_VERSION}). Bản phát hành trên GitHub: {tag}.")
+                        else:
+                            self.lbl_check_status.setText(f"Bạn đang sử dụng phiên bản mới nhất (v{APP_VERSION}).")
+                        self.btn_download.setEnabled(False)
 
                     size_str = f" ({asset_size / (1024*1024):.1f} MB)" if asset_size > 0 else ""
                     lines = [
