@@ -92,7 +92,7 @@ def test_open_update_dialog_uses_inline_settings_without_new_window(qapp, tmp_pa
         try:
             win.open_update_dialog()
             assert win.stack.currentIndex() == 5
-            assert win.page_settings.tabs.currentIndex() == 0
+            assert win.page_settings.tabs.currentIndex() == 2
             mock_dlg.assert_not_called()
 
             done = _wait_until(
@@ -143,7 +143,7 @@ def test_red_dot_indicator_chain_shows_and_clears(qapp, tmp_path):
                 assert ok is True
 
             assert win.sidebar.has_settings_badge() is True
-            assert not win.page_settings.tabs.tabBar().tabIcon(0).isNull()
+            assert not win.page_settings.tabs.tabBar().tabIcon(2).isNull()
             assert not win.page_settings.btn_update_now.isHidden()
             assert win.page_settings._btn_update_now_badge.is_active() is True
             assert win.page_settings._btn_chk_badge.is_active() is False
@@ -155,7 +155,7 @@ def test_red_dot_indicator_chain_shows_and_clears(qapp, tmp_path):
                 assert cleared is True
 
             assert win.sidebar.has_settings_badge() is False
-            assert win.page_settings.tabs.tabBar().tabIcon(0).isNull()
+            assert win.page_settings.tabs.tabBar().tabIcon(2).isNull()
             assert win.page_settings._btn_update_now_badge.is_active() is False
             assert win.page_settings._btn_chk_badge.is_active() is False
         finally:
@@ -163,7 +163,7 @@ def test_red_dot_indicator_chain_shows_and_clears(qapp, tmp_path):
             UiDispatcher.instance().reset()
 
 
-def test_save_as_same_running_exe_redirects_to_staged_self_update(qapp, tmp_path):
+def test_direct_update_downloads_without_save_as_dialog(qapp, tmp_path):
     cfg_path = tmp_path / "settings_same_exe.json"
     running_exe = str(tmp_path / "Esp32_manager_tool.exe")
     with open(running_exe, "wb") as fp:
@@ -180,24 +180,22 @@ def test_save_as_same_running_exe_redirects_to_staged_self_update(qapp, tmp_path
                 "download_url": "https://example.com/Esp32_manager_tool.exe",
                 "asset_name": "Esp32_manager_tool.exe",
             }
-            with patch("modules.ui.pages.settings_page.dlg.asksaveasfilename", return_value=running_exe) as mock_save, \
-                 patch("modules.ui.pages.settings_page.is_same_target_as_running_exe", return_value=True), \
-                 patch("modules.ui.pages.settings_page.get_running_executable_path", return_value=running_exe), \
+            with patch("modules.ui.pages.settings_page.get_running_executable_path", return_value=running_exe), \
+                 patch("modules.ui.pages.settings_page.os.name", "nt"), \
                  patch.object(win.page_settings, "_start_update_download") as mock_dl:
-                win.page_settings._on_save_update_click()
-                # Không thêm hậu tố phiên bản (_v2.0) vào tên file gợi ý
-                assert mock_save.call_args.kwargs.get("initialfile") == "Esp32_manager_tool.exe"
+                win.page_settings._on_update_now_click()
                 mock_dl.assert_called_once()
                 args, kwargs = mock_dl.call_args
                 # File tải về phải là đường dẫn tạm khác với running_exe, còn self_update_target là running_exe
                 assert args[1] != running_exe
-                assert kwargs.get("self_update_target") == os.path.abspath(running_exe)
+                assert "esp32_manager_update_" in os.path.basename(args[1])
+                assert kwargs.get("self_update_target") == running_exe
         finally:
             win.cleanup_resources(force=True)
             UiDispatcher.instance().reset()
 
 
-def test_update_details_panel_has_zero_overlap_across_window_sizes(qapp, tmp_path):
+def test_update_tab_layout_and_zero_overlap_across_window_sizes(qapp, tmp_path):
     cfg_path = tmp_path / "settings_update_geom.json"
     with patch("modules.ui.main_window.CONFIG_FILE", str(cfg_path), create=True), \
          patch("modules.app_core.set_window_icon_native"), \
@@ -210,6 +208,9 @@ def test_update_details_panel_has_zero_overlap_across_window_sizes(qapp, tmp_pat
                 win.show()
                 win.notebook.select(5)
                 page = win.page_settings
+                page.select_sub_tab(2)
+                assert page.tabs.currentIndex() == 2
+
                 page._apply_update_check_result(
                     {
                         "status": "success",
@@ -225,21 +226,18 @@ def test_update_details_panel_has_zero_overlap_across_window_sizes(qapp, tmp_pat
                     silent=False,
                 )
                 assert not page.btn_update_now.isHidden()
-                assert page.btn_save_update.isHidden()
 
                 page.pb_update_download.setVisible(True)
                 page.lbl_download_status.setVisible(True)
                 page.lbl_download_status.setText("Đang tải: 0.09 MB / 67.17 MB (0.1%)")
                 page.btn_cancel_update.setVisible(True)
+                page.update_progress_box.setVisible(True)
                 qapp.processEvents()
 
-                r_lbl = page.lbl_download_status.geometry()
-                r_pb = page.pb_update_download.geometry()
+                r_prog = page.update_progress_box.geometry()
                 r_txt = page.txt_release_notes.geometry()
-                assert not r_lbl.intersects(r_pb)
-                assert not r_pb.intersects(r_txt)
-                assert not r_lbl.intersects(r_txt)
-                assert r_pb.bottom() < r_txt.top()
+                assert not r_prog.intersects(r_txt)
+                assert r_prog.bottom() < r_txt.top()
         finally:
             win.cleanup_resources(force=True)
             UiDispatcher.instance().reset()

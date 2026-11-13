@@ -782,8 +782,10 @@ class MainWindow(
 
         # Menu Giới thiệu
         menu_about = menubar.addMenu("Giới thiệu")
-        act_about = menu_about.addAction("Thông tin Phần mềm...")
+        act_about = menu_about.addAction("Thông tin Phiên bản & Bản quyền...")
         act_about.triggered.connect(self.open_about_dialog)
+        act_check_update = menu_about.addAction("Kiểm tra Cập nhật...")
+        act_check_update.triggered.connect(self.open_update_dialog)
 
     # Dispatcher Thread-safe Call
     def ui_call(self, fn, *args, delay_ms: int = 0):

@@ -336,14 +336,15 @@ class AppTabsAndFeaturesTests(unittest.TestCase):
         with patch('modules.app_core.set_window_icon_native'):
             app = InspectorApp(self.root)
 
-            # 1. Trang Cài đặt tinh gọn: đúng 2 tab phụ (Cài đặt chung, Phím chức năng)
+            # 1. Trang Cài đặt gồm 3 tab phụ (Cài đặt chung, Phím chức năng, Cập nhật phần mềm)
             app.open_settings_dialog(0)
             self.assertEqual(app.stack.currentIndex(), 5)
             tabs = app.page_settings.tabs
-            self.assertEqual(tabs.count(), 2)
+            self.assertEqual(tabs.count(), 3)
             tab_names = [tabs.tabText(i) for i in range(tabs.count())]
             self.assertTrue(any("Cài đặt Chung" in name or "Cài đặt chung" in name for name in tab_names))
             self.assertTrue(any("F1" in name for name in tab_names))
+            self.assertTrue(any("Cập nhật" in name for name in tab_names))
 
             # 2. Hộp thoại Giới thiệu độc lập
             dlg_about = AboutDialog(app)
