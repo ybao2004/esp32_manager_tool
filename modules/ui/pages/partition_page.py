@@ -287,6 +287,9 @@ class _TreeviewCompat(QTreeWidget):
         self._auto_id = 0
         self._cols: list[str] = []
         self._space_callbacks: list = []
+        hdr = self.header()
+        if hdr is not None:
+            hdr.setDefaultAlignment(Qt.AlignmentFlag.AlignCenter)
 
     def keyPressEvent(self, event):
         if event is not None and event.key() == Qt.Key.Key_Space and self._space_callbacks:
@@ -324,6 +327,7 @@ class _TreeviewCompat(QTreeWidget):
                 header_item = QTreeWidgetItem()
                 self.setHeaderItem(header_item)
             header_item.setText(idx, text)
+            header_item.setTextAlignment(idx, Qt.AlignmentFlag.AlignCenter)
 
     def column(self, col: str, width: int = 100, anchor: str = "w"):
         if col in self._cols:

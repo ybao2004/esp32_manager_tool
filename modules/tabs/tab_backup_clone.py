@@ -1078,7 +1078,7 @@ class BackupCloneTabMixin:
 
             safe_after(
                 lambda n=r_name, sz=len(final_data), md5=hashes["md5"], sha=hashes["sha256"]: self.log_backup(
-                    f"      -> Đã lưu: {format_bytes_human(sz)} | MD5: {md5} | SHA256: {sha[:24]}...", "green"
+                    f"    -> Đã lưu: {format_bytes_human(sz)} | MD5: {md5} | SHA256: {sha[:24]}...", "green"
                 )
             )
             completed_bytes += r_size
@@ -1745,7 +1745,7 @@ class BackupCloneTabMixin:
                         safe_after(
                             lambda tp=t_port, ti=t_idx, tt=total_targets, dp=done_prog, tl=target_task: (
                                 self.log_backup(
-                                    f"      [THÀNH CÔNG] Board {tp} đã nhận đầy đủ Firmware & Phân vùng!", "green"
+                                    f"    [THÀNH CÔNG] Board {tp} đã nhận đầy đủ Firmware & Phân vùng!", "green"
                                 ),
                                 self.set_status(
                                     f"Đã nạp xong {tp} ({ti}/{tt}).",
@@ -1760,13 +1760,13 @@ class BackupCloneTabMixin:
                         lower_err = port_err_msg.lower()
                         if "is not an" in lower_err and "image" in lower_err:
                             safe_after(lambda tp=t_port: self.log_backup(
-                                f"      [LỖI KHÁC CHIP] Dữ liệu nguồn không tương thích với Board Đích {tp} "
+                                f"    [LỖI KHÁC CHIP] Dữ liệu nguồn không tương thích với Board Đích {tp} "
                                 f"(ví dụ nhân bản ESP32-S3 sang ESP32 thường). Hai board phải cùng dòng chip!",
                                 "red",
                             ))
                         else:
                             safe_after(lambda tp=t_port: self.log_backup(
-                                f"      [THẤT BẠI] Không thể ghi dữ liệu vào Board {tp}!", "red"
+                                f"    [THẤT BẠI] Không thể ghi dữ liệu vào Board {tp}!", "red"
                             ))
 
                 summary_msg = (

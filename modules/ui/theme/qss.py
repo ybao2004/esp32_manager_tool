@@ -212,7 +212,7 @@ def build_qss(t: ThemeTokens) -> str:
     /* =========================================================================
        6. NHẬT KÝ & VĂN BẢN (LOG VIEWS)
        ========================================================================= */
-    QPlainTextEdit[role="log"] {{
+    QPlainTextEdit[role="log"], QTextEdit[role="log"] {{
         background-color: {t.log_bg};
         color: {t.text};
         border: 1px solid {t.border};

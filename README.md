@@ -1,10 +1,15 @@
-# ESP32 Manager Tool (v1.5.1)
+# ESP32 Manager Tool (v1.5.2)
 
 > **Tác giả:** `@ybao04` | **Bản quyền:** GNU General Public License v3.0 (GPL-3.0) | **Kho lưu trữ:** [github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
 
-**ESP32 Manager Tool v1.5.1** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / quản trị dữ liệu phân vùng / nhân bản đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
+**ESP32 Manager Tool v1.5.2** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / quản trị dữ liệu phân vùng / nhân bản đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
 
 ---
+
+## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.5.2
+
+- **Căn giữa đồng bộ tiêu đề bảng phân vùng (Tab 4 & Tab 5):** Toàn bộ tiêu đề cột (`Chọn`, `STT`, `Tên Vùng`, `Kiểu`, `Phân loại`, `Offset`, `Dung lượng`...) được căn giữa đều đặn trong `_TreeviewCompat`.
+- **Thụt lề treo (Hanging Indent) cho khung Nhật Ký (`LogView`):** Tự động căn thẳng cột nội dung khi các dòng thụt lề (`  + `, `    -> `, `>>> `, Tab 2 `Log`) xuống dòng trên khung hẹp, bỏ dòng trống thừa ở đầu khung log và chuẩn hóa thụt lề chi tiết ở Tab 5.
 
 ## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.5.1
 

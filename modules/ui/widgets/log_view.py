@@ -4,8 +4,9 @@ Trình hiển thị nhật ký thời gian thực (High-Performance LogView) cho
 Tối ưu hiệu năng cao với bộ gom lô (Batch Dispatcher), tô màu phân cấp lỗi ESP-IDF (I/W/E),
 hỗ trợ dấu thời gian và tự động cuộn thông minh.
 """
-from PyQt6.QtWidgets import QPlainTextEdit, QWidget
-from PyQt6.QtGui import QTextCharFormat, QColor, QTextCursor, QFont, QTextFormat
+import re
+from PyQt6.QtWidgets import QTextEdit, QWidget
+from PyQt6.QtGui import QTextCharFormat, QTextBlockFormat, QColor, QTextCursor, QFont, QFontMetricsF, QTextFormat
 from PyQt6.QtCore import QTimer, Qt
 from datetime import datetime
 from collections import deque
@@ -14,15 +15,22 @@ from modules.ui.theme.tokens import ThemeTokens
 from modules.ui.theme.manager import ThemeManager
 
 
-class LogView(QPlainTextEdit):
+class LogView(QTextEdit):
     _ROLE_PROP = QTextFormat.Property.UserProperty + 1
+    _CENTRAL_LOG_RE = re.compile(
+        r"^\[[A-Za-zÀ-ỹ0-9 &_-]+\]\s+(?:\[\d{2}:\d{2}:\d{2}(?:\.\d{3})?\]\s+)?"
+    )
+    _BULLET_PREFIX_RE = re.compile(r"^(\s*(?:\[\d+/\d+\]\s+|->\s+|>>>\s+|[+\-*!]\s+))")
+    _WS_PREFIX_RE = re.compile(r"^(\s+)")
 
     def __init__(self, parent: QWidget = None):
         super().__init__(parent)
         self.setProperty("role", "log")
         self.setReadOnly(True)
-        self.setMaximumBlockCount(So_dong_serial_toi_da)
-        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.setAcceptRichText(False)
+        self.document().setMaximumBlockCount(So_dong_serial_toi_da)
+        self.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self._default_block_fmt = QTextBlockFormat()
 
         self.autoscroll = True
         self.timestamps = False
@@ -130,6 +138,45 @@ class LogView(QPlainTextEdit):
         for line in str(text).splitlines():
             self.append_line(line)
 
+    def _compute_hanging_indent_px(self, line: str) -> float:
+        """Tính độ thụt lề treo (pixel) khi dòng nhật ký tự động xuống dòng."""
+        if not line or not line.strip():
+            return 0.0
+        font = QFont(self._current_tokens.font_mono, 9)
+        fm = QFontMetricsF(font)
+        indent_px = 0.0
+        if self._CENTRAL_LOG_RE.match(line):
+            indent_px = fm.horizontalAdvance("    ")
+        else:
+            m_bullet = self._BULLET_PREFIX_RE.match(line)
+            if m_bullet:
+                indent_px = fm.horizontalAdvance(m_bullet.group(1))
+            else:
+                m_ws = self._WS_PREFIX_RE.match(line)
+                if m_ws:
+                    indent_px = fm.horizontalAdvance(m_ws.group(1))
+        if indent_px <= 0.0:
+            return 0.0
+        vp = self.viewport()
+        vp_w = float(vp.width()) if vp is not None else 0.0
+        if vp_w > 120.0:
+            indent_px = min(indent_px, vp_w * 0.35)
+        return float(indent_px)
+
+    def _make_block_format(self, indent_px: float) -> QTextBlockFormat:
+        if indent_px <= 0.0:
+            return self._default_block_fmt
+        bf = QTextBlockFormat()
+        bf.setLeftMargin(indent_px)
+        bf.setTextIndent(-indent_px)
+        return bf
+
+    def _is_doc_empty(self) -> bool:
+        doc = self.document()
+        if doc is None:
+            return True
+        return doc.blockCount() <= 1 and doc.firstBlock().text() == ""
+
     def _flush_queue(self):
         if not self._queue:
             return
@@ -140,9 +187,14 @@ class LogView(QPlainTextEdit):
         count = 0
         while self._queue and count < 500:
             text_line, level = self._queue.popleft()
+            if self._is_doc_empty() and not text_line.strip("\r\n"):
+                count += 1
+                continue
             fmt = self._formats.get(level or "info", self._formats["info"])
             if cursor.position() > 0:
                 cursor.insertText("\n")
+            indent_px = self._compute_hanging_indent_px(text_line)
+            cursor.setBlockFormat(self._make_block_format(indent_px))
             cursor.insertText(text_line, fmt)
             count += 1
 
@@ -171,14 +223,27 @@ class LogView(QPlainTextEdit):
             "header": "header"
         }
         eff_lvl = level_map.get(lvl, "info")
+        raw = str(text)
+        if self._is_doc_empty():
+            raw = raw.lstrip("\r\n")
+            if not raw:
+                return
         cursor = self.textCursor()
         cursor.movePosition(QTextCursor.MoveOperation.End)
         fmt = self._formats.get(eff_lvl, self._formats.get("info", QTextCharFormat()))
-        cursor.insertText(str(text), fmt)
+        parts = raw.split("\n")
+        for idx, part in enumerate(parts):
+            if part:
+                indent_px = self._compute_hanging_indent_px(part)
+                cursor.setBlockFormat(self._make_block_format(indent_px))
+                cursor.insertText(part, fmt)
+            if idx < len(parts) - 1:
+                cursor.insertText("\n", fmt)
+                cursor.setBlockFormat(self._make_block_format(0.0))
 
     def index(self, pos="end-1c") -> str:
         self._flush_queue()
-        lines = max(1, self.blockCount())
+        lines = max(1, self.document().blockCount())
         return f"{lines}.0"
 
     def delete(self, start="1.0", end="end"):

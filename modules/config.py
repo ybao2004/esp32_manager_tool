@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Esp32 manager tool v1.5.1 - Configuration & Constants
+Esp32 manager tool v1.5.2 - Configuration & Constants
 """
 import os
 import sys
@@ -23,7 +23,7 @@ CONFIG_FILENAME = "settings_esp32_manager_tool.json"
 CONFIG_FILE = os.path.join(CONFIG_DIR, CONFIG_FILENAME)
 
 APP_NAME = "Esp32 manager tool"
-APP_VERSION = "1.5.1"
+APP_VERSION = "1.5.2"
 APP_AUTHOR = "@ybao04"
 APP_LICENSE = "GPL-3.0"
 GITHUB_REPO = "ybao2004/esp32_manager_tool"
