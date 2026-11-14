@@ -31,6 +31,34 @@ class KeyValueTable(QTableWidget):
 
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
+        self.horizontalHeader().sectionResized.connect(lambda *_: self.recompute_height())
+
+    def recompute_height(self):
+        """Tính lại chiều cao từng hàng theo độ rộng cột hiện tại và khóa chiều cao tổng của bảng."""
+        if getattr(self, "_recomputing_height", False):
+            return
+        self._recomputing_height = True
+        try:
+            self.resizeRowsToContents()
+            header_h = 26
+            rows_h = sum(
+                max(24, self.rowHeight(r))
+                for r in range(self.rowCount())
+                if not self.isRowHidden(r)
+            )
+            total_h = header_h + rows_h + 4
+            self.setFixedHeight(max(68, total_h))
+        finally:
+            self._recomputing_height = False
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.recompute_height()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if event is None or event.size().width() != event.oldSize().width():
+            self.recompute_height()
 
     def set_rows(self, rows: list[tuple[str, str]]):
         self.setRowCount(len(rows))
@@ -47,11 +75,7 @@ class KeyValueTable(QTableWidget):
             self.setItem(row_idx, 0, item_k)
             self.setItem(row_idx, 1, item_v)
 
-        self.resizeRowsToContents()
-        header_h = 26
-        rows_h = sum(max(24, self.rowHeight(r)) for r in range(self.rowCount()))
-        total_h = header_h + rows_h + 4
-        self.setFixedHeight(max(68, total_h))
+        self.recompute_height()
 
     def populate(self, rows: list[tuple[str, str]]):
         self.set_rows(rows)

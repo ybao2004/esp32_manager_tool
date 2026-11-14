@@ -1,12 +1,17 @@
-# ESP32 Manager Tool (v1.6.1)
+# ESP32 Manager Tool (v1.6.2)
 
 > **Tác giả:** `@ybao04` | **Bản quyền:** GNU General Public License v3.0 (GPL-3.0) | **Kho lưu trữ:** [github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
 
-**ESP32 Manager Tool v1.6.1** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / quản trị dữ liệu phân vùng / nhân bản đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
+**ESP32 Manager Tool v1.6.2** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / quản trị dữ liệu phân vùng / nhân bản đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
 
 ---
 
-## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.6.1
+## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.6.2
+
+- **Sửa lỗi dư khoảng trống chiều cao ở `Bảng Thông số` (`KeyValueTable`):** Tự động tính lại chiều cao các hàng theo bề rộng thực tế của cột giá trị ngay khi hiển thị bảng (`showEvent` / `resizeEvent` / kéo cột / chuyển chế độ xem / lọc tìm kiếm), loại bỏ hoàn toàn hiện tượng giãn dư chiều cao khi dữ liệu được nạp lúc đang ẩn ở tab `"Báo cáo Liền mạch"`.
+- **Phân nhóm đúng `Bảng Phân Vùng` vào Mục 5:** Sửa điều kiện nhận diện tiêu đề trong `InspectorPage.update_from_parsed_info` để `"Bảng Phân Vùng Flash & Bộ Nhớ Động (Heap)"` hiển thị đúng ở bảng **5. Firmware, Phân vùng & Nguồn gốc** thay vì bị gom nhầm vào bảng 1.
+
+### Các cập nhật trước đó (v1.6.1)
 
 - **Cố định đồng đều 5 khung KPI phần cứng (`1:1:1:1:1`) & tăng chiều cao lên `92px`:**
   - Khóa cứng tỷ lệ chiều ngang `20%` mỗi khung (bằng `QSizePolicy.Policy.Ignored`), đảm bảo 5 thẻ (**Vi xử lý · Flash · SRAM · PSRAM · MAC**) luôn bằng nhau tuyệt đối trước và sau khi đọc chip.

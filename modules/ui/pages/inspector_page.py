@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QCheckBox, QLineEdit, QScrollArea, QFrame, QLabel, QStackedWidget,
     QButtonGroup, QSizePolicy
 )
-from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QFont, QFontMetrics, QTextLayout, QTextOption
 from modules.ui.text import qt_text
 from modules.ui.icons import get_icon
@@ -339,8 +339,21 @@ class InspectorPage(QWidget):
         # Khởi tạo dữ liệu mặc định cho bảng
         self.reset_kpi_and_tables()
 
+    def recompute_all_table_heights(self):
+        for tbl in (
+            self.table_dynamic,
+            self.table_memory,
+            self.table_specs,
+            self.table_network,
+            self.table_origin,
+        ):
+            tbl.recompute_height()
+
     def _on_switch_view_mode(self, idx: int):
         self.view_stack.setCurrentIndex(idx)
+        if idx == 1:
+            self.recompute_all_table_heights()
+            QTimer.singleShot(0, self.recompute_all_table_heights)
 
     def reset_kpi_and_tables(self):
         self.kpi_chip.set_metrics("Chưa kiểm tra", "Chọn cổng COM & bấm Kiểm tra Chip")
@@ -451,7 +464,7 @@ class InspectorPage(QWidget):
         for k, v, _tag in report_data:
             if v is None:
                 hdr = (k or "").lower()
-                if "động" in hdr or "silicon" in hdr:
+                if "silicon" in hdr or "thông tin động" in hdr:
                     current_bucket = 1
                 elif "flash" in hdr and ("psram" in hdr or "sram" in hdr):
                     current_bucket = 2
@@ -492,6 +505,7 @@ class InspectorPage(QWidget):
                 v_txt = v_item.text().lower() if v_item else ""
                 match = (not query) or (query in k_txt) or (query in v_txt)
                 tbl.setRowHidden(r, not match)
+            tbl.recompute_height()
 
     def _on_theme_changed(self, tokens):
         self.detect_btn.setIcon(get_icon("chip", tokens.on_accent, 16))
