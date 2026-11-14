@@ -116,7 +116,7 @@ class FlasherTabMixin:
         chip_target = self.flash_chip_cb.get().strip()
         baud = self.flash_baud_cb.get().strip()
 
-        self.log_flash("=== BẮT ĐẦU XÓA SẠCH FLASH (ERASE FLASH) ===", 'header')
+        self.log_flash("BẮT ĐẦU XÓA SẠCH FLASH (ERASE FLASH)", 'header')
         self.flash_thread = threading.Thread(target=self._erase_worker, args=(port, baud, chip_target, was_connected), daemon=True)
         self.flash_thread.start()
 
@@ -242,7 +242,7 @@ class FlasherTabMixin:
         baud = self.flash_baud_cb.get().strip()
         erase_all = self.var_flash_erase.get()
 
-        self.log_flash(f"=== BẮT ĐẦU NẠP FIRMWARE ESP ({len(write_pairs)} FILE) ===", 'header')
+        self.log_flash(f"BẮT ĐẦU NẠP FIRMWARE ESP ({len(write_pairs)} FILE)", 'header')
         self.log_flash(f"Cổng COM: {port} | Baudrate: {baud} | Chip: {chip_target}")
         if erase_all:
             self.log_flash("Tùy chọn: Xóa sạch Flash trước khi ghi (--erase-all)")

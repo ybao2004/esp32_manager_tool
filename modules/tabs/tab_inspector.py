@@ -220,16 +220,15 @@ class InspectorTabMixin:
         self._last_inspected_info = info
         self.on_clear(self.inspector_txt, clear_status=False)
         if self.var_debug.get():
-            self.log("--- OUTPUT THÔ TỪ ESPTOOL & BOOT LOG " + "-" * 37, 'header')
+            self.log("OUTPUT THÔ TỪ ESPTOOL & BOOT LOG", 'header')
             self.log(info.get('raw', 'Không có output thô.').strip())
-            self.log("-" * 74 + "\n")
+            self.log("")
             
         # Kiểm tra nếu esptool không thể sync được với bootloader
         raw_text = info.get('raw', '')
         if not info.get('chip_name_key') and not info.get('mac') and ("fatal error" in raw_text.lower() or "failed to connect" in raw_text.lower()):
             self.inspector_txt.config(state="normal")
-            self.inspector_txt.insert("end", "\nKHÔNG THỂ KẾT NỐI ĐỒNG BỘ VỚI CHIP ESP\n", 'red')
-            self.inspector_txt.insert("end", "─" * 65 + "\n", 'red')
+            self.inspector_txt.insert("end", "\nKHÔNG THỂ KẾT NỐI ĐỒNG BỘ VỚI CHIP ESP\n\n", 'red')
             self.inspector_txt.insert("end", "Nguyên nhân: esptool không nhận được phản hồi bootloader từ chip qua cổng Serial.\n\n")
             self.inspector_txt.insert("end", "Các bước khắc phục khuyến nghị:\n", 'header')
             self.inspector_txt.insert("end", " 1. Nhấn và GIỮ nút BOOT (hoặc GPIO0 nối GND) trên mạch ESP trước khi bấm 'Kiểm tra'.\n")

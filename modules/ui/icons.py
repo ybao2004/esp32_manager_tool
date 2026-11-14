@@ -140,6 +140,8 @@ class _IconThemeBinder(QObject):
             return
         if self._role == "on_accent":
             color = tokens.on_accent
+        elif self._role == "accent":
+            color = tokens.accent
         elif self._role == "muted":
             color = tokens.text_secondary
         elif self._role == "danger":

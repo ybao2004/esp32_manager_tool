@@ -1,25 +1,62 @@
 # -*- coding: utf-8 -*-
 """
-Hộp thoại Giới thiệu (AboutDialog) và Kiểm tra Cập nhật (UpdateDialog) thuần PyQt6 (v1.5).
+Hộp thoại Giới thiệu (AboutDialog) và Kiểm tra Cập nhật (UpdateDialog) thuần PyQt6 (v1.5.1).
 Thay thế hoàn toàn modules/dialogs/settings_dialog.py cũ.
 """
 import os
 import threading
+import weakref
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QPlainTextEdit, QProgressBar, QWidget
+    QPlainTextEdit, QProgressBar, QWidget, QFrame, QApplication
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
+from PyQt6.QtGui import QPixmap
 
 from modules.config import (
     APP_NAME, APP_VERSION, APP_AUTHOR, APP_LICENSE, GITHUB_REPO
 )
-from modules.help_content import about_features_text
 from modules.update_util import check_for_updates, download_update_asset, is_newer_version
 from modules.ui import dialogs_service as dlg
 from modules.ui.dispatch import UiDispatcher
 from modules.ui.widgets.card import Card
 from modules.ui.icons import bind_themed_icon
+from modules.ui.splash import resolve_splash_logo_path
+from modules.ui.theme.manager import ThemeManager
+
+
+_ABOUT_FEATURE_ITEMS = [
+    (
+        "chip",
+        "Kiểm tra Chip",
+        "Dò Silicon Revision, Crystal, Flash/PSRAM, vùng nhớ Heap, MAC & đối soát OUI Espressif.",
+    ),
+    (
+        "window_console",
+        "Serial Monitor & Log",
+        "Theo dõi UART thời gian thực, 15 phím IoT (Wi-Fi/TCP) và nhật ký tập trung từ mọi tab.",
+    ),
+    (
+        "flash",
+        "Nạp Firmware Flash",
+        "Nạp đồng thời tối đa 4 tệp .bin theo offset, kiểm tra chồng lấn và xóa sạch toàn bộ Flash.",
+    ),
+    (
+        "partition",
+        "Phân vùng (Wizard)",
+        "Sơ đồ DiskMap trực quan, tự dò chip, tự căn biên 4K/64K và kiểm soát giới hạn dung lượng.",
+    ),
+    (
+        "copy",
+        "Sao lưu & Chép đa mạch",
+        "Đọc/ghi/xóa NVS & Hex phân trang, xuất hồ sơ SHA-256 và nhân bản đồng loạt nhiều board.",
+    ),
+    (
+        "settings",
+        "Cài đặt & Cập nhật",
+        "Giao diện Kỹ thuật Sáng/Tối, phím chức năng F1–F15, lọc cổng COM và cập nhật từ GitHub.",
+    ),
+]
 
 
 class AboutDialog(QDialog):
@@ -28,54 +65,145 @@ class AboutDialog(QDialog):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.setWindowTitle(f"{APP_NAME} - Giới thiệu & Bản quyền")
-        self.resize(640, 520)
-        self.setMinimumSize(540, 420)
+        self.resize(740, 560)
+        self.setMinimumSize(680, 500)
+
+        self._repo_url = f"https://github.com/{GITHUB_REPO}.git"
+        self._web_url = f"https://github.com/{GITHUB_REPO}"
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 18, 18, 18)
+        layout.setContentsMargins(18, 16, 18, 16)
         layout.setSpacing(12)
 
-        lbl_title = QLabel(f"{APP_NAME} - v{APP_VERSION}", self)
-        lbl_title.setProperty("role", "title")
-        lbl_title.setStyleSheet("font-size: 13pt; font-weight: bold;")
-        layout.addWidget(lbl_title)
+        # 1. Hero Banner Card
+        self.hero_frame = QFrame(self)
+        hero_layout = QHBoxLayout(self.hero_frame)
+        hero_layout.setContentsMargins(16, 14, 16, 14)
+        hero_layout.setSpacing(14)
 
-        card_meta = Card("Thông tin Phiên bản & Bản quyền", icon_name="info", parent=self)
-        meta_grid = QGridLayout()
-        meta_grid.setContentsMargins(0, 0, 0, 0)
-        meta_grid.setHorizontalSpacing(10)
-        meta_grid.setVerticalSpacing(6)
+        self.lbl_app_logo = QLabel(self.hero_frame)
+        self.lbl_app_logo.setFixedSize(68, 68)
+        self.lbl_app_logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._load_app_logo()
+        hero_layout.addWidget(self.lbl_app_logo, 0, Qt.AlignmentFlag.AlignTop)
 
-        meta_grid.addWidget(QLabel("Phiên bản hiện tại:", card_meta), 0, 0)
-        lbl_ver = QLabel(f"v{APP_VERSION}", card_meta)
-        lbl_ver.setStyleSheet("font-weight: 600;")
-        meta_grid.addWidget(lbl_ver, 0, 1)
+        hero_info = QVBoxLayout()
+        hero_info.setContentsMargins(0, 0, 0, 0)
+        hero_info.setSpacing(6)
 
-        meta_grid.addWidget(QLabel("Tác giả:", card_meta), 1, 0)
-        lbl_auth = QLabel(APP_AUTHOR, card_meta)
-        lbl_auth.setStyleSheet("font-weight: 600;")
-        meta_grid.addWidget(lbl_auth, 1, 1)
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(8)
 
-        meta_grid.addWidget(QLabel("Giấy phép phần mềm:", card_meta), 2, 0)
-        meta_grid.addWidget(QLabel(f"GNU General Public License v3.0 ({APP_LICENSE})", card_meta), 2, 1)
+        self.lbl_title = QLabel(APP_NAME, self.hero_frame)
+        self.lbl_title.setProperty("role", "title")
+        title_row.addWidget(self.lbl_title)
 
-        meta_grid.addWidget(QLabel("Kho lưu trữ mã nguồn:", card_meta), 3, 0)
-        lbl_repo = QLabel(f"https://github.com/{GITHUB_REPO}.git", card_meta)
-        lbl_repo.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        meta_grid.addWidget(lbl_repo, 3, 1)
+        self.lbl_badge_ver = QLabel(f"v{APP_VERSION}", self.hero_frame)
+        self.lbl_badge_lic = QLabel(APP_LICENSE, self.hero_frame)
+        self.lbl_badge_auth = QLabel(f"Tác giả: {APP_AUTHOR}", self.hero_frame)
+        for badge in (self.lbl_badge_ver, self.lbl_badge_lic, self.lbl_badge_auth):
+            title_row.addWidget(badge)
+        title_row.addStretch(1)
+        hero_info.addLayout(title_row)
 
-        card_meta.body_layout.addLayout(meta_grid)
-        layout.addWidget(card_meta)
+        self.lbl_tagline = QLabel(
+            "Bộ công cụ kỹ thuật chẩn đoán phần cứng, nạp Flash, thiết kế phân vùng & nhân bản đa mạch Espressif.",
+            self.hero_frame,
+        )
+        self.lbl_tagline.setWordWrap(True)
+        hero_info.addWidget(self.lbl_tagline)
 
-        card = Card("Tính năng & Công nghệ cốt lõi", icon_name="chip", parent=self)
-        self.txt_features = QPlainTextEdit(card)
-        self.txt_features.setReadOnly(True)
-        self.txt_features.setProperty("role", "log")
-        self.txt_features.setPlainText(about_features_text())
-        card.content_layout.addWidget(self.txt_features)
-        layout.addWidget(card, 1)
+        repo_row = QHBoxLayout()
+        repo_row.setContentsMargins(0, 2, 0, 0)
+        repo_row.setSpacing(8)
 
+        self.lbl_repo_icon = QLabel(self.hero_frame)
+        bind_themed_icon(self.lbl_repo_icon, "open", size=14, role="accent")
+        repo_row.addWidget(self.lbl_repo_icon)
+
+        self.lbl_repo_link = QLabel(self.hero_frame)
+        self.lbl_repo_link.setTextFormat(Qt.TextFormat.RichText)
+        self.lbl_repo_link.setOpenExternalLinks(True)
+        self.lbl_repo_link.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextBrowserInteraction
+            | Qt.TextInteractionFlag.LinksAccessibleByMouse
+        )
+        self.lbl_repo_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        repo_row.addWidget(self.lbl_repo_link)
+
+        self.btn_copy_repo = QPushButton("Sao chép link", self.hero_frame)
+        bind_themed_icon(self.btn_copy_repo, "copy", size=13, role="muted")
+        self.btn_copy_repo.setFixedHeight(24)
+        self.btn_copy_repo.clicked.connect(self._on_copy_repo)
+        repo_row.addWidget(self.btn_copy_repo)
+        repo_row.addStretch(1)
+        hero_info.addLayout(repo_row)
+
+        hero_layout.addLayout(hero_info, 1)
+        layout.addWidget(self.hero_frame)
+
+        # 2. Lưới 6 thẻ tính năng cốt lõi theo từng Tab
+        self.lbl_features_heading = QLabel("Tính năng & Công nghệ cốt lõi", self)
+        self.lbl_features_heading.setProperty("role", "section")
+        layout.addWidget(self.lbl_features_heading)
+
+        features_grid = QGridLayout()
+        features_grid.setContentsMargins(0, 0, 0, 0)
+        features_grid.setHorizontalSpacing(10)
+        features_grid.setVerticalSpacing(8)
+
+        self._feature_cards: list[tuple[QFrame, QLabel, QLabel, QLabel]] = []
+        for idx, (icon_name, f_title, f_desc) in enumerate(_ABOUT_FEATURE_ITEMS):
+            f_card = QFrame(self)
+            card_row = QHBoxLayout(f_card)
+            card_row.setContentsMargins(11, 9, 11, 9)
+            card_row.setSpacing(10)
+
+            ic_badge = QLabel(f_card)
+            ic_badge.setFixedSize(30, 30)
+            ic_badge.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            bind_themed_icon(ic_badge, icon_name, size=17, role="accent")
+            card_row.addWidget(ic_badge, 0, Qt.AlignmentFlag.AlignTop)
+
+            txt_col = QVBoxLayout()
+            txt_col.setContentsMargins(0, 0, 0, 0)
+            txt_col.setSpacing(2)
+
+            lbl_ft = QLabel(f_title, f_card)
+            lbl_fd = QLabel(f_desc, f_card)
+            lbl_fd.setWordWrap(True)
+            txt_col.addWidget(lbl_ft)
+            txt_col.addWidget(lbl_fd, 1)
+
+            card_row.addLayout(txt_col, 1)
+            features_grid.addWidget(f_card, idx // 2, idx % 2)
+            self._feature_cards.append((f_card, ic_badge, lbl_ft, lbl_fd))
+
+        features_grid.setColumnStretch(0, 1)
+        features_grid.setColumnStretch(1, 1)
+        layout.addLayout(features_grid, 1)
+
+        # 3. Dải nền tảng công nghệ gọn gàng
+        self.tech_bar = QFrame(self)
+        tech_layout = QHBoxLayout(self.tech_bar)
+        tech_layout.setContentsMargins(12, 7, 12, 7)
+        tech_layout.setSpacing(8)
+
+        self.lbl_tech_title = QLabel("Nền tảng công nghệ:", self.tech_bar)
+        tech_layout.addWidget(self.lbl_tech_title)
+
+        self._tech_pills: list[QLabel] = []
+        for tech_name in ("Python", "PyQt6", "esptool", "PySerial", "NVS / Partition Parser"):
+            pill = QLabel(tech_name, self.tech_bar)
+            tech_layout.addWidget(pill)
+            self._tech_pills.append(pill)
+        tech_layout.addStretch(1)
+        layout.addWidget(self.tech_bar)
+
+        # 4. Hàng nút chân trang
         btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 2, 0, 0)
         self.btn_open_update = QPushButton("Kiểm tra cập nhật", self)
         bind_themed_icon(self.btn_open_update, "arrow_download")
         self.btn_open_update.clicked.connect(self._on_open_update)
@@ -89,6 +217,111 @@ class AboutDialog(QDialog):
         self.btn_close.clicked.connect(self.accept)
         btn_row.addWidget(self.btn_close)
         layout.addLayout(btn_row)
+
+        tm = ThemeManager.instance()
+        self._apply_theme(tm.tokens)
+        tm.theme_changed.connect(self._apply_theme)
+
+    def _load_app_logo(self):
+        icon_path = resolve_splash_logo_path()
+        if icon_path and os.path.isfile(icon_path):
+            pix = QPixmap(icon_path)
+            if not pix.isNull():
+                scaled = pix.scaled(
+                    50,
+                    50,
+                    Qt.AspectRatioMode.KeepAspectRatio,
+                    Qt.TransformationMode.SmoothTransformation,
+                )
+                self.lbl_app_logo.setPixmap(scaled)
+                return
+        bind_themed_icon(self.lbl_app_logo, "chip", size=40, role="accent")
+
+    def _apply_theme(self, tokens):
+        try:
+            _ = self.hero_frame.isVisible()
+        except RuntimeError:
+            return
+        if tokens is None:
+            return
+
+        self.hero_frame.setStyleSheet(
+            f"QFrame {{ background-color: {tokens.surface}; border: 1px solid {tokens.border}; border-radius: 8px; }}"
+            f"QLabel {{ border: none; background: transparent; }}"
+        )
+        self.lbl_app_logo.setStyleSheet(
+            f"background-color: {tokens.surface_alt}; border: 1px solid {tokens.border}; border-radius: 10px;"
+        )
+        self.lbl_title.setStyleSheet(
+            f"font-size: 15pt; font-weight: 700; color: {tokens.text}; background: transparent; border: none;"
+        )
+        self.lbl_badge_ver.setStyleSheet(
+            f"background-color: {tokens.selection}; color: {tokens.accent}; border: 1px solid {tokens.accent};"
+            "border-radius: 4px; padding: 2px 8px; font-size: 8.5pt; font-weight: 700;"
+        )
+        neutral_pill_css = (
+            f"background-color: {tokens.surface_alt}; color: {tokens.text}; border: 1px solid {tokens.border};"
+            "border-radius: 4px; padding: 2px 8px; font-size: 8.5pt; font-weight: 600;"
+        )
+        self.lbl_badge_lic.setStyleSheet(neutral_pill_css)
+        self.lbl_badge_auth.setStyleSheet(neutral_pill_css)
+        self.lbl_tagline.setStyleSheet(
+            f"font-size: 9pt; color: {tokens.text_secondary}; background: transparent; border: none;"
+        )
+        self.lbl_repo_link.setText(
+            f'<a href="{self._web_url}" style="color: {tokens.accent}; text-decoration: none; font-weight: 600;">{self._repo_url}</a>'
+        )
+        self.btn_copy_repo.setStyleSheet("padding: 0 9px; font-size: 8.5pt;")
+
+        self.lbl_features_heading.setStyleSheet(
+            f"font-size: 9.5pt; font-weight: 700; color: {tokens.text}; background: transparent;"
+        )
+
+        for f_card, ic_badge, lbl_ft, lbl_fd in self._feature_cards:
+            f_card.setStyleSheet(
+                f"QFrame {{ background-color: {tokens.surface}; border: 1px solid {tokens.border}; border-radius: 6px; }}"
+                f"QLabel {{ border: none; background: transparent; }}"
+            )
+            ic_badge.setStyleSheet(
+                f"background-color: {tokens.selection}; border: none; border-radius: 6px;"
+            )
+            lbl_ft.setStyleSheet(
+                f"font-size: 9pt; font-weight: 700; color: {tokens.text}; background: transparent; border: none;"
+            )
+            lbl_fd.setStyleSheet(
+                f"font-size: 8.5pt; color: {tokens.text_secondary}; background: transparent; border: none;"
+            )
+
+        self.tech_bar.setStyleSheet(
+            f"QFrame {{ background-color: {tokens.surface_alt}; border: 1px solid {tokens.border}; border-radius: 6px; }}"
+            f"QLabel {{ border: none; background: transparent; }}"
+        )
+        self.lbl_tech_title.setStyleSheet(
+            f"font-size: 8.5pt; font-weight: 700; color: {tokens.text_secondary}; background: transparent; border: none;"
+        )
+        tech_pill_css = (
+            f"background-color: {tokens.surface}; color: {tokens.text}; border: 1px solid {tokens.border};"
+            "border-radius: 4px; padding: 2px 7px; font-size: 8pt; font-weight: 600;"
+        )
+        for pill in self._tech_pills:
+            pill.setStyleSheet(tech_pill_css)
+
+    def _on_copy_repo(self):
+        cb = QApplication.clipboard()
+        if cb is not None:
+            cb.setText(self._repo_url)
+        self.btn_copy_repo.setText("Đã chép")
+        self_ref = weakref.ref(self)
+
+        def _restore():
+            obj = self_ref()
+            if obj is not None:
+                try:
+                    obj.btn_copy_repo.setText("Sao chép link")
+                except RuntimeError:
+                    pass
+
+        QTimer.singleShot(1400, _restore)
 
     def _on_open_update(self):
         self.accept()
@@ -207,7 +440,7 @@ class UpdateDialog(QDialog):
                         f"[ BẢN PHÁT HÀNH: {rel_name} ({tag}) ]",
                         f"Ngày phát hành: {pub_date}",
                         f"File tải về: {asset_name if asset_name else 'Mã nguồn (.zip)'}{size_str}",
-                        "-" * 72,
+                        "",
                         "Nội dung cập nhật & cải tiến:",
                         notes if notes else "(Không có ghi chú phát hành)."
                     ]

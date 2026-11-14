@@ -160,25 +160,25 @@ def build_backup_metadata_report(
             ],
         }
     lines = [
-        "=" * 82,
         f"HỒ SƠ SAO LƯU PHẦN CỨNG & FIRMWARE - {APP_NAME.upper()} v{APP_VERSION}",
-        "=" * 82,
-        f"Thời gian sao lưu     : {manifest.get('timestamp', 'N/A')}",
-        f"Cổng COM sao lưu      : {manifest.get('source_port', 'N/A')} (@ {manifest.get('baudrate', 'N/A')} bps)",
-        f"Dòng Chip gốc         : {manifest.get('source_chip', 'N/A')}",
-        f"Phiên bản Silicon     : {manifest.get('source_revision', 'N/A')}",
-        f"Tần số thạch anh      : {manifest.get('source_crystal', 'N/A')}",
-        f"Địa chỉ MAC gốc       : {manifest.get('source_mac', 'N/A')}",
-        f"Kích thước Flash chip : {manifest.get('flash_size_human', 'N/A')} ({manifest.get('flash_size_bytes', 0):,} Bytes)",
-        f"Chế độ cắt trống 0xFF : {'Bật (Smart Trim 4KB)' if manifest.get('smart_trim') else 'Tắt (Giữ nguyên kích thước vùng)'}",
-        "-" * 82,
+        "",
+        "THÔNG TIN PHẦN CỨNG & MẠNG BOARD GỐC:",
+        f"  Thời gian sao lưu     : {manifest.get('timestamp', 'N/A')}",
+        f"  Cổng COM sao lưu      : {manifest.get('source_port', 'N/A')} (@ {manifest.get('baudrate', 'N/A')} bps)",
+        f"  Dòng Chip gốc         : {manifest.get('source_chip', 'N/A')}",
+        f"  Phiên bản Silicon     : {manifest.get('source_revision', 'N/A')}",
+        f"  Tần số thạch anh      : {manifest.get('source_crystal', 'N/A')}",
+        f"  Địa chỉ MAC gốc       : {manifest.get('source_mac', 'N/A')}",
+        f"  Kích thước Flash chip : {manifest.get('flash_size_human', 'N/A')} ({manifest.get('flash_size_bytes', 0):,} Bytes)",
+        f"  Chế độ cắt trống 0xFF : {'Bật (Smart Trim 4KB)' if manifest.get('smart_trim') else 'Tắt (Giữ nguyên kích thước vùng)'}",
+        "",
         "DANH SÁCH CÁC PHÂN VÙNG / TỆP NHỊ PHÂN ĐÃ SAO LƯU:",
-        "-" * 82,
     ]
 
     regions = manifest.get("regions", [])
     for idx, reg in enumerate(regions, 1):
         lines.extend([
+            "",
             f"[{idx:02d}] Phân vùng: {reg.get('name', 'unknown')} "
             f"(Type: {reg.get('type', 'N/A')} | SubType: {reg.get('subtype', 'N/A')})",
             f"     • Tên file .bin         : {reg.get('filename', 'N/A')}",
@@ -187,15 +187,14 @@ def build_backup_metadata_report(
             f"     • Dung lượng file lưu   : {reg.get('saved_size_human', 'N/A')} ({reg.get('saved_size', 0):,} Bytes)",
             f"     • Mã băm MD5            : {reg.get('md5', 'N/A')}",
             f"     • Mã băm SHA-256        : {reg.get('sha256', 'N/A')}",
-            "-" * 82,
         ])
 
     if regions:
         pair_args = " ".join(f"{r.get('offset_hex', '0x0')} \"{r.get('filename', '')}\"" for r in regions)
         lines.extend([
+            "",
             "LỆNH ESPTOOL KHÔI PHỤC / NHÂN BẢN MẪU:",
             f"  esptool --port <COM_ĐÍCH> --baud 460800 write-flash -z {pair_args}",
-            "=" * 82,
         ])
 
     return "\n".join(lines) + "\n"

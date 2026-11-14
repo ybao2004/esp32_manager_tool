@@ -710,18 +710,6 @@ class MainWindow(
         if hasattr(self, "update_tab5_led_blink_visibility"):
             self.update_tab5_led_blink_visibility()
 
-    def _action_copy_partition_config(self):
-        if hasattr(self.page_partition, "_action_copy_partition_config"):
-            self.page_partition._action_copy_partition_config()
-
-    def _action_clear_all_partitions(self):
-        if hasattr(self.page_partition, "_action_clear_all_partitions"):
-            self.page_partition._action_clear_all_partitions()
-
-    def _action_new_table(self):
-        if hasattr(self.page_partition, "_action_new_table"):
-            self.page_partition._action_new_table()
-
     def showEvent(self, event):
         super().showEvent(event)
         if not getattr(self, "_native_icon_applied", False):

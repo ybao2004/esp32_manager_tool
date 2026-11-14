@@ -42,24 +42,56 @@ class PartitionEditDialog(QDialog):
         suggested_offset: int = 0x10000,
         is_dark_mode: bool = True,
         default_name: str = "new_part",
+        flash_size: Optional[int] = None,
+        max_available_bytes: Optional[int] = None,
     ):
         if parent is not None and not isinstance(parent, QWidget):
             parent = None
         super().__init__(parent)
         self.is_edit = (entry is not None)
         self.is_dark_mode = is_dark_mode
+        self.flash_size = int(flash_size) if flash_size and flash_size > 0 else None
+        self.max_available_bytes = (
+            int(max_available_bytes)
+            if max_available_bytes is not None and max_available_bytes >= 0
+            else None
+        )
         self.result: Optional[PartitionEntry] = None
 
         if entry:
             self.entry = entry.clone()
+            self._initial_size = int(entry.size)
+            self._initial_end = int(entry.end_offset)
         else:
+            default_type = "app"
+            default_subtype = "factory"
+            default_size = 1024 * 1024
+            # Tự điều chỉnh kiểu/kích thước mặc định nếu dung lượng trống còn lại < 1 MB
+            limit_hint = self.max_available_bytes
+            if limit_hint is None and self.flash_size is not None:
+                limit_hint = max(0, self.flash_size - suggested_offset)
+            elif limit_hint is not None and self.flash_size is not None:
+                limit_hint = min(limit_hint, max(0, self.flash_size - suggested_offset))
+
+            if limit_hint is not None and limit_hint > 0:
+                aligned_limit = (limit_hint // 0x1000) * 0x1000
+                if aligned_limit >= 0x1000:
+                    if (suggested_offset % 0x10000 != 0) or aligned_limit < 0x10000:
+                        default_type = "data"
+                        default_subtype = "spiffs" if aligned_limit >= 0x10000 else "nvs"
+                        default_size = min(64 * 1024, aligned_limit)
+                    elif aligned_limit < 1024 * 1024:
+                        default_size = aligned_limit
+
             self.entry = PartitionEntry(
                 name=default_name or "new_part",
-                type_str="app",
-                subtype_str="factory",
+                type_str=default_type,
+                subtype_str=default_subtype,
                 offset=suggested_offset,
-                size=1024 * 1024
+                size=default_size,
             )
+            self._initial_size = 0
+            self._initial_end = 0
 
         self.setWindowTitle("Chỉnh Sửa Phân Vùng" if self.is_edit else "Thêm Phân Vùng Mới")
         self.setMinimumWidth(500)
@@ -265,6 +297,18 @@ class PartitionEditDialog(QDialog):
                 if offset_val % 0x1000 != 0:
                     warnings.append(f"[LỖI] Phân vùng Data bắt buộc Offset phải chia hết cho 4KB (0x1000). Hiện tại: {format_hex(offset_val)}")
 
+            if self.flash_size is not None and end_val > self.flash_size:
+                over_bytes = end_val - self.flash_size
+                warnings.append(
+                    f"[LỖI] Địa chỉ kết thúc ({format_hex(end_val)}) vượt quá chip Flash "
+                    f"{format_hex(self.flash_size)} thêm {format_bytes_human(over_bytes, compact=True)}!"
+                )
+            elif self.max_available_bytes is not None and size_val > self.max_available_bytes:
+                warnings.append(
+                    f"[LỖI] Dung lượng ({format_bytes_human(size_val, compact=True)}) vượt quá khoảng trống khả dụng "
+                    f"({format_bytes_human(self.max_available_bytes, compact=True)})!"
+                )
+
             if not warnings:
                 lines.append("[HỢP LỆ] Căn biên và thông số hoàn toàn hợp lệ theo chuẩn ESP-IDF.")
             else:
@@ -304,6 +348,37 @@ class PartitionEditDialog(QDialog):
             if offset_val % 0x1000 != 0:
                 offset_val = align_up(offset_val, 0x1000)
                 self.entry_offset.setText(format_hex(offset_val))
+
+        end_val = offset_val + size_val
+        is_shrinking_from_overflow = (
+            self.is_edit
+            and self._initial_size > 0
+            and size_val < self._initial_size
+            and (
+                (self.flash_size is not None and end_val <= self.flash_size)
+                or (self.max_available_bytes is not None and size_val <= self.max_available_bytes)
+                or (self.flash_size is not None and end_val < self._initial_end)
+            )
+        )
+        if not is_shrinking_from_overflow:
+            if self.flash_size is not None and end_val > self.flash_size:
+                dlg.show_warning(
+                    "Vượt dung lượng Flash",
+                    f"Phân vùng kết thúc tại {format_hex(end_val)}, vượt quá dung lượng chip Flash "
+                    f"({format_bytes_human(self.flash_size, compact=True)} / {format_hex(self.flash_size)}).\n\n"
+                    "Vui lòng giảm dung lượng, lùi Offset hoặc nâng mức Flash lớn hơn.",
+                    self,
+                )
+                return
+            if self.max_available_bytes is not None and size_val > self.max_available_bytes:
+                dlg.show_warning(
+                    "Không đủ chỗ trống",
+                    f"Dung lượng phân vùng ({format_bytes_human(size_val, compact=True)}) vượt quá khoảng trống khả dụng "
+                    f"({format_bytes_human(self.max_available_bytes, compact=True)}).\n\n"
+                    "Vui lòng thu gọn kích thước phân vùng này hoặc xóa/giảm phân vùng khác trước.",
+                    self,
+                )
+                return
 
         flags_list = []
         if self.chk_enc.isChecked():

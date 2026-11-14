@@ -4,6 +4,7 @@ Sơ đồ phân vùng Flash trực quan (DiskMapWidget) cho PyQt6.
 Phong cách MiniTool Partition Wizard với thanh hiển thị theo tỷ lệ dung lượng,
 hỗ trợ hover tooltip chi tiết chuẩn ESP-IDF, chọn khối và menu ngữ cảnh chuột phải.
 """
+from html import escape
 from PyQt6.QtWidgets import QWidget, QToolTip
 from PyQt6.QtGui import QPainter, QColor, QPen, QBrush, QFont, QFontMetrics
 from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRectF
@@ -47,89 +48,147 @@ def get_entry_color(entry: PartitionEntry, is_dark: bool = False) -> tuple[str, 
         return ("#0E7490", "#FFFFFF")
 
 
-def build_detailed_tooltip_text(entry: PartitionEntry) -> str:
-    """Tạo nội dung tooltip hướng dẫn kỹ thuật chi tiết cho phân vùng."""
-    lines = []
+def build_detailed_tooltip_text(entry: PartitionEntry, is_dark: bool | None = None) -> str:
+    """Tạo nội dung tooltip Rich HTML hướng dẫn kỹ thuật chi tiết cho phân vùng."""
+    if is_dark is None:
+        try:
+            is_dark = bool(ThemeManager.instance().is_dark)
+        except Exception:
+            is_dark = False
+
+    hr_col = "#3E4452" if is_dark else "#D0D7DE"
+    muted_col = "#9AA5B4" if is_dark else "#57606A"
+    accent_app = "#60A5FA" if is_dark else "#0F6CBD"
+    accent_data = "#34D399" if is_dark else "#0F7B6C"
+    accent_sys = "#CBD5E1" if is_dark else "#475569"
+
+    divider = f"<hr style='border:none; border-top:1px solid {hr_col}; margin:6px 0;'>"
+
+    def _section(title: str, body_lines: list[str]) -> str:
+        body_html = "<br>".join(body_lines)
+        return (
+            f"<div style='margin-top:2px;'>"
+            f"<div style='font-weight:700; color:{muted_col}; font-size:8.5pt; margin-bottom:2px;'>{title}</div>"
+            f"<div>{body_html}</div>"
+            f"</div>"
+        )
+
     if entry.is_unallocated:
-        lines.append("=" * 52)
-        lines.append("【 KHOẢNG TRỐNG CHƯA PHÂN BỔ (UNALLOCATED GAP) 】")
-        lines.append("=" * 52)
-        lines.append(f"• Địa chỉ (Offset): {format_hex(entry.offset)} -> {format_hex(entry.end_offset)}")
-        lines.append(f"• Dung lượng trống: {format_bytes_human(entry.size)} ({entry.size:,} Bytes)")
-        lines.append(f"• Số Sector vật lý: {sector_count(entry.size)} sectors (mỗi sector 4KB)")
-        lines.append("-" * 52)
-        lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
-        lines.append("Vùng nhớ Flash vật lý còn trống, chưa được cấp phát cho phân vùng nào.")
-        lines.append("Có thể tận dụng để mở rộng phân vùng hoặc tạo phân vùng mới (LittleFS, SPIFFS, OTA).")
-        lines.append("-" * 52)
-        lines.append("[GỢI Ý THAO TÁC]:")
-        lines.append("-> Bấm chuột trái vào khối này để tạo phân vùng mới vừa vặn.")
-        return "\n".join(lines)
+        header = (
+            f"<div style='font-size:10pt; font-weight:700; color:{accent_sys};'>"
+            f"KHOẢNG TRỐNG CHƯA PHÂN BỔ"
+            f" <span style='font-weight:500; color:{muted_col};'>(Unallocated Gap)</span></div>"
+        )
+        specs = [
+            f"• Địa chỉ (Offset): <b>{format_hex(entry.offset)}</b> -> <b>{format_hex(entry.end_offset)}</b>",
+            f"• Dung lượng trống: <b>{escape(format_bytes_human(entry.size))}</b>",
+            f"• Số Sector vật lý: {sector_count(entry.size)} sectors (mỗi sector 4KB)",
+        ]
+        blocks = [
+            header,
+            f"<div style='margin-top:4px;'>{'<br>'.join(specs)}</div>",
+            divider,
+            _section("MỤC ĐÍCH SỬ DỤNG", [
+                "Vùng nhớ Flash vật lý còn trống, chưa được cấp phát cho phân vùng nào.",
+                "Có thể tận dụng để mở rộng phân vùng hoặc tạo phân vùng mới (LittleFS, SPIFFS, OTA).",
+            ]),
+            divider,
+            _section("GỢI Ý THAO TÁC", [
+                "Bấm chuột trái vào khối này để tạo phân vùng mới vừa vặn.",
+            ]),
+        ]
+        return f"<div style='min-width:290px; max-width:440px; line-height:1.35;'>{''.join(blocks)}</div>"
 
     if entry.is_system:
-        lines.append("=" * 52)
         if entry.type_str == "bootloader":
-            lines.append(f"【 PHÂN VÙNG HỆ THỐNG: {entry.name.upper()} 】")
-            lines.append("=" * 52)
-            lines.append(f"- Vị trí Offset: {format_hex(entry.offset)} | Kích thước: {format_bytes_human(entry.size)} ({entry.size:,} B)")
-            lines.append("-" * 52)
-            lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
-            lines.append("Chương trình Second-Stage Bootloader do Espressif quản lý.")
-            lines.append("Khởi tạo phần cứng (GPIO/PLL/Flash), đọc bảng phân vùng tại 0x8000 và nạp App.")
-            lines.append("-" * 52)
-            lines.append("[KHUYẾN NGHỊ DUNG LƯỢNG]:")
-            lines.append("- Mặc định: 28 KB - 32 KB (đặt tại 0x1000 trên ESP32 hoặc 0x0 trên S3/C3).")
-            lines.append("- Phân vùng cố định, không được chỉnh sửa hoặc xóa.")
+            title_txt = f"PHÂN VÙNG HỆ THỐNG: {escape(entry.name.upper())}"
+            purpose = [
+                "Chương trình Second-Stage Bootloader do Espressif quản lý.",
+                "Khởi tạo phần cứng (GPIO/PLL/Flash), đọc bảng phân vùng tại 0x8000 và nạp App.",
+            ]
+            recommend = [
+                "• Mặc định: 28 KB - 32 KB (đặt tại 0x1000 trên ESP32 hoặc 0x0 trên S3/C3).",
+                "• Phân vùng cố định, không được chỉnh sửa hoặc xóa.",
+            ]
         else:
-            lines.append(f"【 BẢNG PHÂN VÙNG HỆ THỐNG (PARTITION TABLE) 】")
-            lines.append("=" * 52)
-            lines.append(f"- Vị trí Offset: {format_hex(entry.offset)} | Kích thước: {format_bytes_human(entry.size)} ({entry.size:,} B)")
-            lines.append("-" * 52)
-            lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
-            lines.append("Bản đồ lưu trữ toàn bộ các phân vùng của chip Flash.")
-            lines.append("Chứa cấu trúc 32-byte định nghĩa Type, SubType, Offset, Size và MD5 Checksum.")
-            lines.append("-" * 52)
-            lines.append("[KHUYẾN NGHỊ DUNG LƯỢNG]:")
-            lines.append("- Chuẩn ESP-IDF: Cố định đúng 1 sector 4 KB (0x1000) tại offset 0x8000.")
-        return "\n".join(lines)
+            title_txt = "BẢNG PHÂN VÙNG HỆ THỐNG (PARTITION TABLE)"
+            purpose = [
+                "Bản đồ lưu trữ toàn bộ các phân vùng của chip Flash.",
+                "Chứa cấu trúc 32-byte định nghĩa Type, SubType, Offset, Size và MD5 Checksum.",
+            ]
+            recommend = [
+                "• Chuẩn ESP-IDF: Cố định đúng 1 sector 4 KB (0x1000) tại offset 0x8000.",
+            ]
+
+        header = f"<div style='font-size:10pt; font-weight:700; color:{accent_sys};'>{title_txt}</div>"
+        specs = [
+            f"• Vị trí Offset: <b>{format_hex(entry.offset)}</b>",
+            f"• Kích thước: <b>{escape(format_bytes_human(entry.size))}</b>",
+        ]
+        blocks = [
+            header,
+            f"<div style='margin-top:4px;'>{'<br>'.join(specs)}</div>",
+            divider,
+            _section("MỤC ĐÍCH SỬ DỤNG", purpose),
+            divider,
+            _section("KHUYẾN NGHỊ DUNG LƯỢNG", recommend),
+        ]
+        return f"<div style='min-width:290px; max-width:440px; line-height:1.35;'>{''.join(blocks)}</div>"
 
     # Phân vùng người dùng
-    lines.append("=" * 52)
-    lines.append(f"【 PHÂN VÙNG: {entry.name} 】 (Type: {entry.type_str} | SubType: {entry.subtype_str})")
-    lines.append("=" * 52)
-    align_rule = "Căn biên 64 KB (0x10000)" if entry.type_str == "app" else "Căn biên 4 KB (0x1000)"
-    lines.append(f"• Offset: {format_hex(entry.offset)} ({entry.offset:,} B) | {align_rule}")
-    lines.append(f"• Dung lượng: {format_bytes_human(entry.size)} ({entry.size:,} B) | {sector_count(entry.size)} Sectors (4KB)")
-    if entry.used_size > 0:
-        lines.append(f"• Firmware chiếm: {format_bytes_human(entry.used_size)} ({entry.usage_percent:.1f}%) | Còn trống: {format_bytes_human(entry.free_size)}")
-    if entry.flags_str:
-        lines.append(f"• Cờ bảo mật: {entry.flags_str}")
-    lines.append("-" * 52)
-
     t = entry.type_str.lower()
     st = entry.subtype_str.lower()
+    title_col = accent_app if t == "app" else accent_data
+    header = (
+        f"<div style='font-size:10pt; font-weight:700; color:{title_col};'>"
+        f"{escape(entry.name)} "
+        f"<span style='font-weight:500; color:{muted_col};'>(Type: {escape(entry.type_str)} | SubType: {escape(entry.subtype_str)})</span>"
+        f"</div>"
+    )
+    align_rule = "Căn biên 64 KB (0x10000)" if t == "app" else "Căn biên 4 KB (0x1000)"
+    specs = [
+        f"• Offset: <b>{format_hex(entry.offset)}</b> ({entry.offset:,} B) | {align_rule}",
+        f"• Dung lượng: <b>{escape(format_bytes_human(entry.size))}</b> | {sector_count(entry.size)} Sectors (4KB)",
+    ]
+    if entry.used_size > 0:
+        specs.append(
+            f"• Firmware chiếm: {escape(format_bytes_human(entry.used_size))} ({entry.usage_percent:.1f}%) "
+            f"| Còn trống: {escape(format_bytes_human(entry.free_size))}"
+        )
+    if entry.flags_str:
+        specs.append(f"• Cờ bảo mật: {escape(entry.flags_str)}")
 
+    blocks = [
+        header,
+        f"<div style='margin-top:4px;'>{'<br>'.join(specs)}</div>",
+        divider,
+    ]
     if st == "nvs":
-        lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
-        lines.append("Non-Volatile Storage. Lưu trữ cấu hình Wi-Fi (SSID, Password), khóa BLE,")
-        lines.append("dữ liệu hiệu chuẩn RF (PHY calibration) và các biến Key-Value tùy biến.")
-        lines.append("Dữ liệu được lưu vĩnh viễn, không bị mất khi reset hoặc tắt nguồn.")
-        lines.append("-" * 52)
-        lines.append("[KHUYẾN NGHỊ DUNG LƯỢNG]:")
-        lines.append("- Tối thiểu: 12 KB (0x3000 = 3 sectors)")
-        lines.append("- Khuyến nghị: 16 KB - 24 KB (0x4000 - 0x6000)")
+        blocks.append(_section("MỤC ĐÍCH SỬ DỤNG", [
+            "Non-Volatile Storage. Lưu trữ cấu hình Wi-Fi (SSID, Password), khóa BLE,",
+            "dữ liệu hiệu chuẩn RF (PHY calibration) và các biến Key-Value tùy biến.",
+            "Dữ liệu được lưu vĩnh viễn, không bị mất khi reset hoặc tắt nguồn.",
+        ]))
+        blocks.append(divider)
+        blocks.append(_section("KHUYẾN NGHỊ DUNG LƯỢNG", [
+            "• Tối thiểu: 12 KB (0x3000 = 3 sectors)",
+            "• Khuyến nghị: 16 KB - 24 KB (0x4000 - 0x6000)",
+        ]))
     elif st == "factory":
-        lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
-        lines.append("Bản firmware ứng dụng chính gốc xuất xưởng (Default Factory App).")
-        lines.append("Bootloader sẽ nạp và thực thi mã tại phân vùng này khi khởi động.")
-        lines.append("-" * 52)
-        lines.append("[KHUYẾN NGHỊ DUNG LƯỢNG]:")
-        lines.append("- Căn biên 64 KB (0x10000). Dung lượng điển hình: 1 MB - 2 MB.")
+        blocks.append(_section("MỤC ĐÍCH SỬ DỤNG", [
+            "Bản firmware ứng dụng chính gốc xuất xưởng (Default Factory App).",
+            "Bootloader sẽ nạp và thực thi mã tại phân vùng này khi khởi động.",
+        ]))
+        blocks.append(divider)
+        blocks.append(_section("KHUYẾN NGHỊ DUNG LƯỢNG", [
+            "• Căn biên 64 KB (0x10000). Dung lượng điển hình: 1 MB - 2 MB.",
+        ]))
     else:
-        lines.append("[MỤC ĐÍCH SỬ DỤNG]:")
-        lines.append(f"Phân vùng dữ liệu/ứng dụng {st.upper()} chuẩn ESP-IDF.")
+        blocks.append(_section("MỤC ĐÍCH SỬ DỤNG", [
+            f"Phân vùng dữ liệu/ứng dụng {escape(st.upper())} chuẩn ESP-IDF.",
+        ]))
 
-    return "\n".join(lines)
+    return f"<div style='min-width:290px; max-width:440px; line-height:1.35;'>{''.join(blocks)}</div>"
 
 
 class DiskMapWidget(QWidget):
@@ -315,7 +374,8 @@ class DiskMapWidget(QWidget):
     def mouseMoveEvent(self, event):
         entry = self._find_entry_at(event.pos())
         if entry:
-            tip = build_detailed_tooltip_text(entry)
+            is_dark = bool(getattr(self._current_tokens, "mode", "light") == "dark")
+            tip = build_detailed_tooltip_text(entry, is_dark=is_dark)
             QToolTip.showText(event.globalPosition().toPoint(), tip, self)
         else:
             QToolTip.hideText()

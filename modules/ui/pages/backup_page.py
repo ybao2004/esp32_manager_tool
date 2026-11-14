@@ -218,10 +218,10 @@ class BackupPage(QWidget):
             icon_name="folder",
             parent=left_widget,
         )
-        cols = ("checked", "stt", "name", "type", "subtype", "offset", "size", "hash")
+        cols = ("checked", "stt", "name", "type", "subtype", "offset", "size")
         self.backup_tree = _TreeviewCompat(left_card)
         self.backup_tree.set_columns(cols)
-        self.backup_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.backup_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.backup_tree.setMouseTracking(True)
         if self.backup_tree.viewport():
             self.backup_tree.viewport().setMouseTracking(True)
@@ -230,12 +230,11 @@ class BackupPage(QWidget):
         headers = [
             ("checked", "Chọn", 50),
             ("stt", "STT", 38),
-            ("name", "Tên Vùng", 95),
-            ("type", "Kiểu", 52),
-            ("subtype", "Phân loại", 68),
-            ("offset", "Offset", 74),
-            ("size", "Dung lượng", 92),
-            ("hash", "Mã SHA-256 / Trạng thái", 150),
+            ("name", "Tên Vùng", 120),
+            ("type", "Kiểu", 56),
+            ("subtype", "Phân loại", 76),
+            ("offset", "Offset", 84),
+            ("size", "Dung lượng", 110),
         ]
         for col_id, col_text, col_w in headers:
             self.backup_tree.heading(col_id, col_text)
@@ -243,9 +242,11 @@ class BackupPage(QWidget):
 
         b_hdr = self.backup_tree.header()
         if b_hdr:
-            for c_idx in range(7):
-                b_hdr.setSectionResizeMode(c_idx, QHeaderView.ResizeMode.ResizeToContents)
             b_hdr.setStretchLastSection(True)
+            for c_idx in (0, 1, 3, 4, 5, 6):
+                b_hdr.setSectionResizeMode(c_idx, QHeaderView.ResizeMode.ResizeToContents)
+            b_hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+            b_hdr.resizeSection(2, 120)
 
         self.backup_tree.setMinimumHeight(60)
         left_card.body_layout.addWidget(self.backup_tree, 1)
@@ -380,7 +381,7 @@ class BackupPage(QWidget):
         right_layout.addWidget(clone_card)
 
         log_card = Card(
-            "Nhật Ký Sao Lưu, SHA-256 & Tiến Trình Nhân Bản",
+            "Nhật Ký Sao Lưu & Tiến Trình Nhân Bản",
             icon_name="window_console",
             parent=right_widget,
         )

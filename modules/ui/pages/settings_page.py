@@ -673,7 +673,7 @@ class SettingsPage(QWidget):
                 f"[ BẢN PHÁT HÀNH: {rel_name} ({tag}) ]",
                 f"Ngày phát hành: {pub_date}",
                 f"File tải về: {asset_name if asset_name else 'Mã nguồn (.zip)'}{size_str}",
-                "-" * 36,
+                "",
                 "Nội dung cập nhật & cải tiến:",
                 notes if notes else "(Không có ghi chú phát hành).",
             ]

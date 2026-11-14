@@ -541,7 +541,6 @@ class BackupCloneTabMixin:
                     selected_bytes += reg["size"]
 
                 chk_symbol = "[x]" if is_checked else "[ ]"
-                hash_info = self.backup_region_hashes.get(key, "Sẵn sàng sao lưu" if is_checked else "Bỏ qua")
                 self.backup_tree.insert(
                     "",
                     "end",
@@ -554,7 +553,6 @@ class BackupCloneTabMixin:
                         reg["subtype"],
                         format_value(reg["offset"], mode, is_size=False),
                         format_value(reg["size"], mode, is_size=True),
-                        hash_info,
                     )
                 )
             if self._backup_active_key and self.backup_tree.exists(self._backup_active_key):
@@ -816,7 +814,7 @@ class BackupCloneTabMixin:
         Đọc thông tin định danh chip (Tên chip, Revision, Crystal, MAC gốc, Dung lượng Flash)
         và đọc bảng phân vùng 0x8000 từ Board Gốc.
         """
-        safe_after(lambda: self.log_backup(f"\n=== ĐỌC THÔNG TIN CHIP & BẢNG PHÂN VÙNG TỪ BOARD GỐC ({port}) ===", "header"))
+        safe_after(lambda: self.log_backup(f"\nĐỌC THÔNG TIN CHIP & BẢNG PHÂN VÙNG TỪ BOARD GỐC ({port})", "header"))
         safe_after(lambda: self.set_status(f"Đang nhận diện chip và đọc MAC gốc trên {port}...", "info", progress=15))
 
         fid_out = run_esptool_command(["--port", port, "--baud", str(baud), "flash-id"])
@@ -1349,7 +1347,7 @@ class BackupCloneTabMixin:
 
                 flash_sz = int(self.backup_source_info.get("flash_size") or self.backup_table.flash_size)
                 safe_after(lambda: self.log_backup(
-                    f"\n=== BẮT ĐẦU SAO LƯU TOÀN BỘ FLASH (0x0 -> {format_hex(flash_sz)}, {format_bytes_human(flash_sz)}) ===",
+                    f"\nBẮT ĐẦU SAO LƯU TOÀN BỘ FLASH (0x0 -> {format_hex(flash_sz)}, {format_bytes_human(flash_sz)})",
                     "header"
                 ))
                 safe_after(
@@ -1592,7 +1590,7 @@ class BackupCloneTabMixin:
                 if source_mode == "live_board":
                     temp_clone_dir = tempfile.mkdtemp(prefix="esp32_direct_clone_")
                     safe_after(lambda: self.log_backup(
-                        f"\n=== BƯỚC 1/2: HÚT DỮ LIỆU TỪ BOARD GỐC ({src_port}) ===", "header"
+                        f"\nBƯỚC 1/2: HÚT DỮ LIỆU TỪ BOARD GỐC ({src_port})", "header"
                     ))
                     safe_after(
                         lambda pt=src_port: self.set_status(
@@ -1653,7 +1651,7 @@ class BackupCloneTabMixin:
                 step_span_pct = 98.0 - step_start_pct
 
                 safe_after(lambda sl=step_label: self.log_backup(
-                    f"\n=== {sl}: SAO CHÉP SANG {len(target_ports)} BOARD ĐÍCH ({targets_str}) ===", "header"
+                    f"\n{sl}: SAO CHÉP SANG {len(target_ports)} BOARD ĐÍCH ({targets_str})", "header"
                 ))
 
                 success_ports = []
@@ -1792,7 +1790,7 @@ class BackupCloneTabMixin:
                         m, lv, progress=p, task_label=tl
                     )
                 )
-                safe_after(lambda m=summary_msg: self.log_backup(f"\n=== KẾT QUẢ NHÂN BẢN ĐA MẠCH: {m} ===", "header"))
+                safe_after(lambda m=summary_msg: self.log_backup(f"\nKẾT QUẢ NHÂN BẢN ĐA MẠCH: {m}", "header"))
                 safe_after(lambda m=summary_msg: messagebox.showinfo("Kết quả Sao chép Trực tiếp", m, parent=self.root))
             except Exception as ex:
                 err_msg = str(ex)
@@ -2009,7 +2007,7 @@ class BackupCloneTabMixin:
                     tmp_path = tf.name
 
                 self._backup_safe_ui(lambda: self.log_backup(
-                    f"\n=== ĐỌC DỮ LIỆU PHÂN VÙNG '{r_name}' ({format_hex(r_off)}, {format_bytes_human(r_sz)}) ===",
+                    f"\nĐỌC DỮ LIỆU PHÂN VÙNG '{r_name}' ({format_hex(r_off)}, {format_bytes_human(r_sz)})",
                     "header",
                 ))
                 self._backup_safe_ui(lambda: self.set_status(
@@ -2096,7 +2094,7 @@ class BackupCloneTabMixin:
                     tmp_path = tf.name
 
                 self._backup_safe_ui(lambda: self.log_backup(
-                    f"\n=== GHI ĐÈ DỮ LIỆU PHÂN VÙNG '{r_name}' TẠI {format_hex(r_off)} ({format_bytes_human(len(payload))}) ===",
+                    f"\nGHI ĐÈ DỮ LIỆU PHÂN VÙNG '{r_name}' TẠI {format_hex(r_off)} ({format_bytes_human(len(payload))})",
                     "header",
                 ))
                 self._backup_safe_ui(lambda: self.set_status(
@@ -2175,7 +2173,7 @@ class BackupCloneTabMixin:
             msg = ""
             try:
                 self._backup_safe_ui(lambda: self.log_backup(
-                    f"\n=== XÓA DỮ LIỆU PHÂN VÙNG '{r_name}' ({format_hex(r_off)}, {format_bytes_human(r_sz)}) ===",
+                    f"\nXÓA DỮ LIỆU PHÂN VÙNG '{r_name}' ({format_hex(r_off)}, {format_bytes_human(r_sz)})",
                     "header",
                 ))
                 self._backup_safe_ui(lambda: self.set_status(

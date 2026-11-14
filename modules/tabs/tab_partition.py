@@ -138,8 +138,7 @@ class PartitionHandbookDialog(QDialog):
         txt.setReadOnly(True)
         doc_content = (
             "HƯỚNG DẪN SỬ DỤNG VÀ TRA CỨU PHÂN VÙNG BỘ NHỚ FLASH ESP32\n"
-            "Áp dụng cho: ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C6, ESP32-H2, ESP32-P4\n"
-            "================================================================================\n\n"
+            "Áp dụng cho: ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C6, ESP32-H2, ESP32-P4\n\n"
             "1. CÁC THAO TÁC CƠ BẢN TRÊN BẢNG PHÂN VÙNG:\n"
             "  - Thêm phân vùng: Bấm nút [+] ở dòng trống cuối bảng để chèn phân vùng mới.\n"
             "  - Xóa phân vùng: Bấm nút [-] ở cột đầu tiên của dòng phân vùng muốn xóa.\n"
@@ -218,6 +217,26 @@ class PartitionTabMixin:
             self.refresh_partition_views()
             return
 
+    def _sync_add_button_state(self):
+        """Đồng bộ trạng thái bật/tắt của nút '+ Thêm dòng' dựa vào dung lượng trống & khóa bận."""
+        btn = getattr(self, "btn_add_part", None)
+        if btn is None:
+            return
+        busy = bool(
+            getattr(self, "_is_partition_hw_running", False)
+            or (hasattr(self, "is_device_busy") and self.is_device_busy())
+        )
+        if busy:
+            btn.setEnabled(False)
+            return
+        can_add = self._get_partition_free_space_info()["can_add"]
+        btn.setEnabled(can_add)
+        btn.setToolTip(
+            "Thêm phân vùng mới vào bảng"
+            if can_add
+            else "Bộ nhớ Flash đã đầy (dung lượng trống khả dụng < 4 KB). Hãy thu gọn/xóa phân vùng hoặc chọn chip Flash lớn hơn."
+        )
+
     def _set_partition_ui_state(self, state):
         """Bật/tắt các điều khiển của Tab Partition khi phần cứng đang bận."""
         if isinstance(state, bool):
@@ -246,6 +265,7 @@ class PartitionTabMixin:
         else:
             if hasattr(self, '_update_partition_undo_redo_buttons'):
                 self._update_partition_undo_redo_buttons()
+            self._sync_add_button_state()
 
     def _open_handbook_dialog(self):
         """Mở hộp thoại hướng dẫn & tra cứu phân vùng"""
@@ -344,6 +364,69 @@ class PartitionTabMixin:
             return None
         return next((e for e in self.table.entries if e.name == name), None)
 
+    def _get_partition_free_space_info(self) -> dict:
+        """Tính toán thống kê dung lượng trống và khả năng thêm phân vùng mới trên Flash."""
+        flash_size = int(getattr(self.table, "flash_size", 0) or 0)
+        pt_off = int(getattr(self.table, "part_table_offset", 0x8000) or 0x8000)
+        pt_end = pt_off + PARTITION_TABLE_SIZE_DEFAULT
+        usable_total = max(0, flash_size - pt_end)
+        allocated_total = sum(max(0, int(e.size)) for e in self.table.entries)
+        remaining_total = max(0, usable_total - allocated_total)
+        gaps = [g for g in self.table.get_layout_with_unallocated() if g.is_unallocated and g.size >= 0x1000]
+        largest_gap = max((int(g.size) for g in gaps), default=0)
+        auto_align = bool(getattr(self, "var_auto_align", None) and self.var_auto_align.get())
+        can_add = (remaining_total >= 0x1000) if auto_align else (remaining_total >= 0x1000 and largest_gap >= 0x1000)
+        return {
+            "flash_size": flash_size,
+            "pt_end": pt_end,
+            "usable_total": usable_total,
+            "allocated_total": allocated_total,
+            "remaining_total": remaining_total,
+            "gaps": gaps,
+            "largest_gap": largest_gap,
+            "auto_align": auto_align,
+            "can_add": can_add,
+        }
+
+    def _pack_entries_sequence(self, entries: list[PartitionEntry], from_idx: int = 0):
+        """Áp dụng thuật toán dồn và căn biên chuẩn ESP-IDF lên danh sách PartitionEntry truyền vào."""
+        if not entries:
+            return
+        pt_off = int(getattr(self.table, "part_table_offset", 0x8000) or 0x8000)
+        if from_idx <= 0:
+            current_offset = pt_off + PARTITION_TABLE_SIZE_DEFAULT
+            start_i = 0
+        else:
+            prev = entries[from_idx - 1]
+            current_offset = prev.offset + prev.size
+            start_i = from_idx
+        for i in range(start_i, len(entries)):
+            e = entries[i]
+            align_b = 0x10000 if e.type_str.lower() == "app" else 0x1000
+            current_offset = align_up(current_offset, align_b)
+            if e.type_str.lower() == "app" and current_offset < 0x10000:
+                current_offset = 0x10000
+            e.offset = current_offset
+            current_offset += e.size
+
+    def _check_entries_fit_flash(self, entries: list[PartitionEntry], prev_max_end: int | None = None) -> str | None:
+        """Kiểm tra danh sách phân vùng sau thao tác có vượt quá dung lượng chip Flash không."""
+        flash_size = int(getattr(self.table, "flash_size", 0) or 0)
+        if flash_size <= 0 or not entries:
+            return None
+        max_end = max(e.end_offset for e in entries)
+        if max_end > flash_size:
+            if prev_max_end is not None and prev_max_end > flash_size and max_end < prev_max_end:
+                return None
+            over_bytes = max_end - flash_size
+            return (
+                f"Tổng cấu hình sau cập nhật đạt tới {format_hex(max_end)}, vượt quá dung lượng chip Flash "
+                f"{format_bytes_human(flash_size, compact=True)} ({format_hex(flash_size)}) thêm "
+                f"{format_bytes_human(over_bytes, compact=True)}.\n\n"
+                "Hãy thu gọn bớt kích thước phân vùng hoặc nâng dung lượng Flash lớn hơn."
+            )
+        return None
+
     def _cascade_auto_pack(self, from_idx: int = 0):
         """Tự động căn chỉnh và dồn offset các phân vùng kế tiếp theo chuẩn ESP-IDF"""
         if not getattr(self, "var_auto_align", None) or not self.var_auto_align.get():
@@ -354,20 +437,35 @@ class PartitionTabMixin:
         if from_idx <= 0:
             self.table.auto_pack_and_align()
         else:
-            prev = self.table.entries[from_idx - 1]
-            current_offset = prev.offset + prev.size
-            for i in range(from_idx, len(self.table.entries)):
-                e = self.table.entries[i]
-                align_b = 0x10000 if e.type_str.lower() == "app" else 0x1000
-                current_offset = align_up(current_offset, align_b)
-                e.offset = current_offset
-                current_offset += e.size
+            self._pack_entries_sequence(self.table.entries, from_idx=from_idx)
 
     def _set_entry_field(self, entry: PartitionEntry, field: str, value):
-        self._push_partition_undo_state()
         if field == "size" and isinstance(value, int):
             if value % 0x1000 != 0:
                 value = align_up(value, 0x1000)
+
+        idx = self.table.entries.index(entry) if entry in self.table.entries else -1
+        if idx >= 0 and field in ("offset", "size", "type_str", "subtype_str"):
+            sim = [e.clone() for e in self.table.entries]
+            sim_entry = sim[idx]
+            setattr(sim_entry, field, value)
+            auto_align = bool(getattr(self, "var_auto_align", None) and self.var_auto_align.get())
+            if auto_align:
+                if field == "offset":
+                    align_b = 0x10000 if sim_entry.type_str.lower() == "app" else 0x1000
+                    sim_entry.offset = align_up(sim_entry.offset, align_b)
+                    if idx > 0:
+                        sim_entry.offset = max(sim_entry.offset, align_up(sim[idx - 1].end_offset, align_b))
+                    self._pack_entries_sequence(sim, from_idx=idx + 1)
+                else:
+                    self._pack_entries_sequence(sim, from_idx=idx)
+            prev_max_end = max((e.end_offset for e in self.table.entries), default=0)
+            overflow_msg = self._check_entries_fit_flash(sim, prev_max_end=prev_max_end)
+            if overflow_msg:
+                messagebox.showwarning("Vượt dung lượng Flash", overflow_msg, parent=self.root)
+                return
+
+        self._push_partition_undo_state()
         setattr(entry, field, value)
         idx = self.table.entries.index(entry) if entry in self.table.entries else 0
         if getattr(self, "var_auto_align", None) and self.var_auto_align.get():
@@ -473,11 +571,16 @@ class PartitionTabMixin:
                     selected_iid_to_restore = iid
                     current_selected_entry = e
 
-            # Hàng trống ở cuối bảng để người dùng nhấp thêm phân vùng mới
+            free_info = self._get_partition_free_space_info()
+            can_add = free_info["can_add"]
+
+            # Hàng trống ở cuối bảng để người dùng nhấp thêm phân vùng mới (hoặc thông báo đã đầy)
             self._add_row_iid = "__add_row__"
             self.part_tree.insert("", "end", iid=self._add_row_iid, values=(
-                "+",
-                "(Nhấp vào dòng này để thêm phân vùng mới)",
+                "+" if can_add else "!",
+                "(Nhấp vào dòng này để thêm phân vùng mới)"
+                if can_add
+                else "(Flash đã đầy — không thể thêm phân vùng mới; hãy xóa/thu gọn bớt)",
                 "",
                 "",
                 "",
@@ -486,6 +589,8 @@ class PartitionTabMixin:
                 "",
                 ""
             ))
+
+            self._sync_add_button_state()
 
             if selected_iid_to_restore:
                 self.part_tree.selection_set(selected_iid_to_restore)
@@ -767,6 +872,16 @@ class PartitionTabMixin:
     def _action_add_after_row(self, row_id: str):
         if self._is_partition_hw_running or (hasattr(self, 'is_device_busy') and self.is_device_busy()):
             return
+        free_info = self._get_partition_free_space_info()
+        if not free_info["can_add"]:
+            messagebox.showwarning(
+                "Hết dung lượng Flash",
+                "Bộ nhớ Flash đã đầy (còn trống dưới 4 KB).\n\n"
+                "Vui lòng thu gọn hoặc xóa bớt phân vùng hiện có, hoặc chọn dung lượng Flash lớn hơn trước khi thêm mới.",
+                parent=self.root,
+            )
+            return
+
         entry_name = self._get_entry_name_from_iid(row_id)
         idx = next((i for i, e in enumerate(self.table.entries) if e.name == entry_name), -1)
         if idx == -1:
@@ -786,7 +901,25 @@ class PartitionTabMixin:
         else:
             suggested_offset = 0x10000
 
-        new_size = 0x10000  # 64 KB
+        avail_for_new = (free_info["remaining_total"] // 0x1000) * 0x1000
+        if not free_info["auto_align"]:
+            next_entry = self.table.entries[idx + 1] if (0 <= idx + 1 < len(self.table.entries)) else None
+            limit_end = next_entry.offset if next_entry is not None else free_info["flash_size"]
+            gap_here = max(0, limit_end - suggested_offset)
+            if gap_here < 0x1000 and free_info["gaps"]:
+                first_gap = free_info["gaps"][0]
+                suggested_offset = align_up(first_gap.offset, 0x1000)
+                gap_here = max(0, first_gap.end_offset - suggested_offset)
+            avail_for_new = min(avail_for_new, (gap_here // 0x1000) * 0x1000)
+
+        new_size = min(0x10000, avail_for_new)
+        if new_size < 0x1000:
+            messagebox.showwarning(
+                "Hết dung lượng Flash",
+                "Không còn đủ 4 KB trống liên tục tại vị trí chèn để tạo phân vùng mới.",
+                parent=self.root,
+            )
+            return
 
         new_entry = PartitionEntry(
             name=new_name,
@@ -796,6 +929,15 @@ class PartitionTabMixin:
             size=new_size,
             flags_str=""
         )
+
+        sim = [e.clone() for e in self.table.entries]
+        sim.insert(idx + 1, new_entry.clone())
+        if free_info["auto_align"]:
+            self._pack_entries_sequence(sim, from_idx=idx + 1)
+        overflow_msg = self._check_entries_fit_flash(sim)
+        if overflow_msg:
+            messagebox.showwarning("Vượt dung lượng Flash", overflow_msg, parent=self.root)
+            return
 
         self._push_partition_undo_state()
         self.table.entries.insert(idx + 1, new_entry)
@@ -876,7 +1018,10 @@ class PartitionTabMixin:
 
         if row_id == getattr(self, "_add_row_iid", "__add_row__"):
             menu = _QMenuCompat(self.root)
-            menu.add_command(label="Thêm phân vùng mới", command=self._action_add_partition)
+            if self._get_partition_free_space_info()["can_add"]:
+                menu.add_command(label="Thêm phân vùng mới", command=self._action_add_partition)
+            else:
+                menu.add_command(label="Flash đã đầy (không thể thêm phân vùng)", state="disabled")
             menu.tk_popup(event.x_root, event.y_root)
             return
 
@@ -1149,6 +1294,16 @@ class PartitionTabMixin:
         if isinstance(suggested_offset, bool):
             suggested_offset = None
 
+        free_info = self._get_partition_free_space_info()
+        if not free_info["can_add"]:
+            messagebox.showwarning(
+                "Hết dung lượng Flash",
+                "Bộ nhớ Flash đã đầy (dung lượng chưa cấp phát < 4 KB).\n\n"
+                "Hãy thu gọn dung lượng phân vùng hiện có, nhấn 'Xóa dòng'/'Xóa tất cả' hoặc chọn mức Flash lớn hơn trước khi thêm phân vùng mới.",
+                parent=self.root,
+            )
+            return
+
         insert_idx = len(self.table.entries)
         if suggested_offset is None:
             selected_entry = None
@@ -1166,6 +1321,18 @@ class PartitionTabMixin:
             else:
                 suggested_offset = 0x10000
 
+            if suggested_offset + 0x1000 > free_info["flash_size"] and free_info["gaps"]:
+                suggested_offset = align_up(free_info["gaps"][0].offset, 0x1000)
+
+        max_avail = free_info["remaining_total"]
+        if not free_info["auto_align"]:
+            matching_gap = next(
+                (g for g in free_info["gaps"] if g.offset <= suggested_offset < g.end_offset),
+                None,
+            )
+            if matching_gap is not None:
+                max_avail = min(max_avail, max(0, matching_gap.end_offset - suggested_offset))
+
         default_name = self._next_unique_partition_name("part_")
         dlg = PartitionEditDialog(
             self.root,
@@ -1173,6 +1340,8 @@ class PartitionTabMixin:
             suggested_offset=suggested_offset,
             is_dark_mode=self.is_dark_mode,
             default_name=default_name,
+            flash_size=free_info["flash_size"],
+            max_available_bytes=max_avail,
         )
         self._exec_dialog(dlg)
         if dlg.result:
@@ -1181,11 +1350,32 @@ class PartitionTabMixin:
             if dlg.result.name in existing_names:
                 dlg.result.name = self._next_unique_partition_name(f"{dlg.result.name}_")
 
-            self._push_partition_undo_state()
             insert_idx = max(0, min(insert_idx, len(self.table.entries)))
+            auto_align = bool(getattr(self, "var_auto_align", None) and self.var_auto_align.get())
+
+            sim = [e.clone() for e in self.table.entries]
+            sim.insert(insert_idx, dlg.result.clone())
+            if auto_align:
+                if insert_idx == 0:
+                    self._pack_entries_sequence(sim, from_idx=0)
+                else:
+                    prev_s = sim[insert_idx - 1]
+                    start_pack = insert_idx if dlg.result.offset < prev_s.end_offset else insert_idx + 1
+                    if start_pack < len(sim):
+                        self._pack_entries_sequence(sim, from_idx=start_pack)
+            elif insert_idx + 1 < len(sim):
+                next_s = sim[insert_idx + 1]
+                if dlg.result.end_offset > next_s.offset:
+                    self._pack_entries_sequence(sim, from_idx=insert_idx + 1)
+
+            overflow_msg = self._check_entries_fit_flash(sim)
+            if overflow_msg:
+                messagebox.showwarning("Vượt dung lượng Flash", overflow_msg, parent=self.root)
+                return
+
+            self._push_partition_undo_state()
             self.table.entries.insert(insert_idx, dlg.result)
 
-            auto_align = bool(getattr(self, "var_auto_align", None) and self.var_auto_align.get())
             if auto_align:
                 if insert_idx == 0:
                     self._cascade_auto_pack(from_idx=0)
@@ -1217,12 +1407,32 @@ class PartitionTabMixin:
             return
 
         entry = self.table.entries[idx]
-        dlg = PartitionEditDialog(self.root, entry=entry, is_dark_mode=self.is_dark_mode)
+        free_info = self._get_partition_free_space_info()
+        other_alloc = sum(e.size for i, e in enumerate(self.table.entries) if i != idx)
+        max_avail = max(0, free_info["usable_total"] - other_alloc)
+        dlg = PartitionEditDialog(
+            self.root,
+            entry=entry,
+            is_dark_mode=self.is_dark_mode,
+            flash_size=free_info["flash_size"],
+            max_available_bytes=max_avail,
+        )
         self._exec_dialog(dlg)
         if dlg.result:
+            sim = [e.clone() for e in self.table.entries]
+            sim[idx] = dlg.result.clone()
+            auto_align = bool(getattr(self, "var_auto_align", None) and self.var_auto_align.get())
+            if auto_align:
+                self._pack_entries_sequence(sim, from_idx=idx)
+            prev_max_end = max((e.end_offset for e in self.table.entries), default=0)
+            overflow_msg = self._check_entries_fit_flash(sim, prev_max_end=prev_max_end)
+            if overflow_msg:
+                messagebox.showwarning("Vượt dung lượng Flash", overflow_msg, parent=self.root)
+                return
+
             self._push_partition_undo_state()
             self.table.entries[idx] = dlg.result
-            if getattr(self, "var_auto_align", None) and self.var_auto_align.get():
+            if auto_align:
                 self._cascade_auto_pack(from_idx=idx)
             self.refresh_partition_views(selected_entry_name=dlg.result.name)
             self.set_status(f"Đã cập nhật phân vùng '{dlg.result.name}'.")
@@ -1496,10 +1706,13 @@ class PartitionTabMixin:
     # THAO TÁC PHẦN CỨNG ESP32 (ĐỒNG BỘ CỔNG COM VÀ ESPTOOL AN TOÀN)
     # =========================================================================
 
-    def _log_partition_hw(self, text: str):
+    def _log_partition_hw(self, text: str, level: str | None = None):
         """Ghi nhật ký thao tác phần cứng phân vùng sang sub-tab Log của Tab 2 với tiền tố [Phân vùng]."""
         if hasattr(self, "append_tab_log"):
-            self.append_tab_log("Phân vùng", text)
+            if level is None:
+                self.append_tab_log("Phân vùng", text)
+            else:
+                self.append_tab_log("Phân vùng", text, level=level)
 
     def _update_partition_hw_progress(self, line: str, task_label: str | None = None):
         """Phân tích dòng output từ esptool để cập nhật thanh tiến trình toàn cục (0% -> 100%)."""
@@ -1570,7 +1783,7 @@ class PartitionTabMixin:
                 tmp_path = tmp.name
 
             try:
-                safe_after(lambda: self._log_partition_hw(f"\n=== BẮT ĐẦU DÒ CHIP & ĐỌC BẢNG PHÂN VÙNG QUA {port} ==="))
+                safe_after(lambda: self._log_partition_hw(f"BẮT ĐẦU DÒ CHIP & ĐỌC BẢNG PHÂN VÙNG QUA {port}", level="header"))
 
                 # Bước 1: Dò Chip (nếu để auto) và dung lượng Flash thật qua flash-id
                 fid_args = ['--port', port, '--baud', str(baud)]
