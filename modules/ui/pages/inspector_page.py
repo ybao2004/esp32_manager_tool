@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QButtonGroup, QSizePolicy
 )
 from PyQt6.QtCore import Qt, QSize
+from PyQt6.QtGui import QFont, QFontMetrics, QTextLayout, QTextOption
 from modules.ui.text import qt_text
 from modules.ui.icons import get_icon
 from modules.mac_database import is_espressif_oui
@@ -65,39 +66,104 @@ class KpiStatCard(QFrame):
 
     def __init__(self, title: str, default_val: str = "Chưa có dữ liệu", default_sub: str = "---", parent=None):
         super().__init__(parent)
+        self._raw_value = str(default_val)
+        self._raw_sub = str(default_sub)
+
         self.setProperty("role", "kpi_card")
         self.setMinimumWidth(0)
-        self.setMinimumHeight(66)
-        self.setMaximumHeight(76)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.setFixedHeight(92)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setContentsMargins(10, 7, 10, 7)
         layout.setSpacing(2)
 
         self.lbl_title = QLabel(str(title), self)
         self.lbl_title.setProperty("role", "kpi_title")
         self.lbl_title.setMinimumWidth(0)
+        self.lbl_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.lbl_title.setFixedHeight(16)
 
-        self.lbl_value = QLabel(str(default_val), self)
+        self.lbl_value = QLabel(self._raw_value, self)
         self.lbl_value.setProperty("role", "kpi_value")
         self.lbl_value.setMinimumWidth(0)
+        self.lbl_value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.lbl_value.setFixedHeight(22)
 
-        self.lbl_sub = QLabel(str(default_sub), self)
+        self.lbl_sub = QLabel(self._raw_sub, self)
         self.lbl_sub.setProperty("role", "kpi_sub")
         self.lbl_sub.setMinimumWidth(0)
+        self.lbl_sub.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Expanding)
+        self.lbl_sub.setWordWrap(True)
+        self.lbl_sub.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
 
         layout.addWidget(self.lbl_title)
         layout.addWidget(self.lbl_value)
         layout.addWidget(self.lbl_sub)
+        layout.addStretch(1)
+
+        self.set_metrics(default_val, default_sub)
+
+    def _fit_and_format_labels(self):
+        self.lbl_value.setText(self._raw_value)
+        avail_w = self.width() - 24
+        if avail_w <= 60:
+            self.lbl_value.setStyleSheet("")
+            self.lbl_sub.setText(self._raw_sub)
+            return
+
+        tokens = ThemeManager.instance().tokens
+        base_pt = float(getattr(tokens, "font_size_pt", 9.5)) + 2.0
+        val_font = QFont(self.lbl_value.font())
+        val_font.setBold(True)
+        chosen_pt = base_pt
+        while chosen_pt > 8.0:
+            val_font.setPointSizeF(chosen_pt)
+            if QFontMetrics(val_font).horizontalAdvance(self._raw_value) <= avail_w:
+                break
+            chosen_pt -= 0.5
+        if chosen_pt < base_pt:
+            self.lbl_value.setStyleSheet(f"font-size: {chosen_pt:.1f}pt; font-weight: 700;")
+        else:
+            self.lbl_value.setStyleSheet("")
+
+        sub_font = self.lbl_sub.font()
+        text_opt = QTextOption()
+        text_opt.setWrapMode(QTextOption.WrapMode.WrapAtWordBoundaryOrAnywhere)
+        t_layout = QTextLayout(self._raw_sub, sub_font)
+        t_layout.setTextOption(text_opt)
+        t_layout.beginLayout()
+        line1 = t_layout.createLine()
+        if line1.isValid():
+            line1.setLineWidth(avail_w)
+        line2 = t_layout.createLine()
+        if line2.isValid():
+            line2.setLineWidth(avail_w)
+        line3 = t_layout.createLine()
+        t_layout.endLayout()
+
+        if line3.isValid() and line2.isValid():
+            part1 = self._raw_sub[line1.textStart():line1.textStart() + line1.textLength()].rstrip()
+            tail = QFontMetrics(sub_font).elidedText(
+                self._raw_sub[line2.textStart():].lstrip(),
+                Qt.TextElideMode.ElideRight,
+                avail_w,
+            )
+            self.lbl_sub.setText(f"{part1}\n{tail}")
+        else:
+            self.lbl_sub.setText(self._raw_sub)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_and_format_labels()
 
     def set_metrics(self, value: str, subtitle: str = ""):
-        val_str = str(value)
-        sub_str = str(subtitle)
-        self.lbl_value.setText(val_str)
-        self.lbl_sub.setText(sub_str)
-        tip = f"{self.lbl_title.text()}: {val_str}"
-        if sub_str and sub_str != "---":
-            tip += f"\n{sub_str}"
+        self._raw_value = str(value)
+        self._raw_sub = str(subtitle)
+        self._fit_and_format_labels()
+        tip = f"{self.lbl_title.text()}: {self._raw_value}"
+        if self._raw_sub and self._raw_sub != "---":
+            tip += f"\n{self._raw_sub}"
         self.setToolTip(tip)
 
 
@@ -193,11 +259,11 @@ class InspectorPage(QWidget):
         self.kpi_psram = KpiStatCard("BỘ NHỚ PSRAM", "N/A", "Tốc độ, Bus SPI & Nhà sản xuất", self)
         self.kpi_mac = KpiStatCard("ĐỊA CHỈ MAC & HÃNG", "N/A", "Định danh eFuse & Tiền tố OUI", self)
 
-        kpi_row.addWidget(self.kpi_chip, 3)
-        kpi_row.addWidget(self.kpi_flash, 2)
-        kpi_row.addWidget(self.kpi_sram, 2)
-        kpi_row.addWidget(self.kpi_psram, 3)
-        kpi_row.addWidget(self.kpi_mac, 2)
+        kpi_row.addWidget(self.kpi_chip, 1)
+        kpi_row.addWidget(self.kpi_flash, 1)
+        kpi_row.addWidget(self.kpi_sram, 1)
+        kpi_row.addWidget(self.kpi_psram, 1)
+        kpi_row.addWidget(self.kpi_mac, 1)
         main_layout.addLayout(kpi_row)
 
         # =====================================================================
@@ -431,3 +497,5 @@ class InspectorPage(QWidget):
         self.detect_btn.setIcon(get_icon("chip", tokens.on_accent, 16))
         self.save_report_btn.setIcon(get_icon("save", tokens.text, 16))
         self.clear_inspector_btn.setIcon(get_icon("trash", tokens.text, 16))
+        for card in (self.kpi_chip, self.kpi_flash, self.kpi_sram, self.kpi_psram, self.kpi_mac):
+            card._fit_and_format_labels()

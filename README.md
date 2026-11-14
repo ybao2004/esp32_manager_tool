@@ -1,12 +1,18 @@
-# ESP32 Manager Tool (v1.6)
+# ESP32 Manager Tool (v1.6.1)
 
 > **Tác giả:** `@ybao04` | **Bản quyền:** GNU General Public License v3.0 (GPL-3.0) | **Kho lưu trữ:** [github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
 
-**ESP32 Manager Tool v1.6** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / quản trị dữ liệu phân vùng / nhân bản đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
+**ESP32 Manager Tool v1.6.1** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / quản trị dữ liệu phân vùng / nhân bản đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
 
 ---
 
-## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.6
+## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.6.1
+
+- **Cố định đồng đều 5 khung KPI phần cứng (`1:1:1:1:1`) & tăng chiều cao lên `92px`:**
+  - Khóa cứng tỷ lệ chiều ngang `20%` mỗi khung (bằng `QSizePolicy.Policy.Ignored`), đảm bảo 5 thẻ (**Vi xử lý · Flash · SRAM · PSRAM · MAC**) luôn bằng nhau tuyệt đối trước và sau khi đọc chip.
+  - Tăng chiều cao thẻ lên `92px`, bật tự xuống dòng `2` dòng cho dòng mô tả phụ (tự cắt gọn `...` ở cuối dòng 2 kèm tooltip đầy đủ khi rê chuột) và tự co nhẹ cỡ chữ giá trị chính để hiển thị gọn gàng không bị cắt xén.
+
+### Các cập nhật trước đó (v1.6)
 
 - **Hiển thị đầy đủ 3 tầng bộ nhớ (Flash · SRAM · PSRAM):**
   - Thanh trạng thái đầu ứng dụng (`ConnectionBar`), thẻ KPI trang Kiểm tra Chip và tóm tắt ở tab Sao lưu & Chép đều hiển thị đồng bộ **Flash, SRAM nội và PSRAM** (kèm ROM khởi động trong báo cáo chi tiết).
