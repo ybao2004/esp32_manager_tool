@@ -23,6 +23,7 @@ from modules.esptool_util import (
     esptool_command_succeeded,
     parse_esptool_output,
     parse_esptool_progress_percent,
+    format_chip_badge_text,
 )
 from modules.partition.unit_formatter import (
     DisplayMode, parse_size_or_offset, format_bytes_human, format_hex,
@@ -1804,6 +1805,8 @@ class PartitionTabMixin:
                 fid_parsed = parse_esptool_output({"flash_id": fid_text}) if fid_text else {}
                 detected_chip = fid_parsed.get("chip_name_key") or fid_parsed.get("chip_line")
                 detected_flash_mb = float(fid_parsed.get("flash_mb") or 0)
+                detected_sram_kb = fid_parsed.get("sram_kb")
+                detected_psram_mb = fid_parsed.get("psram_mb")
                 resolved_cid = _resolve_chip_id_from_esptool(detected_chip)
 
                 # Bước 2: Đọc 4KB bảng phân vùng ở offset cấu hình
@@ -1856,6 +1859,14 @@ class PartitionTabMixin:
                             if detected_flash_bytes > 0:
                                 self._sync_chip_and_flash_combos(chip, flash_size=detected_flash_bytes)
                         self.refresh_partition_views()
+                        if detected_chip and getattr(self, "conn_bar", None) is not None:
+                            badge_str = format_chip_badge_text(
+                                detected_chip,
+                                flash_mb=detected_flash_mb or (target_flash / (1024 * 1024) if "target_flash" in locals() else None),
+                                sram_kb=detected_sram_kb,
+                                psram_mb=detected_psram_mb,
+                            )
+                            self.conn_bar.set_chip_badge_info(badge_str, is_active=True)
                         part_count = len(self.table.entries)
                         self.set_status(
                             f"Đã đọc và giải mã bảng phân vùng ({part_count} phân vùng) từ ESP32 thành công!",

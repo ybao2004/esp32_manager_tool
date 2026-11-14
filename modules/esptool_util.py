@@ -4,6 +4,7 @@ ESP Tool & Hardware Inspector v2.0 - esptool Integration & Deep Hardware Inspect
 """
 import codecs
 from contextlib import contextmanager, redirect_stdout, redirect_stderr
+import hashlib
 from importlib import metadata
 import io
 import re
@@ -15,6 +16,215 @@ import time
 esptool = None
 _esptool_load_lock = threading.Lock()
 _esptool_import_attempted = False
+_READ_FLASH_SUBCHUNK_BYTES = 0x200000  # 2 MB mỗi chặng đọc + kiểm tra MD5 trực tiếp từ stub
+
+
+def _install_resilient_read_flash_patch(esptool_mod) -> None:
+    """
+    Gia cố ESPLoader.read_flash để chống nghẽn gói SLIP trên USB-Serial/JTAG (FIFO 64 byte)
+    và chia các lệnh đọc lớn (như Full Flash 16 MB) thành các chặng 2 MB có tự động thử lại.
+    """
+    if not isinstance(getattr(esptool_mod, "__file__", None), str):
+        return
+    loader_mod = getattr(esptool_mod, "loader", None)
+    loader_cls = getattr(loader_mod, "ESPLoader", None) if loader_mod else None
+    util_mod = getattr(esptool_mod, "util", None)
+    if loader_cls is None or not hasattr(loader_cls, "read_flash"):
+        return
+
+    orig_read_flash = loader_cls.read_flash
+    if getattr(orig_read_flash, "_esp_mgr_resilient", False):
+        return
+
+    orig_slip_reader = getattr(loader_mod, "slip_reader", None)
+    fatal_err_cls = getattr(util_mod, "FatalError", RuntimeError)
+    hexify_fn = getattr(util_mod, "hexify", lambda b: b.hex())
+
+    def _detect_panic_msg(raw_buf: bytes) -> None:
+        m = re.search(
+            rb"(?:G?uru Meditation Error: (?:Core \d panic'ed \(([a-zA-Z ]*)\))?|"
+            rb"F?atal exception \(\d+\): (?:([a-zA-Z ]*)?.*epc)?)",
+            raw_buf,
+            re.DOTALL,
+        )
+        if m:
+            cause = next((g.decode("utf-8", errors="ignore") for g in (m.group(1), m.group(2)) if g), "")
+            suffix = f" ({cause})" if cause else ""
+            raise fatal_err_cls(f"Guru Meditation Error detected{suffix}.")
+
+    def _iter_resilient_slip_packets(port, trace_fn, idle_nudge_fn=None, max_nudges=32):
+        """Bộ tách gói SLIP giữ nguyên trạng thái partial khi cần gửi ACK mồi giải phóng FIFO."""
+        partial = None
+        in_escape = False
+        successful_slip = False
+        nudges = 0
+        while True:
+            waiting = port.inWaiting()
+            read_bytes = port.read(1 if waiting == 0 else waiting)
+            if read_bytes == b"":
+                if idle_nudge_fn is not None and nudges < max_nudges and idle_nudge_fn():
+                    nudges += 1
+                    continue
+                if partial is None:
+                    msg = (
+                        "Serial data stream stopped: Possible serial noise or corruption."
+                        if successful_slip
+                        else "No serial data received."
+                    )
+                else:
+                    msg = f"Packet content transfer stopped (received {len(partial)} bytes)."
+                trace_fn(msg)
+                raise fatal_err_cls(msg)
+
+            nudges = 0
+            for b_int in read_bytes:
+                if partial is None:
+                    if b_int == 0xC0:
+                        partial = bytearray()
+                    else:
+                        rem = port.read(port.inWaiting())
+                        _detect_panic_msg(read_bytes + rem)
+                        raise fatal_err_cls(
+                            f"Invalid head of packet (0x{b_int:02x}): Possible serial noise or corruption."
+                        )
+                elif in_escape:
+                    in_escape = False
+                    if b_int == 0xDC:
+                        partial.append(0xC0)
+                    elif b_int == 0xDD:
+                        partial.append(0xDB)
+                    else:
+                        rem = port.read(port.inWaiting())
+                        _detect_panic_msg(read_bytes + rem)
+                        raise fatal_err_cls(f"Invalid SLIP escape (0xdb, 0x{b_int:02x}).")
+                elif b_int == 0xDB:
+                    in_escape = True
+                elif b_int == 0xC0:
+                    yield bytes(partial)
+                    partial = None
+                    successful_slip = True
+                else:
+                    partial.append(b_int)
+
+    def _read_flash_subchunk(esp, sub_off, sub_len, total_off, total_len, base_done, progress_fn):
+        port = esp._port
+        sector_size = getattr(esp, "FLASH_SECTOR_SIZE", 4096) or 4096
+        orig_timeout = getattr(port, "timeout", 3)
+        nudge_state = {"active": False, "sent": 0}
+
+        def _on_idle_nudge():
+            if not nudge_state["active"]:
+                return False
+            ack_val = min(sub_len, nudge_state["sent"] + sector_size)
+            esp.write(struct.pack("<I", ack_val))
+            return True
+
+        try:
+            esp._slip_reader = _iter_resilient_slip_packets(
+                port,
+                esp.trace,
+                idle_nudge_fn=_on_idle_nudge,
+                max_nudges=32,
+            )
+            esp.check_command(
+                "read flash",
+                esp.ESP_CMDS["READ_FLASH"],
+                struct.pack("<IIII", sub_off, sub_len, sector_size, 64),
+            )
+            nudge_state["active"] = True
+            port.timeout = 0.15
+
+            chunks = []
+            sub_done = 0
+            while sub_done < sub_len:
+                p = esp.read()
+                if sub_done + len(p) < sub_len and len(p) < sector_size:
+                    raise fatal_err_cls(
+                        f"Corrupt data, expected {sector_size:#x} bytes but received {len(p):#x} bytes."
+                    )
+                chunks.append(p)
+                sub_done += len(p)
+                nudge_state["sent"] = sub_done
+                esp.write(struct.pack("<I", sub_done))
+                if progress_fn and (sub_done % 1024 == 0 or sub_done == sub_len):
+                    progress_fn(base_done + sub_done, total_len, total_off)
+
+            if sub_done > sub_len:
+                raise fatal_err_cls("Read more than expected.")
+
+            port.timeout = 0.5
+            digest_frame = esp.read()
+            if len(digest_frame) != 16:
+                raise fatal_err_cls(f"Expected digest, got: {hexify_fn(digest_frame)}")
+            data = b"".join(chunks)
+            expected_digest = hexify_fn(digest_frame).upper()
+            digest = hashlib.md5(data).hexdigest().upper()
+            if digest != expected_digest:
+                raise fatal_err_cls(f"Digest mismatch: expected {expected_digest}, got {digest}")
+            return data
+        finally:
+            try:
+                port.timeout = orig_timeout
+            except Exception:
+                pass
+            if callable(orig_slip_reader):
+                try:
+                    esp._slip_reader = orig_slip_reader(port, esp.trace)
+                except Exception:
+                    pass
+
+    def resilient_read_flash(self, offset, length, progress_fn=None) -> bytes:
+        port = getattr(self, "_port", None)
+        is_real_serial = (
+            getattr(self, "IS_STUB", False)
+            and port is not None
+            and all(callable(getattr(port, m, None)) for m in ("read", "write", "inWaiting"))
+            and callable(orig_slip_reader)
+            and hasattr(self, "ESP_CMDS")
+            and "READ_FLASH" in getattr(self, "ESP_CMDS", {})
+        )
+        if not is_real_serial:
+            return orig_read_flash(self, offset, length, progress_fn=progress_fn)
+        if length <= 0:
+            return b""
+
+        wdt_fn = getattr(self, "disable_watchdogs", None)
+        if callable(wdt_fn):
+            try:
+                wdt_fn()
+            except Exception:
+                pass
+
+        all_chunks = []
+        done = 0
+        while done < length:
+            sub_len = min(_READ_FLASH_SUBCHUNK_BYTES, length - done)
+            sub_off = offset + done
+            last_exc = None
+            for attempt in range(3):
+                if attempt > 0:
+                    try:
+                        time.sleep(0.1)
+                        self.flush_input()
+                        self.sync()
+                    except Exception:
+                        pass
+                try:
+                    part = _read_flash_subchunk(
+                        self, sub_off, sub_len, offset, length, done, progress_fn
+                    )
+                    all_chunks.append(part)
+                    done += len(part)
+                    last_exc = None
+                    break
+                except Exception as exc:
+                    last_exc = exc
+            if last_exc is not None:
+                raise last_exc
+        return b"".join(all_chunks)
+
+    resilient_read_flash._esp_mgr_resilient = True
+    loader_cls.read_flash = resilient_read_flash
 
 
 def _ensure_esptool():
@@ -30,6 +240,7 @@ def _ensure_esptool():
             try:
                 import esptool as _esptool_mod
                 esptool = _esptool_mod
+                _install_resilient_read_flash_patch(_esptool_mod)
             except ImportError:
                 esptool = None
         return esptool
@@ -359,31 +570,97 @@ def parse_esp_app_desc(data: bytes) -> dict:
 
 
 def scan_drom_strings_for_metadata(data: bytes) -> dict:
-    """Quét nhanh vùng .rodata (DROM) đầu phân vùng App để tìm thông tin driver PSRAM và tên Board."""
+    """Quét vùng .rodata (DROM) đầu phân vùng App để tìm cấu hình PSRAM, FQBN Arduino, Board và Ngoại vi."""
     if not data:
         return {}
     text = data.decode("latin-1", errors="ignore")
     meta = {}
-    if "hex_psram" in text:
-        meta["fw_psram_driver"] = "Hex PSRAM (16-bit X16 MSPI)"
-    elif "oct_psram" in text or "octal_psram" in text:
-        meta["fw_psram_driver"] = "Octal PSRAM (8-bit OPI)"
-    elif "quad_psram" in text or "esp_psram" in text:
-        meta["fw_psram_driver"] = "Quad/SPI PSRAM"
 
+    # 1. Tìm chuỗi Arduino FQBN đầy đủ (VD: esp32:esp32:esp32s3:...PSRAM=opi...)
+    m_fqbn = re.search(r"esp32:esp32:([A-Za-z0-9_\-]+):([^\x00\r\n]{8,360})", text)
+    if m_fqbn:
+        fqbn_opts = m_fqbn.group(2).strip(", ")
+        meta["fw_fqbn"] = f"esp32:esp32:{m_fqbn.group(1)}:{fqbn_opts}"
+        opt_map = {}
+        for item in fqbn_opts.split(","):
+            if "=" in item:
+                k, v = item.split("=", 1)
+                opt_map[k.strip()] = v.strip()
+        psram_opt = opt_map.get("PSRAM", "").lower()
+        if psram_opt == "opi":
+            meta["fw_psram_mode_cfg"] = "Octal PSRAM (8-line / X8 OPI MSPI)"
+        elif psram_opt == "qspi":
+            meta["fw_psram_mode_cfg"] = "Quad PSRAM (4-line / X4 QSPI)"
+        elif psram_opt in ("enabled", "enable"):
+            meta["fw_psram_mode_cfg"] = "SPI PSRAM (Enabled)"
+        if opt_map.get("FlashMode"):
+            meta["fw_flash_mode_cfg"] = opt_map["FlashMode"]
+        if opt_map.get("CPUFreq"):
+            meta["fw_cpu_freq_cfg"] = f"{opt_map['CPUFreq']} MHz"
+        if opt_map.get("DebugLevel"):
+            meta["fw_debug_level"] = opt_map["DebugLevel"]
+
+    # 2. Nhận diện driver PSRAM từ đường dẫn/chuỗi ESP-IDF trong DROM
+    if "hex_psram" in text:
+        meta["fw_psram_driver"] = "Hex PSRAM (16-line / X16 MSPI)"
+    elif "oct_psram" in text or "octal_psram" in text or "PSRAM=opi" in text:
+        meta["fw_psram_driver"] = "Octal PSRAM (8-line / X8 OPI MSPI)"
+    elif "quad_psram" in text or "PSRAM=qspi" in text:
+        meta["fw_psram_driver"] = "Quad PSRAM (4-line / X4 QSPI)"
+    elif "esp_psram" in text:
+        meta["fw_psram_driver"] = "ESP-IDF esp_psram (Quad/SPI)"
+
+    # 3. Nhận diện tên Board mục tiêu
     m_board = re.search(r"board=([A-Za-z0-9_\-]+)", text)
     if m_board:
         meta["fw_board_name"] = m_board.group(1)
+    else:
+        m_ap_board = re.search(r"(\d+\.\d+_ESP32[A-Z0-9_\-]+)", text)
+        m_dev_board = re.search(r"\b(ESP32[A-Z0-9]+_[A-Z0-9_]+)\b", text)
+        if m_ap_board:
+            ap_name = m_ap_board.group(1).strip("_")
+            meta["fw_board_name"] = f"{ap_name} ({m_dev_board.group(1)})" if m_dev_board else ap_name
+        elif m_dev_board:
+            meta["fw_board_name"] = m_dev_board.group(1)
+
+    # 4. Nhận diện chuỗi Ngoại vi trong Firmware (LCD / Touch / GUI / SD / Audio)
+    peripherals = []
+    if re.search(r"(?:0x9341|ili9341)", text, re.IGNORECASE):
+        peripherals.append("LCD TFT ILI9341 (SPI)")
+    elif re.search(r"st7789", text, re.IGNORECASE):
+        peripherals.append("LCD ST7789 (SPI)")
+    if re.search(r"(?:touch\s+ic|ft6336|ft6236|cst816|gt911)", text, re.IGNORECASE):
+        peripherals.append("Cảm ứng (Touch I2C)")
+    m_lvgl = re.search(r"LVGL\s+v\d+", text)
+    if m_lvgl:
+        peripherals.append(f"Đồ họa {m_lvgl.group(0)}")
+    if re.search(r"SD card\s+Test|SD_MMC", text, re.IGNORECASE):
+        peripherals.append("Khe thẻ nhớ SD")
+    if re.search(r"Microphone", text, re.IGNORECASE):
+        peripherals.append("Microphone / Audio")
+    if peripherals:
+        meta["fw_peripherals"] = " · ".join(peripherals)
+
     return meta
 
 
 def _probe_efuse_details(esp) -> dict:
-    """Đọc thêm các thanh ghi eFuse định danh (Unique ID 128-bit, PSRAM_CAP, TEMP, PKG_VERSION, Power)."""
+    """Đọc thêm các thanh ghi eFuse định danh (Unique ID 128-bit, PSRAM_CAP, TEMP, PKG_VERSION, Power, USB)."""
     details = {}
     try:
         blk1 = getattr(esp, "EFUSE_BLOCK1_ADDR", None)
         rd_base = getattr(esp, "EFUSE_RD_REG_BASE", None)
         chip_name = getattr(esp, "CHIP_NAME", "")
+
+        # Đọc USB VID/PID nếu esptool hỗ trợ (ESP32-S3 / C3 / C6 / P4...)
+        usb_vid_pid_fn = getattr(esp, "get_usb_vid_pid", None)
+        if callable(usb_vid_pid_fn):
+            try:
+                vid_pid = usb_vid_pid_fn()
+                if isinstance(vid_pid, (tuple, list)) and len(vid_pid) == 2 and all(vid_pid):
+                    details["usb_vid_pid"] = f"VID 0x{int(vid_pid[0]):04X} : PID 0x{int(vid_pid[1]):04X}"
+            except Exception:
+                pass
 
         # Đọc 128-bit OPTIONAL_UNIQUE_ID tại đầu BLOCK2 (BLOCK1 + 24 bytes) cho các dòng S3/C3/C6/P4/H2/C5
         if blk1 and chip_name in ("ESP32-P4", "ESP32-S3", "ESP32-C3", "ESP32-C6", "ESP32-H2", "ESP32-C5", "ESP32-C61"):
@@ -414,6 +691,45 @@ def _probe_efuse_details(esp) -> dict:
                 w5 = esp.read_reg(rd_base + 20)
                 pwr_sel = (w5 >> 18) & 0x01
                 details["efuse_power_src"] = "DCDC" if pwr_sel == 1 else "LDO"
+        elif chip_name == "ESP32-S3":
+            if callable(getattr(esp, "get_pkg_version", None)):
+                pkg_ver = esp.get_pkg_version()
+                pkg_map = {0: "0 (QFN56)", 1: "1 (LGA56 / PICO-1)"}
+                details["efuse_pkg_version"] = pkg_map.get(pkg_ver, str(pkg_ver))
+            if callable(getattr(esp, "get_blk_version_major", None)) and callable(getattr(esp, "get_blk_version_minor", None)):
+                details["efuse_blk_version"] = f"v{esp.get_blk_version_major()}.{esp.get_blk_version_minor()}"
+            if callable(getattr(esp, "_get_efuse_flash_voltage", None)):
+                try:
+                    vdd = esp._get_efuse_flash_voltage()
+                    if vdd:
+                        details["efuse_vdd_spi"] = str(vdd)
+                except Exception:
+                    pass
+            if callable(getattr(esp, "get_psram_cap", None)):
+                p_cap = esp.get_psram_cap()
+                p_cap_map = {1: 8, 2: 2, 3: 16, 4: 4}
+                if p_cap in p_cap_map:
+                    details["efuse_psram_mb"] = p_cap_map[p_cap]
+            if callable(getattr(esp, "get_psram_vendor", None)):
+                pv = esp.get_psram_vendor()
+                if pv:
+                    details["efuse_psram_vendor"] = str(pv)
+            if callable(getattr(esp, "get_flash_vendor", None)):
+                fv = esp.get_flash_vendor()
+                if fv:
+                    details["efuse_flash_vendor"] = str(fv)
+        else:
+            # Các dòng ESP32 khác (C3/C6/S2/C2/H2...) nếu có get_pkg_version / get_blk_version
+            if callable(getattr(esp, "get_pkg_version", None)):
+                try:
+                    details["efuse_pkg_version"] = str(esp.get_pkg_version())
+                except Exception:
+                    pass
+            if callable(getattr(esp, "get_blk_version_major", None)) and callable(getattr(esp, "get_blk_version_minor", None)):
+                try:
+                    details["efuse_blk_version"] = f"v{esp.get_blk_version_major()}.{esp.get_blk_version_minor()}"
+                except Exception:
+                    pass
     except Exception:
         pass
     return details
@@ -597,9 +913,16 @@ def _probe_esp_deep_details(esp):
 
         for cand_app_off in candidate_app_offsets:
             try:
-                app_data = esp_cmds.read_flash(
-                    esp, cand_app_off, 16384, output=None, flash_size="keep", no_progress=True
-                )
+                app_data = None
+                for probe_len in (65536, 16384):
+                    try:
+                        app_data = esp_cmds.read_flash(
+                            esp, cand_app_off, probe_len, output=None, flash_size="keep", no_progress=True
+                        )
+                        if app_data:
+                            break
+                    except Exception:
+                        app_data = None
                 if app_data and len(app_data) >= 288 and app_data[0] == 0xE9:
                     app_hdr = parse_esp_image_header(app_data)
                     app_desc = parse_esp_app_desc(app_data)
@@ -631,8 +954,20 @@ def _probe_esp_deep_details(esp):
                         log.print(f"App MMU Page Size: {app_desc['app_mmu_page_size']}")
                     if drom_meta.get("fw_psram_driver"):
                         log.print(f"App PSRAM Driver: {drom_meta['fw_psram_driver']}")
+                    if drom_meta.get("fw_psram_mode_cfg"):
+                        log.print(f"App PSRAM Config: {drom_meta['fw_psram_mode_cfg']}")
+                    if drom_meta.get("fw_flash_mode_cfg"):
+                        log.print(f"App Flash Config: {drom_meta['fw_flash_mode_cfg']}")
+                    if drom_meta.get("fw_cpu_freq_cfg"):
+                        log.print(f"App CPU Config: {drom_meta['fw_cpu_freq_cfg']}")
+                    if drom_meta.get("fw_debug_level"):
+                        log.print(f"App Debug Level: {drom_meta['fw_debug_level']}")
                     if drom_meta.get("fw_board_name"):
                         log.print(f"App Board Target: {drom_meta['fw_board_name']}")
+                    if drom_meta.get("fw_peripherals"):
+                        log.print(f"App Peripherals: {drom_meta['fw_peripherals']}")
+                    if drom_meta.get("fw_fqbn"):
+                        log.print(f"App Arduino FQBN: {drom_meta['fw_fqbn']}")
                     break
             except Exception:
                 continue
@@ -861,6 +1196,22 @@ def parse_boot_log_output(text: str) -> dict:
     return info
 
 
+def format_chip_badge_text(chip_label: str, flash_mb=None, sram_kb=None, psram_mb=None) -> str:
+    """Tạo huy hiệu thông tin thống nhất hiển thị Chip · Flash · SRAM · PSRAM cho thanh kết nối."""
+    parts = [str(chip_label or "ESP")]
+    if flash_mb:
+        f_mb = float(flash_mb)
+        f_str = f"{int(f_mb)}MB" if f_mb.is_integer() else f"{f_mb:.1f}MB"
+        parts.append(f"{f_str} Flash")
+    if sram_kb:
+        parts.append(f"{int(sram_kb)}KB SRAM")
+    if psram_mb:
+        parts.append(f"{int(psram_mb)}MB PSRAM")
+    else:
+        parts.append("0MB PSRAM")
+    return " · ".join(parts)
+
+
 def parse_esptool_output(output_dict):
     """Phân tích chuỗi output từ esptool & Boot Log thành dict chứa đầy đủ thông số phần cứng, Flash, Bảo mật & Firmware."""
     raw_joined = "\n".join(output_dict.values())
@@ -923,10 +1274,12 @@ def parse_esptool_output(output_dict):
     if m:
         info["sfdp_info"] = m.group(1).strip()
 
-    m = re.search(r"(?:PSRAM|Embedded PSRAM)\s+(\d+)\s*MB", info.get("features_line", ""), re.IGNORECASE)
+    m = re.search(r"(?:PSRAM|Embedded PSRAM)\s+(\d+)\s*MB(?:\s*\(([^)]+)\))?", info.get("features_line", ""), re.IGNORECASE)
     if m:
         info["psram_mb"] = int(m.group(1))
         info["psram_source"] = "eFuse / In-Package"
+        if m.group(2):
+            info.setdefault("efuse_psram_vendor", m.group(2).strip())
 
     # Parse Security Information
     sec_patterns = {
@@ -948,11 +1301,14 @@ def parse_esptool_output(output_dict):
     # Parse eFuse & Silicon Details
     efuse_patterns = {
         "unique_id_128": r"EFUSE_UNIQUE_ID_128:\s*([^\r\n]+)",
+        "usb_vid_pid": r"EFUSE_USB_VID_PID:\s*([^\r\n]+)",
         "efuse_pkg_version": r"EFUSE_EFUSE_PKG_VERSION:\s*([^\r\n]+)",
         "efuse_blk_version": r"EFUSE_EFUSE_BLK_VERSION:\s*([^\r\n]+)",
         "efuse_temp_rating": r"EFUSE_EFUSE_TEMP_RATING:\s*([^\r\n]+)",
         "efuse_power_src": r"EFUSE_EFUSE_POWER_SRC:\s*([^\r\n]+)",
+        "efuse_vdd_spi": r"EFUSE_EFUSE_VDD_SPI:\s*([^\r\n]+)",
         "efuse_psram_vendor": r"EFUSE_EFUSE_PSRAM_VENDOR:\s*([^\r\n]+)",
+        "efuse_flash_vendor": r"EFUSE_EFUSE_FLASH_VENDOR:\s*([^\r\n]+)",
     }
     for key, pat in efuse_patterns.items():
         m = re.search(pat, full_output)
@@ -984,7 +1340,13 @@ def parse_esptool_output(output_dict):
         "app_elf_sha256": r"App ELF SHA256:\s*([^\r\n]+)",
         "app_mmu_page_size": r"App MMU Page Size:\s*([^\r\n]+)",
         "fw_psram_driver": r"App PSRAM Driver:\s*([^\r\n]+)",
+        "fw_psram_mode_cfg": r"App PSRAM Config:\s*([^\r\n]+)",
+        "fw_flash_mode_cfg": r"App Flash Config:\s*([^\r\n]+)",
+        "fw_cpu_freq_cfg": r"App CPU Config:\s*([^\r\n]+)",
+        "fw_debug_level": r"App Debug Level:\s*([^\r\n]+)",
         "fw_board_name": r"App Board Target:\s*([^\r\n]+)",
+        "fw_peripherals": r"App Peripherals:\s*([^\r\n]+)",
+        "fw_fqbn": r"App Arduino FQBN:\s*([^\r\n]+)",
     }
     for key, pat in fw_patterns.items():
         m = re.search(pat, full_output)
@@ -1007,7 +1369,76 @@ def parse_esptool_output(output_dict):
         elif k not in info or not info[k]:
             info[k] = v
 
+    _enrich_memory_metadata(info)
     return info
+
+
+def _enrich_memory_metadata(info: dict) -> None:
+    """Bổ sung thông số SRAM/ROM từ CSDL và tổng hợp chi tiết PSRAM khi Boot Log bị tắt."""
+    chip_data = get_chip_data(info.get("chip_name_key") or info.get("chip_line"))
+    if chip_data:
+        if chip_data.get("sram_kb") and not info.get("sram_kb"):
+            info["sram_kb"] = int(chip_data["sram_kb"])
+        if chip_data.get("rom_kb") and not info.get("rom_kb"):
+            info["rom_kb"] = int(chip_data["rom_kb"])
+
+    if "psram_mb" not in info or not info.get("psram_mb"):
+        return
+
+    psram_mb = int(info["psram_mb"])
+    chip_upper = (info.get("chip_name_key") or info.get("chip_line") or "").upper()
+    raw_vendor = (info.get("efuse_psram_vendor") or "").strip()
+
+    if not info.get("psram_vendor") and raw_vendor:
+        if raw_vendor == "AP_3v3":
+            info["psram_vendor"] = "0x0D (AP Memory · AP_3v3 - 3.3V In-Package)"
+        elif raw_vendor == "AP_1v8":
+            info["psram_vendor"] = "0x0D (AP Memory · AP_1v8 - 1.8V In-Package)"
+        else:
+            info["psram_vendor"] = raw_vendor
+
+    if not info.get("psram_density"):
+        info["psram_density"] = f"{psram_mb * 8} Mbit ({psram_mb} MB)"
+
+    if not info.get("psram_mode"):
+        hint = " ".join(filter(None, [info.get("fw_psram_mode_cfg"), info.get("fw_psram_driver")])).lower()
+        if "hex" in hint:
+            info["psram_mode"] = "Hex PSRAM (16-line / X16 MSPI)"
+        elif "octal" in hint or "opi" in hint:
+            info["psram_mode"] = "Octal PSRAM (8-line / X8 OPI MSPI)"
+        elif "quad" in hint or "qspi" in hint:
+            info["psram_mode"] = "Quad PSRAM (4-line / X4 QSPI)"
+        elif "ESP32-S3" in chip_upper:
+            info["psram_mode"] = "Octal PSRAM (8-line / X8 OPI MSPI)" if psram_mb >= 8 else "Quad PSRAM (4-line / X4 QSPI)"
+        elif "ESP32-P4" in chip_upper:
+            info["psram_mode"] = "Hex PSRAM (16-line / X16 MSPI)"
+        else:
+            info["psram_mode"] = "Quad/SPI PSRAM"
+
+    if not info.get("psram_bit_mode") and info.get("psram_mode"):
+        mode_lower = info["psram_mode"].lower()
+        if "hex" in mode_lower:
+            info["psram_bit_mode"] = "X16 Mode (16-line MSPI)"
+        elif "octal" in mode_lower or "opi" in mode_lower:
+            info["psram_bit_mode"] = "Octal OPI (8-line / X8 MSPI)"
+        else:
+            info["psram_bit_mode"] = "Quad QSPI (4-line MSPI)"
+
+    if not info.get("psram_speed"):
+        spi_spd = info.get("bootloader_flash_speed") or info.get("app_flash_speed")
+        if spi_spd:
+            info["psram_speed"] = str(spi_spd).replace(" ", "")
+
+    if not info.get("psram_bus_voltage"):
+        if "1V8" in raw_vendor.upper() or "1.8V" in str(info.get("efuse_vdd_spi", "")).upper():
+            info["psram_bus_voltage"] = "1.8V (VDD_SPI)"
+        elif "3V3" in raw_vendor.upper() or "3.3V" in str(info.get("efuse_vdd_spi", "")).upper():
+            info["psram_bus_voltage"] = "3.3V (VDD_SPI)"
+
+    if not info.get("psram_test_status") and not info.get("psram_probe_note"):
+        dbg_note = f" (DebugLevel={info['fw_debug_level']})" if info.get("fw_debug_level") else ""
+        src_note = info.get("psram_source") or "eFuse"
+        info["psram_probe_note"] = f"Vùng ánh xạ: {psram_mb * 1024:,} KB · Phát hiện từ {src_note}{dbg_note}"
 
 
 def derive_mac_addresses(base_mac_hex):

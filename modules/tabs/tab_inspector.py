@@ -20,7 +20,8 @@ from modules.mac_database import (
 from modules.esptool_util import (
     run_esptool_command, parse_esptool_output,
     derive_mac_addresses, get_chip_data, esptool_command_succeeded,
-    esptool_deep_inspection_context, decode_flash_device_id
+    esptool_deep_inspection_context, decode_flash_device_id,
+    format_chip_badge_text,
 )
 
 
@@ -182,6 +183,10 @@ class InspectorTabMixin:
                     summary_parts = [info.get("chip_line") or info.get("chip_name_key") or "ESP"]
                     if info.get("flash_mb"):
                         summary_parts.append(f"Flash {info['flash_mb']:.2f} MB")
+                    if info.get("sram_kb"):
+                        summary_parts.append(f"SRAM {info['sram_kb']} KB")
+                    if "psram_mb" in info:
+                        summary_parts.append(f"PSRAM {info['psram_mb']} MB")
                     if info.get("mac"):
                         summary_parts.append(f"MAC {info['mac']}")
                     self.append_tab_log(
@@ -264,8 +269,9 @@ class InspectorTabMixin:
             ("  Phiên bản Silicon", info.get('revision', 'N/A'), None),
             ("  Tần số thạch anh", info.get('crystal', 'N/A'), None),
         ]
-        if info.get("cpu_freq_runtime"):
-            report_data.append(("  Xung nhịp CPU thực tế", info["cpu_freq_runtime"], None))
+        cpu_freq_disp = info.get("cpu_freq_runtime") or info.get("fw_cpu_freq_cfg")
+        if cpu_freq_disp:
+            report_data.append(("  Xung nhịp CPU thực tế", cpu_freq_disp, None))
         if info.get("usb_mode"):
             usb_str = info["usb_mode"]
             if info.get("usb_vid_pid"):
@@ -275,12 +281,13 @@ class InspectorTabMixin:
             report_data.append(("  Chân Console UART", info["console_uart_pins"], None))
         if info.get("unique_id_128"):
             report_data.append(("  Mã định danh Unique ID", info["unique_id_128"], None))
-        if info.get("efuse_pkg_version") or info.get("efuse_blk_version"):
+        if info.get("efuse_pkg_version") or info.get("efuse_blk_version") or info.get("efuse_vdd_spi"):
             pkg_blk = " · ".join(
                 p for p in [
                     f"Package: {info['efuse_pkg_version']}" if info.get("efuse_pkg_version") else None,
                     f"eFuse Block: {info['efuse_blk_version']}" if info.get("efuse_blk_version") else None,
                     f"Nguồn HP: {info['efuse_power_src']}" if info.get("efuse_power_src") else None,
+                    f"Nguồn VDD_SPI: {info['efuse_vdd_spi']}" if info.get("efuse_vdd_spi") else None,
                 ] if p
             )
             report_data.append(("  Cấu hình Gói & Nguồn eFuse", pkg_blk, None))
@@ -290,7 +297,7 @@ class InspectorTabMixin:
         if board_label:
             report_data.append(("  Bo mạch phát hiện (Board)", board_label, 'blue'))
 
-        # --- 2. THÔNG TIN CHIP FLASH & PSRAM ---
+        # --- 2. THÔNG TIN BỘ NHỚ FLASH, SRAM & PSRAM ---
         flash_dev_raw = info.get('flash_device', 'N/A')
         flash_dev_decoded = decode_flash_device_id(flash_dev_raw)
         flash_io_parts = []
@@ -304,6 +311,9 @@ class InspectorTabMixin:
             flash_io_parts.append(info.get("app_flash_speed") or info.get("bootloader_flash_speed"))
         if info.get("flash_type_efuse"):
             flash_io_parts.append(f"eFuse: {info['flash_type_efuse']}")
+
+        sram_kb = info.get("sram_kb") or (chip_data.get("sram_kb") if chip_data else None)
+        rom_kb = info.get("rom_kb") or (chip_data.get("rom_kb") if chip_data else None)
 
         if 'psram_mb' in info:
             psram_str = f"{info['psram_mb']} MB"
@@ -322,7 +332,7 @@ class InspectorTabMixin:
             psram_tag = None
 
         report_data.extend([
-            ("Thông tin Chip Flash & PSRAM", None, 'header'),
+            ("Thông tin Bộ nhớ Flash, SRAM & PSRAM", None, 'header'),
             ("  Nhà sản xuất Flash", man_display, None),
             ("  ID Thiết bị Flash (JEDEC)", flash_dev_decoded, None),
             ("  Kích thước Flash", f"{info.get('flash_mb', 0):.2f} MB" if 'flash_mb' in info else "N/A", None),
@@ -333,6 +343,17 @@ class InspectorTabMixin:
             report_data.append(("  Thanh ghi Trạng thái Flash", info["status_value"], None))
         if info.get("sfdp_info"):
             report_data.append(("  Thông số chuẩn JEDEC SFDP", info["sfdp_info"], None))
+
+        report_data.append((
+            "  Bộ nhớ SRAM nội (Internal SRAM)",
+            f"{int(sram_kb)} KB" if sram_kb else "N/A",
+            'blue' if sram_kb else None,
+        ))
+        report_data.append((
+            "  Bộ nhớ ROM khởi động (Internal ROM)",
+            f"{int(rom_kb)} KB" if rom_kb else "N/A",
+            None,
+        ))
 
         report_data.append(("  Kích thước & Tốc độ PSRAM", psram_str, psram_tag))
         if info.get("psram_vendor") or info.get("psram_dev_id") or info.get("psram_density"):
@@ -345,10 +366,17 @@ class InspectorTabMixin:
                 ] if p
             )
             report_data.append(("    + Định danh Chip PSRAM", v_str, None))
-        if info.get("psram_bit_mode") or info.get("psram_read_latency") or info.get("psram_drive_str"):
+        if (
+            info.get("psram_bit_mode")
+            or info.get("psram_bus_voltage")
+            or info.get("psram_read_latency")
+            or info.get("psram_drive_str")
+            or info.get("psram_cs_io")
+        ):
             bus_str = " · ".join(
                 p for p in [
                     f"BitMode: {info['psram_bit_mode']}" if info.get("psram_bit_mode") else None,
+                    f"Điện áp: {info['psram_bus_voltage']}" if info.get("psram_bus_voltage") else None,
                     f"ReadLatency: {info['psram_read_latency']}" if info.get("psram_read_latency") else None,
                     f"DriveStr: {info['psram_drive_str']}" if info.get("psram_drive_str") else None,
                     f"CS IO: {info['psram_cs_io']}" if info.get("psram_cs_io") else None,
@@ -369,13 +397,16 @@ class InspectorTabMixin:
             if info.get("psram_heap_pool_kb"):
                 t_str += f" · Cấp phát vào Heap: {info['psram_heap_pool_kb']:,} KB"
             report_data.append(("    + Kiểm tra Bộ nhớ PSRAM", t_str, 'green' if "OK" in t_str else None))
+        elif info.get("psram_probe_note"):
+            report_data.append(("    + Ánh xạ & Nguồn đọc PSRAM", info["psram_probe_note"], None))
 
         # --- 3. THÔNG TIN FIRMWARE & BOOTLOADER ĐANG NẠP TRÊN CHIP ---
         has_fw_info = any(
             info.get(k) for k in (
                 "app_project_name", "app_version", "app_idf_ver", "app_compile_time",
                 "app_elf_sha256", "bootloader_idf_ver", "bootloader_flash_mode",
-                "i2c_scan_summary", "bsp_hardware_status"
+                "i2c_scan_summary", "bsp_hardware_status",
+                "fw_peripherals", "fw_fqbn", "fw_flash_mode_cfg", "fw_psram_mode_cfg",
             )
         )
         if has_fw_info:
@@ -415,6 +446,19 @@ class InspectorTabMixin:
                     ] if p
                 )
                 report_data.append(("  Thông tin Bootloader", bl_str, None))
+            if info.get("fw_flash_mode_cfg") or info.get("fw_psram_mode_cfg") or info.get("fw_debug_level"):
+                app_mem_cfg = " · ".join(
+                    p for p in [
+                        f"Flash: {info['fw_flash_mode_cfg']}" if info.get("fw_flash_mode_cfg") else None,
+                        f"PSRAM: {info['fw_psram_mode_cfg']}" if info.get("fw_psram_mode_cfg") else None,
+                        f"DebugLevel: {info['fw_debug_level']}" if info.get("fw_debug_level") else None,
+                    ] if p
+                )
+                report_data.append(("  Cấu hình Build Bộ nhớ", app_mem_cfg, None))
+            if info.get("fw_peripherals"):
+                report_data.append(("  Ngoại vi phát hiện (Firmware)", info["fw_peripherals"], 'blue'))
+            if info.get("fw_fqbn"):
+                report_data.append(("  Cấu hình Arduino (FQBN)", info["fw_fqbn"], None))
             if info.get("i2c_scan_summary"):
                 report_data.append(("  Quét ngoại vi I2C (BSP)", info["i2c_scan_summary"], None))
             if info.get("sdmmc_status"):
@@ -566,14 +610,13 @@ class InspectorTabMixin:
                 pass
         chip_badge_key = info.get("chip_name_key") or info.get("chip_line")
         if chip_badge_key and hasattr(self, "conn_bar") and self.conn_bar is not None:
-            parts = [str(info.get("chip_name_key") or info.get("chip_line"))]
-            if "flash_mb" in info and info.get("flash_mb"):
-                f_mb = float(info["flash_mb"])
-                f_str = f"{int(f_mb)}MB" if f_mb.is_integer() else f"{f_mb:.1f}MB"
-                parts.append(f"{f_str} Flash")
-            if "psram_mb" in info and info.get("psram_mb"):
-                parts.append(f"{info['psram_mb']}MB PSRAM")
-            self.conn_bar.set_chip_badge_info(" · ".join(parts), is_active=True)
+            badge_str = format_chip_badge_text(
+                chip_badge_key,
+                flash_mb=info.get("flash_mb"),
+                sram_kb=sram_kb,
+                psram_mb=info.get("psram_mb"),
+            )
+            self.conn_bar.set_chip_badge_info(badge_str, is_active=True)
                 
     def detect_baud_rate(self, port):
         test_bauds = ["115200", "74880", "230400", "460800", "921600", "9600"]

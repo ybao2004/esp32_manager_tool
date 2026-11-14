@@ -1,12 +1,20 @@
-# ESP32 Manager Tool (v1.5.2)
+# ESP32 Manager Tool (v1.6)
 
 > **Tác giả:** `@ybao04` | **Bản quyền:** GNU General Public License v3.0 (GPL-3.0) | **Kho lưu trữ:** [github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
 
-**ESP32 Manager Tool v1.5.2** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / quản trị dữ liệu phân vùng / nhân bản đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
+**ESP32 Manager Tool v1.6** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / quản trị dữ liệu phân vùng / nhân bản đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
 
 ---
 
-## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.5.2
+## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.6
+
+- **Hiển thị đầy đủ 3 tầng bộ nhớ (Flash · SRAM · PSRAM):**
+  - Thanh trạng thái đầu ứng dụng (`ConnectionBar`), thẻ KPI trang Kiểm tra Chip và tóm tắt ở tab Sao lưu & Chép đều hiển thị đồng bộ **Flash, SRAM nội và PSRAM** (kèm ROM khởi động trong báo cáo chi tiết).
+  - Bổ sung giải mã eFuse & package mở rộng cho **ESP32-S3** và các dòng ESP32 khác (hãng/mật độ/tốc độ/chế độ bus OPI-QSPI/điện áp `VDD_SPI`), đồng thời tổng hợp metadata PSRAM và nhận diện cấu hình build (`FQBN`, board target, ngoại vi như màn hình `ILI9341`, cảm ứng `Touch I2C`, `LVGL`, `SD`, `Microphone`) từ `.rodata` ngay cả khi firmware tắt boot log (`DebugLevel=none`).
+- **Khắc phục lỗi sao lưu toàn bộ Flash (`Packet content transfer stopped`) qua USB-Serial/JTAG:**
+  - Vá cơ chế `read_flash` với **stateful SLIP reader** gửi xung ACK nudge khi FIFO USB 64-byte bị chững, chia khối 2 MB kiểm chứng MD5 từng chặng, tự vô hiệu hóa watchdog và tự đồng bộ/thử lại an toàn khi mất nhịp gói tin.
+
+### Các cập nhật trước đó (v1.5.2)
 
 - **Căn giữa đồng bộ tiêu đề bảng phân vùng (Tab 4 & Tab 5):** Toàn bộ tiêu đề cột (`Chọn`, `STT`, `Tên Vùng`, `Kiểu`, `Phân loại`, `Offset`, `Dung lượng`...) được căn giữa đều đặn trong `_TreeviewCompat`.
 - **Thụt lề treo (Hanging Indent) cho khung Nhật Ký (`LogView`):** Tự động căn thẳng cột nội dung khi các dòng thụt lề (`  + `, `    -> `, `>>> `, Tab 2 `Log`) xuống dòng trên khung hẹp, bỏ dòng trống thừa ở đầu khung log và chuẩn hóa thụt lề chi tiết ở Tab 5.

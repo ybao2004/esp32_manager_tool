@@ -34,6 +34,8 @@ from modules.esptool_util import (
     esptool_command_succeeded,
     parse_esptool_output,
     parse_esptool_progress_percent,
+    format_chip_badge_text,
+    get_chip_data,
 )
 from modules.serial_util import list_com_ports_local
 from modules.partition.unit_formatter import (
@@ -565,12 +567,21 @@ class BackupCloneTabMixin:
             self.backup_tree.blockSignals(was_blocked)
 
         chip_lbl = self.backup_source_info.get("chip_line", "Chưa đọc từ chip")
+        chip_key = self.backup_source_info.get("chip_name") or chip_lbl
         mac_lbl = self.backup_source_info.get("mac", "N/A")
         flash_lbl = format_value(self.backup_table.flash_size, mode, is_size=True)
+        sram_kb = self.backup_source_info.get("sram_kb")
+        if sram_kb is None:
+            c_data = get_chip_data(chip_key)
+            sram_kb = c_data.get("sram_kb") if c_data else None
+        sram_lbl = f"{int(sram_kb)} KB" if sram_kb else "N/A"
+        psram_mb = self.backup_source_info.get("psram_mb")
+        psram_lbl = f"{int(psram_mb)} MB" if psram_mb else "0 MB"
         selected_sz_lbl = format_value(selected_bytes, mode, is_size=True)
         self.lbl_backup_chip_summary.config(
             text=(
                 f"Chip gốc: {chip_lbl}  |  MAC gốc: {mac_lbl}  |  Flash: {flash_lbl}  |  "
+                f"SRAM: {sram_lbl}  |  PSRAM: {psram_lbl}  |  "
                 f"Đang chọn: {selected_count}/{len(regions)} phân vùng ({selected_sz_lbl})"
             )
         )
@@ -831,6 +842,10 @@ class BackupCloneTabMixin:
         mac_fmt = ":".join(mac_hex[i:i+2] for i in range(0, 12, 2)).upper() if mac_hex and len(mac_hex) == 12 else "N/A"
         flash_mb = parsed.get("flash_mb") or 4.0
         flash_bytes = int(flash_mb * 1024 * 1024)
+        sram_kb = parsed.get("sram_kb")
+        psram_mb = parsed.get("psram_mb") or 0
+        sram_lbl = f"{int(sram_kb)} KB" if sram_kb else "N/A"
+        psram_lbl = f"{int(psram_mb)} MB" if psram_mb else "0 MB"
         boot_off = infer_bootloader_offset_for_chip(chip_key)
 
         self.backup_source_info.update({
@@ -841,12 +856,21 @@ class BackupCloneTabMixin:
             "crystal": crystal,
             "mac": mac_fmt,
             "flash_size": flash_bytes,
+            "sram_kb": sram_kb,
+            "psram_mb": psram_mb,
             "bootloader_offset": boot_off,
             "part_table_offset": 0x8000,
         })
 
+        badge_text = format_chip_badge_text(chip_key, flash_mb=flash_mb, sram_kb=sram_kb, psram_mb=psram_mb)
+        safe_after(
+            lambda bt=badge_text: self.conn_bar.set_chip_badge_info(bt, is_active=True)
+            if getattr(self, "conn_bar", None) is not None
+            else None
+        )
         safe_after(lambda: self.log_backup(
-            f"  + Chip gốc: {chip_line} | MAC gốc: {mac_fmt} | Flash: {flash_mb:.1f} MB | Bootloader @ 0x{boot_off:X}"
+            f"  + Chip gốc: {chip_line} | MAC gốc: {mac_fmt} | Flash: {flash_mb:.1f} MB | "
+            f"SRAM: {sram_lbl} | PSRAM: {psram_lbl} | Bootloader @ 0x{boot_off:X}"
         ))
         safe_after(
             lambda: self.set_status(

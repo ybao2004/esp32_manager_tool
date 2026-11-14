@@ -66,29 +66,39 @@ class KpiStatCard(QFrame):
     def __init__(self, title: str, default_val: str = "Chưa có dữ liệu", default_sub: str = "---", parent=None):
         super().__init__(parent)
         self.setProperty("role", "kpi_card")
+        self.setMinimumWidth(0)
         self.setMinimumHeight(66)
         self.setMaximumHeight(76)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setContentsMargins(10, 8, 10, 8)
         layout.setSpacing(2)
 
         self.lbl_title = QLabel(str(title), self)
         self.lbl_title.setProperty("role", "kpi_title")
+        self.lbl_title.setMinimumWidth(0)
 
         self.lbl_value = QLabel(str(default_val), self)
         self.lbl_value.setProperty("role", "kpi_value")
+        self.lbl_value.setMinimumWidth(0)
 
         self.lbl_sub = QLabel(str(default_sub), self)
         self.lbl_sub.setProperty("role", "kpi_sub")
+        self.lbl_sub.setMinimumWidth(0)
 
         layout.addWidget(self.lbl_title)
         layout.addWidget(self.lbl_value)
         layout.addWidget(self.lbl_sub)
 
     def set_metrics(self, value: str, subtitle: str = ""):
-        self.lbl_value.setText(str(value))
-        self.lbl_sub.setText(str(subtitle))
+        val_str = str(value)
+        sub_str = str(subtitle)
+        self.lbl_value.setText(val_str)
+        self.lbl_sub.setText(sub_str)
+        tip = f"{self.lbl_title.text()}: {val_str}"
+        if sub_str and sub_str != "---":
+            tip += f"\n{sub_str}"
+        self.setToolTip(tip)
 
 
 class InspectorPage(QWidget):
@@ -171,7 +181,7 @@ class InspectorPage(QWidget):
         main_layout.addLayout(top_bar)
 
         # =====================================================================
-        # 2. HÀNG 4 THẺ KPI TÓM TẮT PHẦN CỨNG NỔI BẬT
+        # 2. HÀNG 5 THẺ KPI TÓM TẮT PHẦN CỨNG NỔI BẬT (CHIP, FLASH, SRAM, PSRAM, MAC)
         # =====================================================================
         kpi_row = QHBoxLayout()
         kpi_row.setContentsMargins(0, 0, 0, 0)
@@ -179,13 +189,15 @@ class InspectorPage(QWidget):
 
         self.kpi_chip = KpiStatCard("VI XỬ LÝ (CHIP MODEL)", "Chưa kiểm tra", "Chọn cổng COM & bấm Kiểm tra Chip", self)
         self.kpi_flash = KpiStatCard("BỘ NHỚ FLASH", "N/A", "Dung lượng & Nhà sản xuất JEDEC", self)
-        self.kpi_psram = KpiStatCard("BỘ NHỚ PSRAM", "N/A", "Tốc độ & Chế độ giao tiếp Bus", self)
+        self.kpi_sram = KpiStatCard("BỘ NHỚ SRAM", "N/A", "SRAM nội & ROM khởi động", self)
+        self.kpi_psram = KpiStatCard("BỘ NHỚ PSRAM", "N/A", "Tốc độ, Bus SPI & Nhà sản xuất", self)
         self.kpi_mac = KpiStatCard("ĐỊA CHỈ MAC & HÃNG", "N/A", "Định danh eFuse & Tiền tố OUI", self)
 
-        kpi_row.addWidget(self.kpi_chip, 1)
-        kpi_row.addWidget(self.kpi_flash, 1)
-        kpi_row.addWidget(self.kpi_psram, 1)
-        kpi_row.addWidget(self.kpi_mac, 1)
+        kpi_row.addWidget(self.kpi_chip, 3)
+        kpi_row.addWidget(self.kpi_flash, 2)
+        kpi_row.addWidget(self.kpi_sram, 2)
+        kpi_row.addWidget(self.kpi_psram, 3)
+        kpi_row.addWidget(self.kpi_mac, 2)
         main_layout.addLayout(kpi_row)
 
         # =====================================================================
@@ -224,7 +236,7 @@ class InspectorPage(QWidget):
         self.table_dynamic = KeyValueTable(self.card_dynamic)
         self.card_dynamic.content_layout.addWidget(self.table_dynamic)
 
-        self.card_memory = Card("2. Bộ nhớ Flash & PSRAM", "save", self.scroll_content)
+        self.card_memory = Card("2. Bộ nhớ Flash, SRAM & PSRAM", "save", self.scroll_content)
         self.table_memory = KeyValueTable(self.card_memory)
         self.card_memory.content_layout.addWidget(self.table_memory)
 
@@ -267,7 +279,8 @@ class InspectorPage(QWidget):
     def reset_kpi_and_tables(self):
         self.kpi_chip.set_metrics("Chưa kiểm tra", "Chọn cổng COM & bấm Kiểm tra Chip")
         self.kpi_flash.set_metrics("N/A", "Dung lượng & Nhà sản xuất JEDEC")
-        self.kpi_psram.set_metrics("N/A", "Tốc độ & Chế độ giao tiếp Bus")
+        self.kpi_sram.set_metrics("N/A", "SRAM nội & ROM khởi động")
+        self.kpi_psram.set_metrics("N/A", "Tốc độ, Bus SPI & Nhà sản xuất")
         self.kpi_mac.set_metrics("N/A", "Định danh eFuse & Tiền tố OUI")
 
         self.table_dynamic.populate([
@@ -280,6 +293,8 @@ class InspectorPage(QWidget):
             ("Nhà sản xuất Flash", "N/A"),
             ("ID Thiết bị Flash", "N/A"),
             ("Kích thước Flash", "N/A"),
+            ("Bộ nhớ SRAM nội", "N/A"),
+            ("Bộ nhớ ROM", "N/A"),
             ("Kích thước PSRAM", "N/A"),
         ])
         self.table_specs.populate([
@@ -309,7 +324,7 @@ class InspectorPage(QWidget):
         base_mac_formatted: str | None,
         report_data: list[tuple[str, str | None, str | None]]
     ):
-        """Cập nhật trực tiếp 4 thẻ KPI và 5 bảng thông số khi đọc chip hoàn tất."""
+        """Cập nhật trực tiếp 5 thẻ KPI (Vi xử lý, Flash, SRAM, PSRAM, MAC) và 5 bảng thông số khi đọc chip hoàn tất."""
         # 1. KPI Chip
         chip_title = info.get("chip_line") or info.get("chip_name_key") or "Không xác định"
         chip_sub = info.get("features_line") or (chip_data.get("architecture", "") if chip_data else "")
@@ -320,16 +335,38 @@ class InspectorPage(QWidget):
         flash_sub = f"{man_display} · ID: {info.get('flash_device', 'N/A')}"
         self.kpi_flash.set_metrics(flash_mb, flash_sub)
 
-        # 3. KPI PSRAM
+        # 3. KPI SRAM
+        sram_kb = info.get("sram_kb") or (chip_data.get("sram_kb") if chip_data else None)
+        rom_kb = info.get("rom_kb") or (chip_data.get("rom_kb") if chip_data else None)
+        if sram_kb:
+            sram_val = f"{int(sram_kb)} KB"
+            sram_parts = [f"ROM: {int(rom_kb)} KB" if rom_kb else None]
+            if chip_data and chip_data.get("cores"):
+                sram_parts.append(f"{chip_data['cores']}-Core Internal SRAM")
+            else:
+                sram_parts.append("Internal SRAM")
+            sram_sub = " · ".join(p for p in sram_parts if p)
+        else:
+            sram_val = "N/A"
+            sram_sub = "Chưa có dữ liệu SRAM"
+        self.kpi_sram.set_metrics(sram_val, sram_sub)
+
+        # 4. KPI PSRAM
         if "psram_mb" in info:
             ps_val = f"{info['psram_mb']} MB"
-            ps_sub = " · ".join(p for p in [info.get("psram_speed"), info.get("psram_mode"), info.get("psram_vendor")] if p) or "Đã kích hoạt"
+            ps_sub = " · ".join(
+                p for p in [
+                    info.get("psram_speed"),
+                    info.get("psram_mode"),
+                    info.get("psram_vendor"),
+                ] if p
+            ) or "Đã kích hoạt"
         else:
             ps_val = "Không phát hiện"
             ps_sub = info.get("fw_psram_driver") or "Không có PSRAM ngoài"
         self.kpi_psram.set_metrics(ps_val, ps_sub)
 
-        # 4. KPI MAC
+        # 5. KPI MAC
         if base_mac_formatted:
             mac_val = base_mac_formatted.upper()
             mac_sub = (
@@ -342,7 +379,7 @@ class InspectorPage(QWidget):
             mac_sub = "Chưa đọc được MAC"
         self.kpi_mac.set_metrics(mac_val, mac_sub)
 
-        # 5. Phân nhóm dữ liệu cho 5 bảng ở Chế độ Bảng Thông số
+        # 6. Phân nhóm dữ liệu cho 5 bảng ở Chế độ Bảng Thông số
         sec_map: dict[int, list[tuple[str, str]]] = {1: [], 2: [], 3: [], 4: [], 5: []}
         current_bucket = 1
         for k, v, _tag in report_data:
@@ -350,7 +387,7 @@ class InspectorPage(QWidget):
                 hdr = (k or "").lower()
                 if "động" in hdr or "silicon" in hdr:
                     current_bucket = 1
-                elif "flash" in hdr and "psram" in hdr:
+                elif "flash" in hdr and ("psram" in hdr or "sram" in hdr):
                     current_bucket = 2
                 elif "kỹ thuật" in hdr:
                     current_bucket = 3
