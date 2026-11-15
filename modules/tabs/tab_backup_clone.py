@@ -789,7 +789,8 @@ class BackupCloneTabMixin:
             "btn_backup_read_chip", "btn_backup_sel_all", "btn_backup_unsel_all",
             "btn_backup_sel_fw", "chk_backup_trim", "btn_backup_to_folder",
             "btn_backup_full_chip", "btn_backup_to_flasher", "btn_direct_clone",
-            "chk_clone_erase", "btn_backup_edit_data", "btn_backup_erase_data"
+            "chk_clone_erase", "btn_backup_edit_data", "btn_backup_erase_data",
+            "btn_backup_erase_full_flash"
         ):
             w = getattr(self, attr, None)
             if w and hasattr(w, "config"):
@@ -2433,3 +2434,70 @@ class BackupCloneTabMixin:
                 messagebox.showerror("Lỗi xóa dữ liệu vùng", msg, parent=self.root)
 
         self._run_erase_region_worker(port, baud, reg, _after_erase)
+
+    def _hw_erase_full_flash_backup(self):
+        if self._is_backup_hw_running or (hasattr(self, "is_device_busy") and self.is_device_busy()):
+            messagebox.showwarning("Thiết bị đang bận", "Vui lòng đợi tác vụ hiện tại hoàn tất!", parent=self.root)
+            return
+        prep = self._prepare_backup_source_port()
+        if not prep:
+            return
+        port, baud = prep
+
+        if not messagebox.askyesno(
+            "Xác nhận Xóa Toàn Bộ Flash",
+            f"CẢNH BÁO NGUY HIỂM:\n\n"
+            f"Thao tác này sẽ XÓA SẠCH toàn bộ bộ nhớ Flash trên {port}!\n"
+            f"Toàn bộ Firmware (chương trình), Bootloader, Partition Table và Dữ liệu NVS sẽ bị xóa hoàn toàn.\n\n"
+            f"Bạn có chắc chắn muốn xóa sạch Flash không?",
+            parent=self.root,
+        ):
+            return
+
+        self._is_backup_hw_running = True
+        self._set_backup_ui_state("disabled")
+        self._backup_safe_ui(lambda: self.set_global_busy_state(True, f"xóa toàn bộ flash ({port})"))
+        self._backup_safe_ui(lambda: self.set_status(f"Đang xóa sạch Flash trên {port}...", "warning"))
+        self._backup_safe_ui(lambda: self._update_backup_progress(0, task_label=f"Xóa toàn bộ Flash ({port})"))
+        self._backup_log(f"\nBẮT ĐẦU XÓA TOÀN BỘ FLASH TRÊN {port} (Baud: {baud})", "header")
+
+        def worker():
+            args = ["--port", port, "--baud", str(baud), "erase-flash"]
+
+            def on_stream(line):
+                l_str = str(line)
+                self._backup_log(f"  {l_str}")
+                if "Connecting" in l_str:
+                    self._backup_safe_ui(lambda: self._update_backup_progress(15))
+                elif "Stub flasher running" in l_str or "Running stub" in l_str:
+                    self._backup_safe_ui(lambda: self._update_backup_progress(35))
+                elif "Erasing flash" in l_str:
+                    self._backup_safe_ui(lambda: self._update_backup_progress(65))
+                elif "Chip erase completed" in l_str:
+                    self._backup_safe_ui(lambda: self._update_backup_progress(95))
+
+            try:
+                res = run_esptool_command(args, progress_callback=on_stream)
+                if esptool_command_succeeded(res):
+                    self._backup_log(">>> XÓA SẠCH TOÀN BỘ FLASH THÀNH CÔNG!", "green")
+                    self._backup_safe_ui(
+                        lambda: self.set_status("Đã xóa sạch toàn bộ Flash thành công!", "success", progress=100)
+                    )
+                    self._backup_safe_ui(lambda: self._update_backup_progress(100))
+                else:
+                    self._backup_log(">>> LỖI KHI XÓA TOÀN BỘ FLASH!", "red")
+                    self._backup_safe_ui(
+                        lambda: self.set_status("Xóa toàn bộ Flash thất bại!", "error", progress=0)
+                    )
+                    self._backup_safe_ui(lambda: self._update_backup_progress(0))
+            except Exception as e:
+                err_msg = f"Lỗi: {e}"
+                self._backup_log(f">>> [NGOẠI LỆ] {err_msg}", "red")
+                self._backup_safe_ui(lambda m=err_msg: self.set_status(m, "error", progress=0))
+                self._backup_safe_ui(lambda: self._update_backup_progress(0))
+            finally:
+                self._is_backup_hw_running = False
+                self._backup_safe_ui(lambda: self.set_global_busy_state(False))
+                self._backup_safe_ui(lambda: self._set_backup_ui_state("normal"))
+
+        threading.Thread(target=worker, daemon=True).start()

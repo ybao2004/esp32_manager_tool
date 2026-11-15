@@ -284,12 +284,21 @@ class BackupPage(QWidget):
         )
         btn_bar.addWidget(self.btn_backup_erase_data)
 
+        self.btn_backup_erase_full_flash = _ButtonCompat("Xóa toàn bộ Flash", left_card)
+        self.btn_backup_erase_full_flash.setProperty("danger", "true")
+        bind_themed_icon(self.btn_backup_erase_full_flash, "delete", role="on_accent")
+        self.btn_backup_erase_full_flash.setToolTip(
+            "Xóa sạch toàn bộ bộ nhớ Flash trên Board Gốc (Bootloader, Partition Table, Firmware & NVS)."
+        )
+        btn_bar.addWidget(self.btn_backup_erase_full_flash)
+
         for b_btn in (
             self.btn_backup_to_folder,
             self.btn_backup_full_chip,
             self.btn_backup_to_flasher,
             self.btn_backup_edit_data,
             self.btn_backup_erase_data,
+            self.btn_backup_erase_full_flash,
         ):
             b_btn.setStyleSheet("padding: 0 7px;")
 

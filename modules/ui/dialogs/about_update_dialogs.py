@@ -59,20 +59,16 @@ _ABOUT_FEATURE_ITEMS = [
 ]
 
 
-class AboutDialog(QDialog):
-    """Hộp thoại Giới thiệu phần mềm & Bản quyền thuần PyQt6."""
+class AboutContentWidget(QWidget):
+    """Nội dung Giới thiệu phần mềm & Bản quyền dùng chung cho Subtab Cài đặt và AboutDialog."""
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
-        self.setWindowTitle(f"{APP_NAME} - Giới thiệu & Bản quyền")
-        self.resize(740, 560)
-        self.setMinimumSize(680, 500)
-
         self._repo_url = f"https://github.com/{GITHUB_REPO}.git"
         self._web_url = f"https://github.com/{GITHUB_REPO}"
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
         # 1. Hero Banner Card
@@ -201,23 +197,6 @@ class AboutDialog(QDialog):
         tech_layout.addStretch(1)
         layout.addWidget(self.tech_bar)
 
-        # 4. Hàng nút chân trang
-        btn_row = QHBoxLayout()
-        btn_row.setContentsMargins(0, 2, 0, 0)
-        self.btn_open_update = QPushButton("Kiểm tra cập nhật", self)
-        bind_themed_icon(self.btn_open_update, "arrow_download")
-        self.btn_open_update.clicked.connect(self._on_open_update)
-        btn_row.addWidget(self.btn_open_update)
-
-        btn_row.addStretch(1)
-
-        self.btn_close = QPushButton("Đóng", self)
-        self.btn_close.setProperty("accent", "true")
-        self.btn_close.setFixedWidth(110)
-        self.btn_close.clicked.connect(self.accept)
-        btn_row.addWidget(self.btn_close)
-        layout.addLayout(btn_row)
-
         tm = ThemeManager.instance()
         self._apply_theme(tm.tokens)
         tm.theme_changed.connect(self._apply_theme)
@@ -323,11 +302,47 @@ class AboutDialog(QDialog):
 
         QTimer.singleShot(1400, _restore)
 
-    def _on_open_update(self):
-        self.accept()
-        parent = self.parent()
-        if parent is not None and hasattr(parent, "open_update_dialog"):
-            parent.open_update_dialog()
+
+class AboutDialog(QDialog):
+    """Hộp thoại Giới thiệu phần mềm & Bản quyền thuần PyQt6."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{APP_NAME} - Giới thiệu & Bản quyền")
+        self.resize(740, 560)
+        self.setMinimumSize(680, 500)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+
+        self.content_widget = AboutContentWidget(self)
+        layout.addWidget(self.content_widget, 1)
+
+        # Forward các thuộc tính nội dung để tương thích ngược với kiểm thử
+        for attr in (
+            "_repo_url", "_web_url", "hero_frame", "lbl_app_logo", "lbl_title",
+            "lbl_badge_ver", "lbl_badge_lic", "lbl_badge_auth", "lbl_tagline",
+            "lbl_repo_icon", "lbl_repo_link", "btn_copy_repo",
+            "lbl_features_heading", "_feature_cards", "tech_bar",
+            "lbl_tech_title", "_tech_pills",
+        ):
+            setattr(self, attr, getattr(self.content_widget, attr))
+
+        # Hàng nút chân trang
+        btn_row = QHBoxLayout()
+        btn_row.setContentsMargins(0, 2, 0, 0)
+        btn_row.addStretch(1)
+
+        self.btn_close = QPushButton("Đóng", self)
+        self.btn_close.setProperty("accent", "true")
+        self.btn_close.setFixedWidth(110)
+        self.btn_close.clicked.connect(self.accept)
+        btn_row.addWidget(self.btn_close)
+        layout.addLayout(btn_row)
+
+    def _on_copy_repo(self):
+        self.content_widget._on_copy_repo()
 
 
 class UpdateDialog(QDialog):

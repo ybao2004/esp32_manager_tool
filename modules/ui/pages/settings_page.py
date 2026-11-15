@@ -22,7 +22,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from serial.tools import list_ports
 from modules.config import CONTROL_CONFIG, APP_VERSION, GITHUB_REPO
-from modules.serial_util import is_bluetooth_port
+from modules.serial_util import is_bluetooth_port, is_phone_port
 from modules.update_util import (
     check_for_updates,
     download_update_asset,
@@ -40,6 +40,7 @@ from modules.ui.widgets.update_badge import UpdateDotBadge, get_update_dot_icon
 from modules.ui.pages.partition_page import _TkVarCompat
 from modules.ui.icons import get_icon, bind_themed_icon
 from modules.ui import dialogs_service as dlg
+from modules.ui.dialogs.about_update_dialogs import AboutContentWidget
 
 
 class SettingsPage(QWidget):
@@ -228,6 +229,16 @@ class SettingsPage(QWidget):
         self.chk_hide_bt.toggled.connect(self._populate_com_list)
         com_layout.addWidget(self.chk_hide_bt)
 
+        self.chk_hide_phone = QCheckBox(
+            "Tự động lọc / ẩn cổng COM của điện thoại (Modem / USB điện thoại)",
+            card_com,
+        )
+        self.chk_hide_phone.setChecked(
+            getattr(self.core, "saved_hide_phone_ports", True) if self.core else True
+        )
+        self.chk_hide_phone.toggled.connect(self._populate_com_list)
+        com_layout.addWidget(self.chk_hide_phone)
+
         sep = QFrame(card_com)
         sep.setFrameShape(QFrame.Shape.HLine)
         com_layout.addWidget(sep)
@@ -415,11 +426,6 @@ class SettingsPage(QWidget):
 
         upd_btn_row.addStretch(1)
 
-        self.btn_about_app = QPushButton("Thông tin && Bản quyền", card_update)
-        bind_themed_icon(self.btn_about_app, "info")
-        self.btn_about_app.clicked.connect(self._on_open_about_click)
-        upd_btn_row.addWidget(self.btn_about_app)
-
         upd_card_layout.addLayout(upd_btn_row)
 
         # Thanh tiến trình tải (chỉ hiện khi đang tải)
@@ -457,33 +463,53 @@ class SettingsPage(QWidget):
 
         self.tabs.addTab(tab_update, "Cập nhật Phần mềm")
 
+        # =====================================================================
+        # SUB-TAB 4: GIỚI THIỆU
+        # =====================================================================
+        tab_about = QWidget()
+        about_tab_layout = QVBoxLayout(tab_about)
+        about_tab_layout.setContentsMargins(10, 10, 10, 10)
+        about_tab_layout.setSpacing(10)
+
+        self.about_widget = AboutContentWidget(tab_about)
+        about_tab_layout.addWidget(self.about_widget, 1)
+
+        self.tabs.addTab(tab_about, "Giới thiệu")
+        self.tabs.currentChanged.connect(self._on_subtab_changed)
+
         self._btn_chk_badge = UpdateDotBadge(self.btn_chk_update, margin_right=5, margin_top=4)
         self._btn_update_now_badge = UpdateDotBadge(self.btn_update_now, margin_right=5, margin_top=4)
 
         # =====================================================================
-        # THANH HÀNH ĐỘNG DƯỚI CÙNG (Cố định, nút rộng chuẩn 155px)
+        # THANH HÀNH ĐỘNG DƯỚI CÙNG (Cố định, ẩn khi ở Sub-tab Giới thiệu)
         # =====================================================================
-        btn_bar = QHBoxLayout()
+        self.settings_bottom_bar = QWidget(self)
+        btn_bar = QHBoxLayout(self.settings_bottom_bar)
         btn_bar.setContentsMargins(0, 0, 0, 0)
         btn_bar.setSpacing(10)
         btn_bar.addStretch(1)
 
-        btn_reset = QPushButton("Khôi phục mặc định", self)
+        btn_reset = QPushButton("Khôi phục mặc định", self.settings_bottom_bar)
         bind_themed_icon(btn_reset, "delete")
         btn_reset.setFixedWidth(160)
         btn_reset.clicked.connect(self._on_restore_defaults)
         btn_bar.addWidget(btn_reset)
 
-        btn_save = QPushButton("Lưu Cài Đặt", self)
+        btn_save = QPushButton("Lưu Cài Đặt", self.settings_bottom_bar)
         btn_save.setProperty("accent", "true")
         bind_themed_icon(btn_save, "save", role="on_accent")
         btn_save.setFixedWidth(155)
         btn_save.clicked.connect(self._on_save_settings)
         btn_bar.addWidget(btn_save)
 
-        root_layout.addLayout(btn_bar)
+        root_layout.addWidget(self.settings_bottom_bar)
+        self._on_subtab_changed(self.tabs.currentIndex())
 
         self._populate_com_list()
+
+    def _on_subtab_changed(self, index: int):
+        if hasattr(self, "settings_bottom_bar"):
+            self.settings_bottom_bar.setVisible(index != 3)
 
     def _on_live_theme_changed(self, *args):
         if self._syncing_theme_controls:
@@ -547,6 +573,7 @@ class SettingsPage(QWidget):
         self._com_checkboxes.clear()
 
         hide_bt = self.chk_hide_bt.isChecked()
+        hide_phone = self.chk_hide_phone.isChecked() if hasattr(self, "chk_hide_phone") else True
         ports_info = []
         ignored = [
             x.upper() for x in (getattr(self.core, "ignored_com_ports", []) if self.core else [])
@@ -555,6 +582,8 @@ class SettingsPage(QWidget):
         try:
             for p_obj in list_ports.comports():
                 if hide_bt and is_bluetooth_port(p_obj):
+                    continue
+                if hide_phone and is_phone_port(p_obj):
                     continue
                 ports_info.append((p_obj.device, p_obj.description))
         except Exception:
@@ -905,6 +934,8 @@ class SettingsPage(QWidget):
         self.chk_auto_scan.setChecked(bool(getattr(self.core, "saved_auto_scan", True)))
         self.chk_auto_select.setChecked(bool(getattr(self.core, "saved_auto_select_new", True)))
         self.chk_hide_bt.setChecked(bool(getattr(self.core, "saved_hide_bluetooth_ports", True)))
+        if hasattr(self, "chk_hide_phone"):
+            self.chk_hide_phone.setChecked(bool(getattr(self.core, "saved_hide_phone_ports", True)))
         if hasattr(self, "chk_auto_check_update"):
             self._syncing_update_prefs = True
             try:
@@ -968,6 +999,8 @@ class SettingsPage(QWidget):
         self.core.saved_auto_scan = self.chk_auto_scan.isChecked()
         self.core.saved_auto_select_new = self.chk_auto_select.isChecked()
         self.core.saved_hide_bluetooth_ports = self.chk_hide_bt.isChecked()
+        if hasattr(self, "chk_hide_phone"):
+            self.core.saved_hide_phone_ports = self.chk_hide_phone.isChecked()
         if hasattr(self, "chk_auto_check_update"):
             self.core.saved_auto_check_updates = bool(self.chk_auto_check_update.isChecked())
 
@@ -977,6 +1010,8 @@ class SettingsPage(QWidget):
             self.core.var_auto_select_new.set(self.core.saved_auto_select_new)
         if hasattr(self.core, "var_hide_bt_ports"):
             self.core.var_hide_bt_ports.set(self.core.saved_hide_bluetooth_ports)
+        if hasattr(self.core, "var_hide_phone_ports"):
+            self.core.var_hide_phone_ports.set(self.core.saved_hide_phone_ports)
 
         ignored = []
         for dev, cb in self._com_checkboxes.items():
@@ -1032,4 +1067,5 @@ class SettingsPage(QWidget):
         elif hasattr(self.core, "save_config"):
             self.core.save_config()
 
-        dlg.show_info("Thành công", "Đã lưu toàn bộ cài đặt hệ thống thành công.", self)
+        if hasattr(self.core, "set_status"):
+            self.core.set_status("Đã lưu toàn bộ cài đặt hệ thống thành công.", "success")

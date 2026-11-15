@@ -1,12 +1,19 @@
-# ESP32 Manager Tool (v1.6.2)
+# ESP32 Manager Tool (v1.6.3)
 
 > **Tác giả:** `@ybao04` | **Bản quyền:** GNU General Public License v3.0 (GPL-3.0) | **Kho lưu trữ:** [github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
 
-**ESP32 Manager Tool v1.6.2** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / quản trị dữ liệu phân vùng / nhân bản đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
+**ESP32 Manager Tool v1.6.3** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / quản trị dữ liệu phân vùng / nhân bản đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
 
 ---
 
-## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.6.2
+## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.6.3
+
+- **Chuyển mục "Giới thiệu" thành Sub-tab 4 trong Cài đặt:** Xóa nút `"Thông tin & Bản quyền"` khỏi sub-tab **Cập nhật Phần mềm**, nhúng trực tiếp giao diện giới thiệu, tính năng cốt lõi và thông tin bản quyền vào sub-tab thứ 4 mang tên **"Giới thiệu"** (tự động ẩn thanh nút `"Khôi phục mặc định"` / `"Lưu Cài Đặt"` khi đang xem sub-tab này) và bỏ nút `"Kiểm tra cập nhật"` khỏi giao diện Giới thiệu.
+- **Tự động lọc / ẩn cổng COM của điện thoại (Modem / USB điện thoại):** Bổ sung tùy chọn mới ngay dưới bộ lọc Bluetooth trong **Cài đặt Chung và Cổng COM** (mặc định bật), tự động nhận diện và ẩn các cổng COM thuộc điện thoại / Modem (Samsung, Apple, Xiaomi, Huawei, Oppo, Vivo, Qualcomm HS-USB, MediaTek Preloader/VCOM, Unisoc, Android...) mà không ảnh hưởng tới cổng USB-CDC/JTAG hay USB-UART của ESP32.
+- **Thêm nút `Xóa toàn bộ Flash` ở Tab 5 (Sao lưu & Chép):** Đặt ngay bên phải nút `Xóa dữ liệu`, thao tác trực tiếp trên Board Gốc với hộp thoại xác nhận nguy hiểm và ghi nhật ký vào Tab 5.
+- **Thông báo lưu cài đặt gọn nhẹ ở thanh trạng thái:** Bỏ hộp thoại popup khi bấm `Lưu Cài Đặt`, chỉ hiển thị thông báo thành công trực tiếp trên thanh trạng thái dưới cùng.
+
+### Các cập nhật trước đó (v1.6.2)
 
 - **Sửa lỗi dư khoảng trống chiều cao ở `Bảng Thông số` (`KeyValueTable`):** Tự động tính lại chiều cao các hàng theo bề rộng thực tế của cột giá trị ngay khi hiển thị bảng (`showEvent` / `resizeEvent` / kéo cột / chuyển chế độ xem / lọc tìm kiếm), loại bỏ hoàn toàn hiện tượng giãn dư chiều cao khi dữ liệu được nạp lúc đang ẩn ở tab `"Báo cáo Liền mạch"`.
 - **Phân nhóm đúng `Bảng Phân Vùng` vào Mục 5:** Sửa điều kiện nhận diện tiêu đề trong `InspectorPage.update_from_parsed_info` để `"Bảng Phân Vùng Flash & Bộ Nhớ Động (Heap)"` hiển thị đúng ở bảng **5. Firmware, Phân vùng & Nguồn gốc** thay vì bị gom nhầm vào bảng 1.

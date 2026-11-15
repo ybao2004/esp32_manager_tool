@@ -10,7 +10,7 @@ import sys
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
 from modules.config import CONFIG_FILE
-from modules.serial_util import list_com_ports_local, get_bluetooth_com_ports
+from modules.serial_util import list_com_ports_local, get_bluetooth_com_ports, get_phone_com_ports
 from modules.ui import dialogs_service as messagebox
 from modules.ui import dialogs_service as filedialog
 

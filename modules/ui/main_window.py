@@ -333,6 +333,7 @@ class MainWindow(
         self.saved_baudrate = "Tự động"
         self.ignored_com_ports = []
         self.saved_hide_bluetooth_ports = True
+        self.saved_hide_phone_ports = True
         self.saved_auto_scan = True
         self.saved_auto_select_new = True
         self.saved_auto_check_updates = False
@@ -663,6 +664,7 @@ class MainWindow(
         self.btn_backup_to_flasher = self.page_backup.btn_backup_to_flasher
         self.btn_backup_edit_data = self.page_backup.btn_backup_edit_data
         self.btn_backup_erase_data = self.page_backup.btn_backup_erase_data
+        self.btn_backup_erase_full_flash = self.page_backup.btn_backup_erase_full_flash
         self.var_clone_source_mode = self.page_backup.var_clone_source_mode
         self.btn_sel_all_targets = self.page_backup.btn_sel_all_targets
         self.clone_target_ports_frame = self.page_backup.clone_target_ports_frame
@@ -689,6 +691,7 @@ class MainWindow(
         self.btn_backup_to_flasher.clicked.connect(self._action_send_backup_to_flasher_tab)
         self.btn_backup_edit_data.clicked.connect(self._hw_open_backup_partition_data_dialog)
         self.btn_backup_erase_data.clicked.connect(self._hw_erase_selected_backup_partition_data)
+        self.btn_backup_erase_full_flash.clicked.connect(self._hw_erase_full_flash_backup)
         self.btn_sel_all_targets.clicked.connect(lambda: self._select_all_clone_targets(True))
         self.btn_direct_clone.clicked.connect(self._hw_start_direct_multi_board_clone)
 
@@ -701,6 +704,7 @@ class MainWindow(
         self.clear_monitor_btn = self.page_monitor.clear_monitor_btn
         self.controls_frame = self.conn_bar
         self.var_hide_bt_ports = _BooleanVar(value=bool(getattr(self, "saved_hide_bluetooth_ports", True)))
+        self.var_hide_phone_ports = _BooleanVar(value=bool(getattr(self, "saved_hide_phone_ports", True)))
         self.var_auto_scan = _BooleanVar(value=bool(getattr(self, "saved_auto_scan", True)))
         self.var_auto_select_new = _BooleanVar(value=bool(getattr(self, "saved_auto_select_new", True)))
         if not hasattr(self, "ignored_com_ports") or self.ignored_com_ports is None:
@@ -903,6 +907,7 @@ class MainWindow(
                         self.saved_com_port = str(config.get("last_com_port", "") or "")
                         self.saved_baudrate = str(config.get("last_baudrate", "Tự động") or "Tự động")
                         self.saved_hide_bluetooth_ports = config.get("hide_bluetooth_ports", True) is not False
+                        self.saved_hide_phone_ports = config.get("hide_phone_ports", True) is not False
                         self.ignored_com_ports = config.get("ignored_com_ports", [])
                         self.saved_auto_scan = config.get("auto_scan", True) is not False
                         self.saved_auto_select_new = config.get("auto_select_new_port", True) is not False
@@ -974,6 +979,7 @@ class MainWindow(
             "last_baudrate": last_baud,
             "ignored_com_ports": self.ignored_com_ports,
             "hide_bluetooth_ports": self.saved_hide_bluetooth_ports,
+            "hide_phone_ports": getattr(self, "saved_hide_phone_ports", True),
             "auto_scan": getattr(self, "saved_auto_scan", True),
             "auto_select_new_port": self.saved_auto_select_new,
             "auto_check_updates": bool(getattr(self, "saved_auto_check_updates", False)),
@@ -1019,6 +1025,7 @@ class MainWindow(
             self.saved_baudrate = "Tự động"
             self.ignored_com_ports = []
             self.saved_hide_bluetooth_ports = True
+            self.saved_hide_phone_ports = True
             self.saved_auto_scan = True
             self.saved_auto_select_new = True
             self.saved_auto_check_updates = False
@@ -1026,6 +1033,8 @@ class MainWindow(
             self.saved_display_unit = "Thập phân"
             if hasattr(self, "var_hide_bt_ports"):
                 self.var_hide_bt_ports.set(True)
+            if hasattr(self, "var_hide_phone_ports"):
+                self.var_hide_phone_ports.set(True)
             if hasattr(self, "var_auto_scan"):
                 self.var_auto_scan.set(True)
             if hasattr(self, "var_auto_select_new"):
@@ -1115,16 +1124,20 @@ class MainWindow(
         ignored = {x.strip().upper() for x in (self.ignored_com_ports or []) if x and x.strip()}
         hide_bt = (self.var_hide_bt_ports.get() if hasattr(self, 'var_hide_bt_ports')
                    else getattr(self, 'saved_hide_bluetooth_ports', True))
-        if hide_bt:
+        hide_phone = (self.var_hide_phone_ports.get() if hasattr(self, 'var_hide_phone_ports')
+                      else getattr(self, 'saved_hide_phone_ports', True))
+        for enabled, fn_name in ((hide_bt, 'get_bluetooth_com_ports'), (hide_phone, 'get_phone_com_ports')):
+            if not enabled:
+                continue
             try:
-                fn = getattr(app_core_mod, 'get_bluetooth_com_ports', None)
+                fn = getattr(app_core_mod, fn_name, None)
                 ports = fn() if fn else None
                 if ports is None:
-                    from modules.serial_util import get_bluetooth_com_ports
-                    ports = get_bluetooth_com_ports()
-                for bt_port in (ports or []):
-                    if bt_port and bt_port.strip():
-                        ignored.add(bt_port.strip().upper())
+                    import modules.serial_util as serial_util_mod
+                    ports = getattr(serial_util_mod, fn_name)()
+                for auto_port in (ports or []):
+                    if auto_port and auto_port.strip():
+                        ignored.add(auto_port.strip().upper())
             except Exception:
                 pass
         if not ignored:
