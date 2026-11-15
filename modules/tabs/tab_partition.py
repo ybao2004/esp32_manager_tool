@@ -351,8 +351,15 @@ class PartitionTabMixin:
         self.refresh_partition_views()
         self.set_status("Đã làm lại thao tác phân vùng (Redo).")
 
+    _SYS_BOOTLOADER_IID = "__sys_bootloader__"
+    _SYS_PART_TABLE_IID = "__sys_partition_table__"
+
     def _get_entry_name_from_iid(self, iid: str) -> str | None:
-        if not iid or iid == getattr(self, "_add_row_iid", "__add_row__"):
+        if not iid or iid in (
+            getattr(self, "_add_row_iid", "__add_row__"),
+            self._SYS_BOOTLOADER_IID,
+            self._SYS_PART_TABLE_IID,
+        ):
             return None
         vals = self.part_tree.item(iid, "values")
         if vals and len(vals) > 1:
@@ -552,6 +559,35 @@ class PartitionTabMixin:
 
             current_selected_entry = None
             selected_iid_to_restore = None
+
+            # Luôn hiển thị 2 phân vùng hệ thống đầu tiên (Bootloader & Partition Table) ở đầu bảng
+            boot_off = int(getattr(self.table, "bootloader_offset", 0x1000) or 0)
+            pt_off = int(getattr(self.table, "part_table_offset", 0x8000) or 0x8000)
+            boot_sz = max(0, pt_off - boot_off)
+            if boot_sz > 0:
+                self.part_tree.insert("", "end", iid=self._SYS_BOOTLOADER_IID, values=(
+                    "S1",
+                    "bootloader",
+                    "system",
+                    "bootloader",
+                    format_value(boot_off, self.display_mode, is_size=False),
+                    format_value(boot_sz, self.display_mode, is_size=True),
+                    "locked",
+                    "--",
+                    "--",
+                ))
+            self.part_tree.insert("", "end", iid=self._SYS_PART_TABLE_IID, values=(
+                "S2",
+                "partition_table",
+                "system",
+                "part_table",
+                format_value(pt_off, self.display_mode, is_size=False),
+                format_value(PARTITION_TABLE_SIZE_DEFAULT, self.display_mode, is_size=True),
+                "locked",
+                "--",
+                "--",
+            ))
+
             for idx, e in enumerate(self.table.entries):
                 used_str = f"{format_bytes_human(e.used_size)} ({e.usage_percent:.1f}%)" if e.used_size > 0 else "--"
                 free_str = format_value(e.free_size, self.display_mode, is_size=True) if e.used_size > 0 else "--"
@@ -601,25 +637,24 @@ class PartitionTabMixin:
         finally:
             self.part_tree.blockSignals(was_blocked)
 
-        # 2. Cập nhật Sơ đồ MiniTool Disk Map
+        # 2. Cập nhật Sơ đồ MiniTool Disk Map (luôn hiển thị Bootloader + Partition Table + Unallocated)
         self._sync_flash_combo_to_table()
         flash_human = format_bytes_human(self.table.flash_size, compact=True)
+        layout = self.table.get_layout_with_unallocated()
+        self.disk_map.set_data(layout, self.table.flash_size, self.display_mode, current_selected_entry)
         if not self.table.entries:
-            self.disk_map.set_data([], self.table.flash_size, self.display_mode, None)
             self.lbl_flash_stats.configure(
-                text=f"Dung lượng Flash: {flash_human} | Chưa có phân vùng (Chọn 'Mẫu', 'Mở CSV/BIN', 'Đọc từ chip' hoặc 'Thêm dòng')"
+                text=f"Dung lượng Flash: {flash_human} | Hệ thống: Bootloader & Partition Table | Chưa có phân vùng người dùng (Chọn 'Mẫu', 'Mở CSV/BIN', 'Đọc từ chip' hoặc 'Thêm dòng')"
             )
             if hasattr(self, "txt_partition_val") and self.txt_partition_val.winfo_exists():
                 self.txt_partition_val.configure(state="normal")
                 self.txt_partition_val.delete("1.0", "end")
                 self.txt_partition_val.insert(
                     "1.0",
-                    "[TRỐNG] Chưa có phân vùng nào. Hãy nạp mẫu, mở file CSV/BIN, đọc từ chip hoặc tự thêm dòng mới.\n"
+                    "[TRỐNG] Chưa có phân vùng người dùng nào. Hãy nạp mẫu, mở file CSV/BIN, đọc từ chip hoặc tự thêm dòng mới.\n"
                 )
                 self.txt_partition_val.configure(state="disabled")
         else:
-            layout = self.table.get_layout_with_unallocated()
-            self.disk_map.set_data(layout, self.table.flash_size, self.display_mode, current_selected_entry)
 
             # 3. Cập nhật Thống kê Flash & Kiểm tra hợp lệ ESP-IDF
             total_allocated = sum(e.size for e in self.table.entries)
@@ -814,6 +849,15 @@ class PartitionTabMixin:
             self.disk_map.selected_entry = None
             self.disk_map.redraw()
             return
+        if selected_iid[0] in (self._SYS_BOOTLOADER_IID, self._SYS_PART_TABLE_IID):
+            target_type = "bootloader" if selected_iid[0] == self._SYS_BOOTLOADER_IID else "partition_table"
+            sys_entry = next(
+                (e for e in getattr(self.disk_map, "layout_entries", []) if getattr(e, "type_str", "") == target_type),
+                None,
+            )
+            self.disk_map.selected_entry = sys_entry
+            self.disk_map.redraw()
+            return
         entry = self._get_entry_from_iid(selected_iid[0])
         if entry:
             self.disk_map.selected_entry = entry
@@ -842,6 +886,9 @@ class PartitionTabMixin:
             return
         if row_id == getattr(self, "_add_row_iid", "__add_row__"):
             self._action_add_partition()
+            return "break"
+        if row_id in (self._SYS_BOOTLOADER_IID, self._SYS_PART_TABLE_IID):
+            self.set_status("Phân vùng hệ thống (Bootloader / Partition Table) được khóa cố định.")
             return "break"
         self.part_tree.selection_set(row_id)
         self._action_edit_selected()
