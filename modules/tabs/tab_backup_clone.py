@@ -2456,48 +2456,59 @@ class BackupCloneTabMixin:
 
         self._is_backup_hw_running = True
         self._set_backup_ui_state("disabled")
-        self._backup_safe_ui(lambda: self.set_global_busy_state(True, f"xóa toàn bộ flash ({port})"))
-        self._backup_safe_ui(lambda: self.set_status(f"Đang xóa sạch Flash trên {port}...", "warning"))
-        self._backup_safe_ui(lambda: self._update_backup_progress(0, task_label=f"Xóa toàn bộ Flash ({port})"))
-        self._backup_log(f"\nBẮT ĐẦU XÓA TOÀN BỘ FLASH TRÊN {port} (Baud: {baud})", "header")
+        if hasattr(self, "set_global_busy_state"):
+            self._backup_safe_ui(lambda: self.set_global_busy_state(True, f"xóa toàn bộ flash ({port})"))
+        self._backup_safe_ui(lambda: self.set_status(
+            f"Đang xóa sạch Flash trên {port}...",
+            "warning",
+            progress=0,
+            task_label=f"Xóa toàn bộ Flash ({port})",
+        ))
+        self.log_backup(f"\nBẮT ĐẦU XÓA TOÀN BỘ FLASH TRÊN {port} (Baud: {baud})", "header")
 
         def worker():
             args = ["--port", port, "--baud", str(baud), "erase-flash"]
 
             def on_stream(line):
                 l_str = str(line)
-                self._backup_log(f"  {l_str}")
+                self._backup_safe_ui(lambda s=l_str: self.log_backup(f"  {s}"))
                 if "Connecting" in l_str:
-                    self._backup_safe_ui(lambda: self._update_backup_progress(15))
+                    self._backup_safe_ui(lambda: self.set_status(
+                        f"Đang kết nối {port} để xóa Flash...", "warning", progress=15, task_label=f"Xóa toàn bộ Flash ({port})"
+                    ))
                 elif "Stub flasher running" in l_str or "Running stub" in l_str:
-                    self._backup_safe_ui(lambda: self._update_backup_progress(35))
+                    self._backup_safe_ui(lambda: self.set_status(
+                        f"Đang chạy stub trên {port}...", "warning", progress=35, task_label=f"Xóa toàn bộ Flash ({port})"
+                    ))
                 elif "Erasing flash" in l_str:
-                    self._backup_safe_ui(lambda: self._update_backup_progress(65))
+                    self._backup_safe_ui(lambda: self.set_status(
+                        f"Đang xóa toàn bộ Flash trên {port}...", "warning", progress=65, task_label=f"Xóa toàn bộ Flash ({port})"
+                    ))
                 elif "Chip erase completed" in l_str:
-                    self._backup_safe_ui(lambda: self._update_backup_progress(95))
+                    self._backup_safe_ui(lambda: self.set_status(
+                        f"Hoàn tất xóa Flash trên {port}...", "warning", progress=95, task_label=f"Xóa toàn bộ Flash ({port})"
+                    ))
 
             try:
                 res = run_esptool_command(args, progress_callback=on_stream)
                 if esptool_command_succeeded(res):
-                    self._backup_log(">>> XÓA SẠCH TOÀN BỘ FLASH THÀNH CÔNG!", "green")
+                    self._backup_safe_ui(lambda: self.log_backup(">>> XÓA SẠCH TOÀN BỘ FLASH THÀNH CÔNG!", "green"))
                     self._backup_safe_ui(
                         lambda: self.set_status("Đã xóa sạch toàn bộ Flash thành công!", "success", progress=100)
                     )
-                    self._backup_safe_ui(lambda: self._update_backup_progress(100))
                 else:
-                    self._backup_log(">>> LỖI KHI XÓA TOÀN BỘ FLASH!", "red")
+                    self._backup_safe_ui(lambda: self.log_backup(">>> LỖI KHI XÓA TOÀN BỘ FLASH!", "red"))
                     self._backup_safe_ui(
                         lambda: self.set_status("Xóa toàn bộ Flash thất bại!", "error", progress=0)
                     )
-                    self._backup_safe_ui(lambda: self._update_backup_progress(0))
             except Exception as e:
                 err_msg = f"Lỗi: {e}"
-                self._backup_log(f">>> [NGOẠI LỆ] {err_msg}", "red")
+                self._backup_safe_ui(lambda m=err_msg: self.log_backup(f">>> [NGOẠI LỆ] {m}", "red"))
                 self._backup_safe_ui(lambda m=err_msg: self.set_status(m, "error", progress=0))
-                self._backup_safe_ui(lambda: self._update_backup_progress(0))
             finally:
                 self._is_backup_hw_running = False
-                self._backup_safe_ui(lambda: self.set_global_busy_state(False))
+                if hasattr(self, "set_global_busy_state"):
+                    self._backup_safe_ui(lambda: self.set_global_busy_state(False))
                 self._backup_safe_ui(lambda: self._set_backup_ui_state("normal"))
 
         threading.Thread(target=worker, daemon=True).start()
