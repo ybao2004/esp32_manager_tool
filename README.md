@@ -8,6 +8,9 @@
 
 ## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.6.3
 
+- **Đo sâu dung lượng `Đã dùng (%)` & `Còn trống` khi `Đọc từ chip` (Tab 4):**
+  - Thực hiện đo dung lượng thực tế trong **1 phiên kết nối stub `esptool` duy nhất** (tự nâng tốc độ đọc từ `460800` bps trở lên) cho cả **2 dòng hệ thống (`S1: bootloader`, `S2: partition_table`)** và toàn bộ các phân vùng người dùng (`#1..#N`).
+  - Phân vùng `app` & `bootloader` được tính chính xác từng byte qua cấu trúc header `0xE9` (không cần đọc hết nhiều MB), phân vùng `nvs` đọc qua page/bitmap chuẩn ESP-IDF, còn `spiffs` / `littlefs` / `fat` / `coredump` / `phy` / `otadata` / vùng dữ liệu tùy biến đếm trang/khối đã ghi khác `0xFF`. Phân vùng chưa nạp hiển thị rõ `0 B (0.0%)` và `Còn trống = 100% Size`; bảng thiết kế ngoại tuyến giữ `--`.
 - **Tự động dò bảng phân vùng ở các offset mở rộng (`0x8000..0x20000`) & nhận diện PSRAM trên ESP32-P4:**
   - Cả **Tab 1 (Kiểm tra Chip)**, **Tab 4 (Phân vùng)** và **Tab 5 (Sao lưu & Chép)** đều ưu tiên đọc `0x8000` và tự động quét mở rộng `0x9000..0x20000` khi Bootloader (như ESP-IDF v6.1 trên ESP32-P4) đẩy `CONFIG_PARTITION_TABLE_OFFSET` sang `0xC000`, `0xD000`, `0x10000`..., đảm bảo giải mã đủ phân vùng và mở khóa thao tác Đọc/Sửa dữ liệu.
   - Sửa ánh xạ eFuse `PSRAM_CAP` cho **ESP32-P4** (`2 -> 32 MB`) và đọc nhanh PSRAM từ eFuse ngay trong phiên `flash-id` của Tab 4 và Tab 5.

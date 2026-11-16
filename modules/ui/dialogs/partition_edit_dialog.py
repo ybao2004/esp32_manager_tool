@@ -394,6 +394,7 @@ class PartitionEditDialog(QDialog):
             offset=offset_val,
             size=size_val,
             flags_str=flags_str,
-            used_size=self.entry.used_size
+            used_size=self.entry.used_size,
+            usage_measured=bool(getattr(self.entry, "usage_measured", False)),
         )
         self.accept()

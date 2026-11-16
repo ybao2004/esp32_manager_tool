@@ -134,9 +134,16 @@ def scan_esp_project(project_dir: str) -> Optional[ProjectScanResult]:
 
     # 6. Gán used_size từ các file .bin đã build vào từng phân vùng
     if loaded and res.bin_files_info:
+        if table.bootloader_offset in res.bin_files_info:
+            table.bootloader_used_size = res.bin_files_info[table.bootloader_offset]["size"]
+            table.bootloader_usage_measured = True
+        if table.part_table_offset in res.bin_files_info:
+            table.part_table_used_size = res.bin_files_info[table.part_table_offset]["size"]
+            table.part_table_usage_measured = True
         for entry in table.entries:
             if entry.offset in res.bin_files_info:
                 entry.used_size = res.bin_files_info[entry.offset]["size"]
+                entry.usage_measured = True
 
     res.partition_table = table if loaded else None
     return res

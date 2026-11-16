@@ -1131,7 +1131,7 @@ def scan_chip_partition_table(
     checker = success_checker or esptool_command_succeeded
     scan_steps = [(int(preferred_offset), 0x1000)]
     if int(preferred_offset) == 0x8000:
-        scan_steps.append((0x9000, 0x17000))
+        scan_steps.extend([(0x9000, 0x9000), (0x12000, 0xE000)])
     else:
         scan_steps.append((0x8000, 0x18000))
 
@@ -1179,6 +1179,134 @@ def scan_chip_partition_table(
                     pass
 
     return None, None, (last_blob[:0x1000] if last_blob else b""), True, last_text
+
+
+def probe_chip_partition_usage(
+    port: str,
+    baud: int | str,
+    table: PartitionTable,
+    *,
+    chip_arg: str = "auto",
+    raw_pt: bytes | None = None,
+    progress_callback=None,
+    log_callback=None,
+) -> bool:
+    """
+    Mở 1 phiên stub esptool duy nhất để đo dung lượng thực tế đã dùng (Bootloader, Partition Table,
+    App via 0xE9 header, NVS/SPIFFS/LittleFS/Data via resilient_read_flash) cho toàn bộ phân vùng.
+    Trả về True nếu đo thành công trên phần cứng thật; False nếu đang dùng esptool giả lập trong test.
+    """
+    mod = _ensure_esptool()
+    if mod is None or not isinstance(getattr(mod, "__file__", None), str):
+        return False
+
+    from modules.partition.usage_analyzer import measure_partition_table_usage_with_reader
+    import esptool.cmds as esp_cmds
+
+    eff_baud = max(460800, int(baud) if str(baud).isdigit() else 460800)
+    chip_name = chip_arg if (chip_arg and chip_arg != "auto") else "auto"
+
+    with esptool_lock:
+        esp = None
+        orig_port = None
+        try:
+            esp = mod.get_default_connected_device(
+                [port],
+                port,
+                5,
+                115200,
+                chip=chip_name,
+            )
+            if esp is None:
+                return False
+            orig_port = getattr(esp, "_port", None)
+            _register_active_esp(esp)
+            if not getattr(esp, "IS_STUB", False):
+                esp = esp.run_stub()
+                _register_active_esp(esp)
+            if eff_baud > 115200 and callable(getattr(esp, "change_baud", None)):
+                esp.change_baud(eff_baud)
+
+            set_flash_params = getattr(esp_cmds, "_set_flash_parameters", None)
+            if callable(set_flash_params):
+                set_flash_params(esp, "detect")
+
+            total_entries = max(1, len(table.entries) + 2)
+            active_step = {"idx": 0, "label": "Đang đo dung lượng phân vùng...", "last_emit": (-1, "", 0.0)}
+
+            def _on_sub_progress(done_bytes, total_bytes, _off=0):
+                if progress_callback is None or total_bytes <= 0:
+                    return
+                idx = active_step["idx"]
+                frac = min(1.0, max(0.0, done_bytes / float(total_bytes)))
+                overall = min(99, int(round(25.0 + ((idx + frac) / total_entries) * 74.0)))
+                lbl = f"{active_step['label']} ({int(frac * 100)}%)"
+                now = time.monotonic()
+                prev_pct, prev_lbl, prev_t = active_step["last_emit"]
+                if overall != prev_pct or (now - prev_t) >= 0.15:
+                    active_step["last_emit"] = (overall, lbl, now)
+                    progress_callback(overall, lbl)
+
+            def _step_progress(pct_val: int, label: str):
+                active_step["label"] = label
+                active_step["idx"] = min(total_entries - 1, max(0, int(round((pct_val / 100.0) * total_entries))))
+                if progress_callback is not None:
+                    overall = min(99, int(round(25.0 + (pct_val / 100.0) * 74.0)))
+                    active_step["last_emit"] = (overall, label, time.monotonic())
+                    progress_callback(overall, label)
+                if log_callback is not None:
+                    log_callback(f"  {label}")
+
+            cache_4k: dict[int, bytes] = {}
+
+            def _read_flash_bytes(addr: int, length: int) -> bytes:
+                if length <= 0:
+                    return b""
+                # Tận dụng cache sector 4KB đầu mỗi vùng để tránh đọc lặp header
+                for base_off, buf in cache_4k.items():
+                    if base_off <= addr and addr + length <= base_off + len(buf):
+                        rel = addr - base_off
+                        return buf[rel : rel + length]
+                data = esp.read_flash(addr, length, progress_fn=_on_sub_progress if length >= 4096 else None)
+                if length == 0x1000 and len(cache_4k) < 32:
+                    cache_4k[addr] = data
+                return data
+
+            # Làm ấm cache đầu phân vùng Bootloader & App để đọc nhanh 0xE9 segment headers
+            boot_off = int(getattr(table, "bootloader_offset", 0x1000) or 0)
+            pt_off = int(getattr(table, "part_table_offset", 0x8000) or 0x8000)
+            boot_sz = max(0, pt_off - boot_off)
+            if 0 < boot_sz <= 0x20000:
+                cache_4k[boot_off] = esp.read_flash(boot_off, boot_sz)
+            for e in table.entries:
+                if e.type_str.lower() == "app" and e.size >= 0x1000:
+                    cache_4k[e.offset] = esp.read_flash(e.offset, 0x1000)
+
+            measure_partition_table_usage_with_reader(
+                table,
+                _read_flash_bytes,
+                raw_pt=raw_pt,
+                progress_cb=_step_progress,
+            )
+            return True
+        except Exception as exc:
+            if log_callback is not None:
+                log_callback(f"  ! Cảnh báo đo dung lượng thực tế trên chip: {exc}")
+            return False
+        finally:
+            if esp is not None:
+                try:
+                    if callable(getattr(esp, "hard_reset", None)):
+                        esp.hard_reset()
+                except Exception:
+                    pass
+                _unregister_active_esp(esp)
+                port_obj = getattr(esp, "_port", None) or orig_port
+                if port_obj is not None:
+                    try:
+                        port_obj.close()
+                    except Exception:
+                        pass
 
 
 def parse_boot_log_output(text: str) -> dict:

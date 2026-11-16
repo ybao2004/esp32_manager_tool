@@ -76,7 +76,8 @@ class PartitionEntry:
     flags_str: str = ""    # 'encrypted', 'readonly', hoặc ''
     
     # Các thuộc tính theo dõi hiển thị
-    used_size: int = 0     # Dung lượng thực tế file .bin chiếm dụng (nếu quét từ dự án)
+    used_size: int = 0     # Dung lượng thực tế chiếm dụng (từ đọc chip hoặc quét dự án)
+    usage_measured: bool = False  # True khi đã đo trực tiếp (phân biệt vùng 0 B với chưa đo '--')
     is_system: bool = False       # Đánh dấu phân vùng hệ thống (Bootloader, Partition Table)
     is_unallocated: bool = False  # Đánh dấu vùng trống chưa phân bổ
 
@@ -136,6 +137,7 @@ class PartitionEntry:
             size=self.size,
             flags_str=self.flags_str,
             used_size=self.used_size,
+            usage_measured=self.usage_measured,
             is_system=self.is_system,
             is_unallocated=self.is_unallocated
         )
@@ -148,9 +150,17 @@ class PartitionTable:
         self.bootloader_offset: int = bootloader_offset
         self.target_chip: str = target_chip
         self.entries: List[PartitionEntry] = []
+        self.bootloader_used_size: int = 0
+        self.bootloader_usage_measured: bool = False
+        self.part_table_used_size: int = 0
+        self.part_table_usage_measured: bool = False
 
     def clear(self):
         self.entries.clear()
+        self.bootloader_used_size = 0
+        self.bootloader_usage_measured = False
+        self.part_table_used_size = 0
+        self.part_table_usage_measured = False
 
     def add_entry(self, entry: PartitionEntry):
         self.entries.append(entry)
@@ -267,6 +277,8 @@ class PartitionTable:
                 subtype_str="primary",
                 offset=boot_off,
                 size=pt_off - boot_off,
+                used_size=int(getattr(self, "bootloader_used_size", 0) or 0),
+                usage_measured=bool(getattr(self, "bootloader_usage_measured", False)),
                 is_system=True
             ))
 
@@ -277,6 +289,8 @@ class PartitionTable:
             subtype_str="primary",
             offset=pt_off,
             size=PARTITION_TABLE_SIZE_DEFAULT,
+            used_size=int(getattr(self, "part_table_used_size", 0) or 0),
+            usage_measured=bool(getattr(self, "part_table_usage_measured", False)),
             is_system=True
         ))
 

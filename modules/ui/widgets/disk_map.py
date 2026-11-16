@@ -125,6 +125,11 @@ def build_detailed_tooltip_text(entry: PartitionEntry, is_dark: bool | None = No
             f"• Vị trí Offset: <b>{format_hex(entry.offset)}</b>",
             f"• Kích thước: <b>{escape(format_bytes_human(entry.size))}</b>",
         ]
+        if entry.used_size > 0 or getattr(entry, "usage_measured", False):
+            specs.append(
+                f"• Đã dùng thực tế: {escape(format_bytes_human(entry.used_size))} ({entry.usage_percent:.1f}%) "
+                f"| Còn trống: {escape(format_bytes_human(entry.free_size))}"
+            )
         blocks = [
             header,
             f"<div style='margin-top:4px;'>{'<br>'.join(specs)}</div>",
@@ -150,9 +155,9 @@ def build_detailed_tooltip_text(entry: PartitionEntry, is_dark: bool | None = No
         f"• Offset: <b>{format_hex(entry.offset)}</b> ({entry.offset:,} B) | {align_rule}",
         f"• Dung lượng: <b>{escape(format_bytes_human(entry.size))}</b> | {sector_count(entry.size)} Sectors (4KB)",
     ]
-    if entry.used_size > 0:
+    if entry.used_size > 0 or getattr(entry, "usage_measured", False):
         specs.append(
-            f"• Firmware chiếm: {escape(format_bytes_human(entry.used_size))} ({entry.usage_percent:.1f}%) "
+            f"• Đã dùng thực tế: {escape(format_bytes_human(entry.used_size))} ({entry.usage_percent:.1f}%) "
             f"| Còn trống: {escape(format_bytes_human(entry.free_size))}"
         )
     if entry.flags_str:

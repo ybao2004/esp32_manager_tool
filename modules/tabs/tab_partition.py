@@ -26,6 +26,7 @@ from modules.esptool_util import (
     parse_esptool_progress_percent,
     format_chip_badge_text,
     scan_chip_partition_table,
+    probe_chip_partition_usage,
 )
 from modules.partition.unit_formatter import (
     DisplayMode, parse_size_or_offset, format_bytes_human, format_hex,
@@ -546,6 +547,18 @@ class PartitionTabMixin:
             suggested = align_up(prev.end_offset, align_boundary)
         self._set_entry_field(entry, "offset", suggested)
 
+    def _format_usage_cells(self, used_size: int, total_size: int, measured: bool) -> tuple[str, str]:
+        """Định dạng cặp cột (Đã dùng %, Còn trống); chỉ hiện '--' khi chưa đo dung lượng thực."""
+        if not measured and used_size <= 0:
+            return "--", "--"
+        total = max(0, int(total_size or 0))
+        used = max(0, min(total, int(used_size or 0))) if total > 0 else max(0, int(used_size or 0))
+        pct = min(100.0, (used / total) * 100.0) if total > 0 else 0.0
+        free_bytes = max(0, total - used)
+        used_str = f"{format_bytes_human(used)} ({pct:.1f}%)"
+        free_str = format_value(free_bytes, self.display_mode, is_size=True)
+        return used_str, free_str
+
     def refresh_partition_views(self, selected_entry_name: str | None = None):
         """Làm mới toàn bộ giao diện: Disk Map, Bảng Treeview, Thống kê, và Kiểm tra lỗi"""
         # 1. Cập nhật Treeview (chặn signal để không tự động chọn dòng đầu khi bảng rỗng/làm mới)
@@ -567,6 +580,11 @@ class PartitionTabMixin:
             pt_off = int(getattr(self.table, "part_table_offset", 0x8000) or 0x8000)
             boot_sz = max(0, pt_off - boot_off)
             if boot_sz > 0:
+                bl_used_str, bl_free_str = self._format_usage_cells(
+                    int(getattr(self.table, "bootloader_used_size", 0) or 0),
+                    boot_sz,
+                    bool(getattr(self.table, "bootloader_usage_measured", False)),
+                )
                 self.part_tree.insert("", "end", iid=self._SYS_BOOTLOADER_IID, values=(
                     "S1",
                     "bootloader",
@@ -575,9 +593,14 @@ class PartitionTabMixin:
                     format_value(boot_off, self.display_mode, is_size=False),
                     format_value(boot_sz, self.display_mode, is_size=True),
                     "locked",
-                    "--",
-                    "--",
+                    bl_used_str,
+                    bl_free_str,
                 ))
+            pt_used_str, pt_free_str = self._format_usage_cells(
+                int(getattr(self.table, "part_table_used_size", 0) or 0),
+                PARTITION_TABLE_SIZE_DEFAULT,
+                bool(getattr(self.table, "part_table_usage_measured", False)),
+            )
             self.part_tree.insert("", "end", iid=self._SYS_PART_TABLE_IID, values=(
                 "S2",
                 "partition_table",
@@ -586,13 +609,16 @@ class PartitionTabMixin:
                 format_value(pt_off, self.display_mode, is_size=False),
                 format_value(PARTITION_TABLE_SIZE_DEFAULT, self.display_mode, is_size=True),
                 "locked",
-                "--",
-                "--",
+                pt_used_str,
+                pt_free_str,
             ))
 
             for idx, e in enumerate(self.table.entries):
-                used_str = f"{format_bytes_human(e.used_size)} ({e.usage_percent:.1f}%)" if e.used_size > 0 else "--"
-                free_str = format_value(e.free_size, self.display_mode, is_size=True) if e.used_size > 0 else "--"
+                used_str, free_str = self._format_usage_cells(
+                    int(getattr(e, "used_size", 0) or 0),
+                    int(getattr(e, "size", 0) or 0),
+                    bool(getattr(e, "usage_measured", False)),
+                )
                 stt_str = f"#{idx + 1}"
 
                 iid = self.part_tree.insert("", "end", values=(
@@ -666,8 +692,16 @@ class PartitionTabMixin:
 
             errors = self.table.validate()
             err_msg = f" | [CẢNH BÁO] {len(errors)} lỗi ESP-IDF" if errors else " | [HỢP LỆ] Chuẩn ESP-IDF"
+            usage_summary = ""
+            if any(bool(getattr(e, "usage_measured", False)) or e.used_size > 0 for e in self.table.entries):
+                total_used = sum(max(0, int(e.used_size)) for e in self.table.entries)
+                total_free_used = max(0, total_allocated - total_used)
+                usage_summary = (
+                    f" | Thực dùng: {format_bytes_human(total_used, compact=True)} "
+                    f"(Trống trong vùng: {format_bytes_human(total_free_used, compact=True)})"
+                )
             self.lbl_flash_stats.configure(
-                text=f"Dung lượng Flash: {flash_human} | Đã phân bổ: {alloc_human} ({len(self.table.entries)} phân vùng) | Chưa cấp phát: {unalloc_human}{err_msg}"
+                text=f"Dung lượng Flash: {flash_human} | Đã phân bổ: {alloc_human} ({len(self.table.entries)} phân vùng) | Chưa cấp phát: {unalloc_human}{usage_summary}{err_msg}"
             )
 
             if hasattr(self, "txt_partition_val") and self.txt_partition_val.winfo_exists():
@@ -1906,6 +1940,10 @@ class PartitionTabMixin:
                         if found_table is not None and found_table.entries and found_off is not None:
                             self.table.part_table_offset = found_off
                             self.table.entries = list(found_table.entries)
+                            self.table.bootloader_used_size = found_table.bootloader_used_size
+                            self.table.bootloader_usage_measured = found_table.bootloader_usage_measured
+                            self.table.part_table_used_size = found_table.part_table_used_size
+                            self.table.part_table_usage_measured = found_table.part_table_usage_measured
                         elif raw_pt:
                             self.table.from_binary(raw_pt)
                         else:
@@ -1935,6 +1973,43 @@ class PartitionTabMixin:
                                 psram_mb=detected_psram_mb,
                             )
                             self.conn_bar.set_chip_badge_info(badge_str, is_active=True)
+
+                    safe_after(update_ui)
+
+                    # Bước 3: Đo sâu dung lượng sử dụng thực tế (App 0xE9, Bootloader, Partition Table, NVS/SPIFFS/Data)
+                    if found_table is not None and found_table.entries and found_off is not None:
+                        if chip == "auto" and resolved_cid and resolved_cid in CHIP_FAMILY_DATABASE:
+                            init_boot_off = CHIP_FAMILY_DATABASE[resolved_cid].bootloader_offset
+                        found_table.part_table_offset = found_off
+                        found_table.bootloader_offset = init_boot_off
+                        found_table.flash_size = detected_flash_bytes if detected_flash_bytes > 0 else init_flash_sz
+                        read_speed = max(460800, int(baud) if str(baud).isdigit() else 460800)
+
+                        def on_usage_progress(pct_val: int, task_lbl: str):
+                            if hasattr(self, "_update_flash_progress"):
+                                safe_after(lambda p=pct_val, lbl=task_lbl: self._update_flash_progress(p, task_label=lbl))
+
+                        def on_usage_log(msg_line: str):
+                            safe_after(lambda m=msg_line: self._log_partition_hw(m))
+
+                        probe_chip_partition_usage(
+                            port,
+                            read_speed,
+                            found_table,
+                            chip_arg=effective_chip or "auto",
+                            raw_pt=raw_pt,
+                            progress_callback=on_usage_progress,
+                            log_callback=on_usage_log,
+                        )
+
+                    def finalize_ui():
+                        if found_table is not None and found_table.entries and found_off is not None:
+                            self.table.entries = list(found_table.entries)
+                            self.table.bootloader_used_size = found_table.bootloader_used_size
+                            self.table.bootloader_usage_measured = found_table.bootloader_usage_measured
+                            self.table.part_table_used_size = found_table.part_table_used_size
+                            self.table.part_table_usage_measured = found_table.part_table_usage_measured
+                            self.refresh_partition_views()
                         part_count = len(self.table.entries)
                         if part_count > 0:
                             pt_hex = f"0x{int(self.table.part_table_offset):X}"
@@ -1956,7 +2031,7 @@ class PartitionTabMixin:
                                 ">>> [CẢNH BÁO] Đã đọc Flash nhưng không thấy cấu trúc bảng phân vùng hợp lệ."
                             )
 
-                    safe_after(update_ui)
+                    safe_after(finalize_ui)
                 else:
                     def update_failed_hw():
                         if chip == "auto" and resolved_cid and resolved_cid in CHIP_FAMILY_DATABASE:

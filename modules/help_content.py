@@ -52,7 +52,7 @@ Reset ESP gửi RESET và tạo xung DTR/RTS; khác với lệnh CMD_RESET mặc
 Chọn đúng chip, COM, baudrate và tối đa 4 file .bin với offset tương ứng. Các nút Bắt đầu nạp, Xóa toàn bộ Flash và Xóa nhật ký nằm gọn trên thanh cấu hình phía trên; tiến trình phần trăm và tên tác vụ hiển thị đồng bộ ở thanh trạng thái đáy. (Thao tác đọc/sửa/xóa phân vùng dữ liệu riêng lẻ đã được chuyển sang Tab 5: Sao lưu & Chép.)
 
 4. PHÂN VÙNG BỘ NHỚ (PARTITION WIZARD)
-- Mặc định luôn hiển thị 2 phân vùng hệ thống đầu tiên (S1: bootloader, S2: partition_table - được khóa an toàn) trên bảng và sơ đồ đĩa cùng vùng trống Unallocated; khi bấm Đọc từ chip, ứng dụng tự động quét bảng phân vùng từ 0x8000 đến 0x20000 (hỗ trợ cả các mạch ESP-IDF v5/v6 đặt bảng tại 0xC000, 0xD000, 0x10000...).
+- Mặc định luôn hiển thị 2 phân vùng hệ thống đầu tiên (S1: bootloader, S2: partition_table - được khóa an toàn) trên bảng và sơ đồ đĩa cùng vùng trống Unallocated; khi bấm Đọc từ chip, ứng dụng tự động quét bảng phân vùng từ 0x8000 đến 0x20000 (hỗ trợ cả các mạch ESP-IDF v5/v6 đặt bảng tại 0xC000, 0xD000, 0x10000...), đồng thời đo sâu dung lượng Đã dùng (%) & Còn trống thực tế cho Bootloader, Partition Table, App (0xE9) và mọi phân vùng Data/SPIFFS/LittleFS/NVS.
 - Toàn bộ cấu hình Chip, Flash, Đọc từ chip, Mẫu, Quét Dự Án, Mở CSV/BIN, Lưu CSV và Hoàn tác / Làm lại nằm gọn trên 1 hàng ngang.
 - Tùy chọn "Tự căn 4K/64K" và chế độ Đơn vị hiển thị (Thập phân / Hệ HEX / Song song dùng chung cho cả Tab 4 & Tab 5) được cấu hình tập trung trong trang Cài đặt.
 - Hàng nút bên dưới tập trung vào biên tập cấu trúc bảng: + Thêm dòng, Sửa dòng, Xóa dòng và Xóa tất cả.
