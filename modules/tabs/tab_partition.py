@@ -30,7 +30,7 @@ from modules.esptool_util import (
 )
 from modules.partition.unit_formatter import (
     DisplayMode, parse_size_or_offset, format_bytes_human, format_hex,
-    format_value, align_up, sector_count
+    format_value, format_usage_cells, align_up, sector_count
 )
 from modules.partition.chip_database import CHIP_FAMILY_DATABASE, get_chip_info
 from modules.partition.partition_model import (
@@ -246,7 +246,7 @@ class PartitionTabMixin:
         if isinstance(state, bool):
             state = "normal" if state else "disabled"
         for attr in (
-            'btn_part_scan', 'btn_part_read_hw',
+            'btn_part_scan',
             'btn_part_clear', 'btn_part_help',
             'cb_part_chip', 'cb_part_flash',
             'btn_add_part', 'btn_edit_part', 'btn_del_part',
@@ -549,15 +549,7 @@ class PartitionTabMixin:
 
     def _format_usage_cells(self, used_size: int, total_size: int, measured: bool) -> tuple[str, str]:
         """Định dạng cặp cột (Đã dùng %, Còn trống); chỉ hiện '--' khi chưa đo dung lượng thực."""
-        if not measured and used_size <= 0:
-            return "--", "--"
-        total = max(0, int(total_size or 0))
-        used = max(0, min(total, int(used_size or 0))) if total > 0 else max(0, int(used_size or 0))
-        pct = min(100.0, (used / total) * 100.0) if total > 0 else 0.0
-        free_bytes = max(0, total - used)
-        used_str = f"{format_bytes_human(used)} ({pct:.1f}%)"
-        free_str = format_value(free_bytes, self.display_mode, is_size=True)
-        return used_str, free_str
+        return format_usage_cells(used_size, total_size, measured, self.display_mode)
 
     def refresh_partition_views(self, selected_entry_name: str | None = None):
         """Làm mới toàn bộ giao diện: Disk Map, Bảng Treeview, Thống kê, và Kiểm tra lỗi"""
@@ -672,14 +664,14 @@ class PartitionTabMixin:
         self.disk_map.set_data(layout, self.table.flash_size, self.display_mode, current_selected_entry)
         if not self.table.entries:
             self.lbl_flash_stats.configure(
-                text=f"Dung lượng Flash: {flash_human} | Hệ thống: Bootloader & Partition Table | Chưa có phân vùng người dùng (Chọn 'Mẫu', 'Mở CSV/BIN', 'Đọc từ chip' hoặc 'Thêm dòng')"
+                text=f"Dung lượng Flash: {flash_human} | Hệ thống: Bootloader & Partition Table | Chưa có phân vùng người dùng (Chọn 'Mẫu', 'Mở CSV/BIN', 'Đọc dữ liệu flash' trên cùng hoặc 'Thêm dòng')"
             )
             if hasattr(self, "txt_partition_val") and self.txt_partition_val.winfo_exists():
                 self.txt_partition_val.configure(state="normal")
                 self.txt_partition_val.delete("1.0", "end")
                 self.txt_partition_val.insert(
                     "1.0",
-                    "[TRỐNG] Chưa có phân vùng người dùng nào. Hãy nạp mẫu, mở file CSV/BIN, đọc từ chip hoặc tự thêm dòng mới.\n"
+                    "[TRỐNG] Chưa có phân vùng người dùng nào. Hãy nạp mẫu, mở file CSV/BIN, bấm 'Đọc dữ liệu flash' hoặc tự thêm dòng mới.\n"
                 )
                 self.txt_partition_val.configure(state="disabled")
         else:
@@ -1840,17 +1832,44 @@ class PartitionTabMixin:
         return (port, baud, chip_target)
 
     def _hw_read_partition_table(self):
-        """Đọc 4KB bảng phân vùng từ chip ESP32"""
-        if self._is_partition_hw_running:
+        """Ủy quyền sang luồng đọc dữ liệu Flash toàn cục (đồng bộ Tab 4 & Tab 5)."""
+        return self._hw_read_flash_global()
+
+    def _hw_read_flash_global(self):
+        """
+        Đọc thông tin Chip/MAC, bảng phân vùng, dung lượng Đã dùng/Còn trống và
+        nạp Cache RAM (theo cấu hình), đồng bộ đồng thời Tab 4 & Tab 5.
+        """
+        if self._is_partition_hw_running or getattr(self, "_is_backup_hw_running", False):
             return
         if hasattr(self, "is_device_busy") and self.is_device_busy():
-            messagebox.showwarning("Thiết bị đang bận", "Thiết bị đang bận xử lý tác vụ khác!")
+            messagebox.showwarning("Thiết bị đang bận", "Thiết bị đang bận xử lý tác vụ khác!", parent=self.root)
             return
+        if hasattr(self, "_stop_board_led_blink"):
+            try:
+                self._stop_board_led_blink()
+            except Exception:
+                pass
         hw_info = self._prepare_hardware_port()
         if not hw_info:
             return
         port, baud, chip = hw_info
         part_offset = hex(getattr(self.table, "part_table_offset", 0x8000) or 0x8000)
+
+        backup_baud_txt = ""
+        if hasattr(self, "cb_backup_baud") and self.cb_backup_baud is not None:
+            try:
+                backup_baud_txt = str(self.cb_backup_baud.currentText() or "").strip()
+            except Exception:
+                backup_baud_txt = ""
+        backup_baud = int(backup_baud_txt) if backup_baud_txt.isdigit() else 460800
+        read_speed = max(460800, baud, backup_baud)
+        preload_data = (
+            str(getattr(self, "saved_flash_read_mode", "on_demand") or "on_demand") == "preload_data"
+        )
+
+        if hasattr(self, "_invalidate_flash_partition_cache"):
+            self._invalidate_flash_partition_cache()
 
         def safe_after(fn, delay=0):
             try:
@@ -1859,13 +1878,44 @@ class PartitionTabMixin:
             except Exception:
                 pass
 
+        def _sync_tab5_and_cache(
+            *,
+            detected_chip_label: str,
+            resolved_cid: str | None,
+            fid_parsed: dict,
+            detected_flash_bytes: int,
+            init_boot_off: int,
+            found_off: int | None,
+            found_table: PartitionTable | None,
+            raw_pt: bytes,
+            captured_blobs: dict[tuple[int, int], bytes],
+        ):
+            if captured_blobs and hasattr(self, "flash_partition_cache"):
+                self.flash_partition_cache.update(captured_blobs)
+                self._flash_cache_port = port
+            if hasattr(self, "_sync_backup_from_global_read"):
+                self._sync_backup_from_global_read(
+                    port=port,
+                    chip_key=detected_chip_label,
+                    resolved_cid=resolved_cid,
+                    fid_parsed=fid_parsed,
+                    flash_bytes=detected_flash_bytes,
+                    boot_off=init_boot_off,
+                    part_off=found_off,
+                    found_table=found_table,
+                    raw_pt=raw_pt,
+                    captured_blobs=captured_blobs,
+                )
+
         def worker():
             self._is_partition_hw_running = True
             if hasattr(self, "set_global_busy_state"):
-                safe_after(lambda: self.set_global_busy_state(True, "đọc bảng phân vùng từ chip"))
+                safe_after(lambda: self.set_global_busy_state(True, "đọc dữ liệu Flash từ chip"))
 
             try:
-                safe_after(lambda: self._log_partition_hw(f"BẮT ĐẦU DÒ CHIP & ĐỌC BẢNG PHÂN VÙNG QUA {port}", level="header"))
+                safe_after(lambda: self._log_partition_hw(f"BẮT ĐẦU DÒ CHIP & ĐỌC DỮ LIỆU FLASH QUA {port}", level="header"))
+                if hasattr(self, "log_backup"):
+                    safe_after(lambda: self.log_backup(f"\nĐỌC DỮ LIỆU FLASH & BẢNG PHÂN VÙNG TỪ CHIP ({port})", "header"))
 
                 # Bước 1: Dò Chip (nếu để auto), eFuse PSRAM & dung lượng Flash thật qua flash-id
                 fid_args = ['--port', port, '--baud', str(baud)]
@@ -1929,6 +1979,8 @@ class PartitionTabMixin:
                         resolved_cid = _resolve_chip_id_from_esptool(detected_chip)
                     if not detected_flash_mb and read_parsed.get("flash_mb"):
                         detected_flash_mb = float(read_parsed.get("flash_mb") or 0)
+                    if not fid_parsed.get("mac") and read_parsed.get("mac"):
+                        fid_parsed["mac"] = read_parsed.get("mac")
 
                 detected_flash_bytes = (
                     int(round(detected_flash_mb * 1024 * 1024)) if detected_flash_mb > 0 else 0
@@ -1939,7 +1991,7 @@ class PartitionTabMixin:
                         self._push_partition_undo_state()
                         if found_table is not None and found_table.entries and found_off is not None:
                             self.table.part_table_offset = found_off
-                            self.table.entries = list(found_table.entries)
+                            self.table.entries = [e.clone() for e in found_table.entries]
                             self.table.bootloader_used_size = found_table.bootloader_used_size
                             self.table.bootloader_usage_measured = found_table.bootloader_usage_measured
                             self.table.part_table_used_size = found_table.part_table_used_size
@@ -1965,6 +2017,17 @@ class PartitionTabMixin:
                                 target_flash = detected_flash_bytes
                                 self._sync_chip_and_flash_combos(chip, flash_size=detected_flash_bytes)
                         self.refresh_partition_views()
+                        _sync_tab5_and_cache(
+                            detected_chip_label=detected_chip or "",
+                            resolved_cid=resolved_cid,
+                            fid_parsed=fid_parsed,
+                            detected_flash_bytes=target_flash or detected_flash_bytes or init_flash_sz,
+                            init_boot_off=self.table.bootloader_offset,
+                            found_off=found_off,
+                            found_table=found_table,
+                            raw_pt=raw_pt or b"",
+                            captured_blobs={},
+                        )
                         if detected_chip and getattr(self, "conn_bar", None) is not None:
                             badge_str = format_chip_badge_text(
                                 detected_chip,
@@ -1976,14 +2039,14 @@ class PartitionTabMixin:
 
                     safe_after(update_ui)
 
-                    # Bước 3: Đo sâu dung lượng sử dụng thực tế (App 0xE9, Bootloader, Partition Table, NVS/SPIFFS/Data)
+                    # Bước 3: Đo sâu dung lượng sử dụng thực tế (+ preload vùng data nếu Cài đặt bật)
+                    captured_blobs: dict[tuple[int, int], bytes] = {}
                     if found_table is not None and found_table.entries and found_off is not None:
                         if chip == "auto" and resolved_cid and resolved_cid in CHIP_FAMILY_DATABASE:
                             init_boot_off = CHIP_FAMILY_DATABASE[resolved_cid].bootloader_offset
                         found_table.part_table_offset = found_off
                         found_table.bootloader_offset = init_boot_off
                         found_table.flash_size = detected_flash_bytes if detected_flash_bytes > 0 else init_flash_sz
-                        read_speed = max(460800, int(baud) if str(baud).isdigit() else 460800)
 
                         def on_usage_progress(pct_val: int, task_lbl: str):
                             if hasattr(self, "_update_flash_progress"):
@@ -1992,7 +2055,7 @@ class PartitionTabMixin:
                         def on_usage_log(msg_line: str):
                             safe_after(lambda m=msg_line: self._log_partition_hw(m))
 
-                        probe_chip_partition_usage(
+                        probe_ok = probe_chip_partition_usage(
                             port,
                             read_speed,
                             found_table,
@@ -2000,26 +2063,91 @@ class PartitionTabMixin:
                             raw_pt=raw_pt,
                             progress_callback=on_usage_progress,
                             log_callback=on_usage_log,
+                            preload_data_blobs=preload_data,
+                            captured_blobs_out=captured_blobs,
                         )
+                        if preload_data and not probe_ok:
+                            # Fallback tương thích CLI (khi esptool stub trực tiếp không khả dụng)
+                            boot_sz = max(0, int(found_off) - int(init_boot_off))
+                            targets_cli: list[tuple[int, int]] = []
+                            if boot_sz > 0:
+                                targets_cli.append((int(init_boot_off), boot_sz))
+                            targets_cli.append((int(found_off), PARTITION_TABLE_SIZE_DEFAULT))
+                            for e in found_table.entries:
+                                if e.type_str.lower() != "app" and e.size > 0:
+                                    targets_cli.append((e.offset, e.size))
+                            for reg_off, reg_sz in targets_cli:
+                                tmp_p = ""
+                                try:
+                                    with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tf:
+                                        tmp_p = tf.name
+                                    cli_args = [
+                                        "--port", port, "--baud", str(read_speed),
+                                        "read_flash", format_hex(reg_off), format_hex(reg_sz), tmp_p,
+                                    ]
+                                    cli_res = run_esptool_command(cli_args)
+                                    if esptool_command_succeeded(cli_res) and os.path.isfile(tmp_p):
+                                        with open(tmp_p, "rb") as fp:
+                                            captured_blobs[(reg_off, reg_sz)] = fp.read()
+                                finally:
+                                    if tmp_p and os.path.isfile(tmp_p):
+                                        try:
+                                            os.remove(tmp_p)
+                                        except OSError:
+                                            pass
+                            if captured_blobs:
+                                from modules.partition.usage_analyzer import measure_partition_table_usage_with_reader
+
+                                def _blob_reader(addr: int, length: int) -> bytes:
+                                    for (b_off, _b_sz), buf in captured_blobs.items():
+                                        if b_off <= addr and addr + length <= b_off + len(buf):
+                                            rel = addr - b_off
+                                            return buf[rel : rel + length]
+                                    return b"\xFF" * length
+
+                                measure_partition_table_usage_with_reader(
+                                    found_table,
+                                    _blob_reader,
+                                    raw_pt=raw_pt,
+                                )
 
                     def finalize_ui():
                         if found_table is not None and found_table.entries and found_off is not None:
-                            self.table.entries = list(found_table.entries)
+                            self.table.entries = [e.clone() for e in found_table.entries]
                             self.table.bootloader_used_size = found_table.bootloader_used_size
                             self.table.bootloader_usage_measured = found_table.bootloader_usage_measured
                             self.table.part_table_used_size = found_table.part_table_used_size
                             self.table.part_table_usage_measured = found_table.part_table_usage_measured
                             self.refresh_partition_views()
+
+                        eff_flash = detected_flash_bytes if detected_flash_bytes > 0 else self.table.flash_size
+                        _sync_tab5_and_cache(
+                            detected_chip_label=detected_chip or "",
+                            resolved_cid=resolved_cid,
+                            fid_parsed=fid_parsed,
+                            detected_flash_bytes=eff_flash,
+                            init_boot_off=self.table.bootloader_offset,
+                            found_off=found_off,
+                            found_table=found_table,
+                            raw_pt=raw_pt or b"",
+                            captured_blobs=captured_blobs,
+                        )
                         part_count = len(self.table.entries)
+                        cache_note = (
+                            f" (Đã nạp sẵn {len(captured_blobs)} vùng vào Cache RAM)"
+                            if preload_data and captured_blobs
+                            else ""
+                        )
                         if part_count > 0:
                             pt_hex = f"0x{int(self.table.part_table_offset):X}"
                             self.set_status(
-                                f"Đã đọc và giải mã bảng phân vùng ({part_count} phân vùng @ {pt_hex}) từ ESP32 thành công!",
+                                f"Đã đọc và giải mã bảng phân vùng ({part_count} phân vùng @ {pt_hex}) và đồng bộ Tab 4 & Tab 5!{cache_note}",
                                 "success",
                                 progress=100,
+                                task_label="Đọc dữ liệu Flash hoàn tất",
                             )
                             self._log_partition_hw(
-                                f">>> ĐỌC VÀ NẠP THÀNH CÔNG {part_count} PHÂN VÙNG TỪ CHIP (@ {pt_hex})!"
+                                f">>> ĐỌC VÀ NẠP THÀNH CÔNG {part_count} PHÂN VÙNG TỪ CHIP (@ {pt_hex})!{cache_note}"
                             )
                         else:
                             self.set_status(
@@ -2044,13 +2172,13 @@ class PartitionTabMixin:
                         elif detected_flash_bytes > 0:
                             self._sync_chip_and_flash_combos(chip or "auto", flash_size=detected_flash_bytes)
                             self.refresh_partition_views()
-                        self.set_status("Lỗi đọc bảng phân vùng từ chip!", "error", progress=0)
+                        self.set_status("Lỗi đọc dữ liệu Flash từ chip!", "error", progress=0)
                         self._log_partition_hw(">>> [LỖI] Không thể đọc dữ liệu phân vùng từ ESP32.")
 
                     safe_after(update_failed_hw)
             except Exception as ex:
                 err_msg = str(ex)
-                safe_after(lambda: self.set_status("Lỗi đọc bảng phân vùng từ chip!", "error", progress=0))
+                safe_after(lambda: self.set_status("Lỗi đọc dữ liệu Flash từ chip!", "error", progress=0))
                 safe_after(lambda msg=err_msg: self._log_partition_hw(f">>> [NGOẠI LỆ] {msg}"))
             finally:
                 self._is_partition_hw_running = False

@@ -1,12 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Trang Quản Lý Phân Vùng Bộ Nhớ ESP32 (PartitionPage - v1.6).
-- Tách thanh công cụ thành 2 nhóm rõ ràng (không bị cắt chữ bất kỳ nút nào):
-  + Card trên (Cấu hình & Tệp): Chip, Flash, Đọc từ chip | [Mẫu], [Quét Dự Án], [Mở CSV/BIN], [Lưu CSV] | [Hoàn tác], [Làm lại], [Sổ tay]
+Trang Quản Lý Phân Vùng Bộ Nhớ ESP32 (PartitionPage - v1.7).
+- Thanh công cụ gọn gàng (việc đọc Flash từ chip dùng nút 'Đọc dữ liệu flash' trên thanh trên cùng):
+  + Card trên (Cấu hình & Tệp): Chip, Flash | [Mẫu], [Quét Dự Án], [Mở CSV/BIN], [Lưu CSV] | [Hoàn tác], [Làm lại], [Sổ tay]
   + Card giữa: Sơ đồ ổ đĩa trực quan DiskMapWidget + Thống kê dung lượng & kiểm tra hợp lệ ESP-IDF
-  + Card chính: Bảng phân vùng tương tác cao (cột Tên co giãn stretch=1) + Thanh thao tác 2 bên:
-    Trái: [+ Thêm dòng], [Sửa dòng], [Xóa dòng], [Xóa tất cả]
-    Phải: [Đọc bảng từ Chip], [Nạp bảng vào Chip], [Dump vùng], [Ghi vùng], [Xóa vùng]
+  + Card chính: Bảng phân vùng tương tác cao (cột Tên co giãn stretch=1) + Thanh thao tác đáy:
+    [+ Thêm dòng], [Sửa dòng], [Xóa dòng], [Xóa tất cả]
 """
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton,
@@ -517,7 +516,7 @@ class PartitionPage(QWidget):
         h_vbox.setContentsMargins(0, 0, 0, 0)
         h_vbox.setSpacing(6)
 
-        # Dòng 1: Cấu hình Chip, Flash, Đọc từ chip | Mẫu, Quét, Mở, Lưu | Hoàn tác, Làm lại, Sổ tay
+        # Dòng 1: Cấu hình Chip, Flash | Mẫu, Quét, Mở, Lưu | Hoàn tác, Làm lại, Sổ tay
         row_tools = FlowLayout(h_spacing=4, v_spacing=5)
 
         self.cb_part_chip = _ComboCompat(header_card, fit_to_content=False, min_fit_width=160)
@@ -539,12 +538,6 @@ class PartitionPage(QWidget):
         if self.cb_part_flash.view():
             self.cb_part_flash.view().setMinimumWidth(max(flash_w, 90))
         row_tools.addWidget(make_group(header_card, QLabel("Flash:", header_card), self.cb_part_flash))
-
-        self.btn_part_read_hw = _ButtonCompat("Đọc từ chip", header_card)
-        self.btn_part_read_hw.setProperty("accent", "true")
-        bind_themed_icon(self.btn_part_read_hw, "chip", role="on_accent")
-        self.btn_part_read_hw.setToolTip("Tự động dò Chip/Flash và đọc bảng phân vùng từ mạch vào trình thiết kế")
-        row_tools.addWidget(self.btn_part_read_hw)
 
         self.btn_presets = _ButtonCompat("Mẫu", header_card)
         bind_themed_icon(self.btn_presets, "folder")
@@ -587,7 +580,6 @@ class PartitionPage(QWidget):
         row_tools.addWidget(self.btn_part_help)
 
         for hdr_btn in (
-            self.btn_part_read_hw,
             self.btn_presets,
             self.btn_part_scan,
             self.btn_open_csv,

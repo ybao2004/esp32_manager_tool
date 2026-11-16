@@ -186,13 +186,46 @@ class SettingsPage(QWidget):
         self.cb_display_unit.currentTextChanged.connect(self._on_display_unit_changed)
         part_grid.addWidget(self.cb_display_unit, 1, 1, Qt.AlignmentFlag.AlignLeft)
 
+        part_grid.addWidget(QLabel("Đọc dữ liệu Flash:", card_part), 2, 0)
+        self.cb_flash_read_mode = QComboBox(card_part)
+        self._flash_read_mode_map = {
+            "Khi bấm xem (Cache RAM)": "on_demand",
+            "Đọc sẵn toàn bộ vùng data": "preload_data",
+        }
+        self._flash_read_mode_rev = {v: k for k, v in self._flash_read_mode_map.items()}
+        self.cb_flash_read_mode.addItems(list(self._flash_read_mode_map.keys()))
+        self.cb_flash_read_mode.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.cb_flash_read_mode.setMinimumContentsLength(20)
+        if self.cb_flash_read_mode.view():
+            self.cb_flash_read_mode.view().setMinimumWidth(240)
+        init_read_mode = str(getattr(self.core, "saved_flash_read_mode", "on_demand") or "on_demand") if self.core else "on_demand"
+        init_read_lbl = self._flash_read_mode_rev.get(init_read_mode, "Khi bấm xem (Cache RAM)")
+        self.cb_flash_read_mode.setCurrentText(init_read_lbl)
+        self.cb_flash_read_mode.setToolTip(
+            "Chọn cách nạp Cache RAM khi bấm 'Đọc dữ liệu flash' trên thanh trên cùng"
+        )
+        self.cb_flash_read_mode.currentTextChanged.connect(self._on_flash_read_mode_changed)
+        part_grid.addWidget(self.cb_flash_read_mode, 2, 1)
+
+        init_unlock = bool(getattr(self.core, "saved_unlock_all_partition_edit", False)) if self.core else False
+        self.chk_unlock_all_part_edit = QCheckBox(
+            "Mở khóa xem/sửa tất cả phân vùng Tab 5",
+            card_part,
+        )
+        self.chk_unlock_all_part_edit.setToolTip(
+            "Khi bật sẽ cho phép sửa, nạp đè (.bin) và xóa cả Bootloader, Partition Table và Firmware App (có cảnh báo)."
+        )
+        self.chk_unlock_all_part_edit.setChecked(init_unlock)
+        self.chk_unlock_all_part_edit.toggled.connect(self._on_unlock_all_part_toggled)
+        part_grid.addWidget(self.chk_unlock_all_part_edit, 3, 0, 1, 2)
+
         lbl_part_hint = QLabel(
-            "Áp dụng đồng thời cho Bảng phân vùng (Tab 4) và Sao lưu & Nhân bản (Tab 5).",
+            "Áp dụng đồng thời cho Tab 4 & Tab 5; tùy chọn mở khóa bao gồm Bootloader và App.",
             card_part,
         )
         lbl_part_hint.setProperty("role", "muted")
         lbl_part_hint.setWordWrap(True)
-        part_grid.addWidget(lbl_part_hint, 2, 0, 1, 2)
+        part_grid.addWidget(lbl_part_hint, 4, 0, 1, 2)
 
         part_grid.setColumnStretch(1, 1)
         card_part.body_layout.addLayout(part_grid)
@@ -557,6 +590,38 @@ class SettingsPage(QWidget):
         self.core.saved_display_unit = str(text or "Thập phân")
         if hasattr(self.core, "_on_display_mode_changed"):
             self.core._on_display_mode_changed()
+
+    def _on_flash_read_mode_changed(self, text: str):
+        if self._syncing_partition_prefs or self.core is None:
+            return
+        mode_code = self._flash_read_mode_map.get(str(text or ""), "on_demand")
+        self.core.saved_flash_read_mode = mode_code
+
+    def _on_unlock_all_part_toggled(self, checked: bool):
+        if self._syncing_partition_prefs:
+            return
+        if checked:
+            confirmed = dlg.ask_yes_no(
+                "Cảnh báo an toàn phân vùng hệ thống & Firmware",
+                "Bật tùy chọn này sẽ mở khóa quyền SỬA, NẠP ĐÈ (.bin) và XÓA trực tiếp đối với "
+                "Bootloader, Partition Table và Firmware App (factory / ota_0 / ota_1) trong Tab 5.\n\n"
+                "Ghi hoặc xóa nhầm các phân vùng này có thể làm mạch không khởi động được (Brick) và cần nạp lại toàn bộ firmware.\n\n"
+                "Bạn có chắc chắn muốn mở khóa không?",
+                parent=self,
+            )
+            if not confirmed:
+                self._syncing_partition_prefs = True
+                try:
+                    self.chk_unlock_all_part_edit.setChecked(False)
+                finally:
+                    self._syncing_partition_prefs = False
+                if self.core is not None:
+                    self.core.saved_unlock_all_partition_edit = False
+                return
+        if self.core is not None:
+            self.core.saved_unlock_all_partition_edit = bool(checked)
+            if hasattr(self.core, "_sync_backup_selection_buttons"):
+                self.core._sync_backup_selection_buttons()
 
     def _populate_com_list(self):
         while self.com_list_layout.count():
@@ -946,7 +1011,12 @@ class SettingsPage(QWidget):
                 self._syncing_update_prefs = False
         if hasattr(self, "chk_tab5_led_blink"):
             self.chk_tab5_led_blink.setChecked(bool(getattr(self.core, "tab5_led_blink_enabled", False)))
-        if hasattr(self, "chk_auto_align") or hasattr(self, "cb_display_unit"):
+        if (
+            hasattr(self, "chk_auto_align")
+            or hasattr(self, "cb_display_unit")
+            or hasattr(self, "cb_flash_read_mode")
+            or hasattr(self, "chk_unlock_all_part_edit")
+        ):
             self._syncing_partition_prefs = True
             try:
                 if hasattr(self, "chk_auto_align"):
@@ -955,6 +1025,15 @@ class SettingsPage(QWidget):
                     unit_val = str(getattr(self.core, "saved_display_unit", "Thập phân") or "Thập phân")
                     if self.cb_display_unit.findText(unit_val) >= 0:
                         self.cb_display_unit.setCurrentText(unit_val)
+                if hasattr(self, "cb_flash_read_mode"):
+                    rm = str(getattr(self.core, "saved_flash_read_mode", "on_demand") or "on_demand")
+                    lbl = self._flash_read_mode_rev.get(rm, "Khi bấm xem (Cache RAM)")
+                    if self.cb_flash_read_mode.findText(lbl) >= 0:
+                        self.cb_flash_read_mode.setCurrentText(lbl)
+                if hasattr(self, "chk_unlock_all_part_edit"):
+                    self.chk_unlock_all_part_edit.setChecked(
+                        bool(getattr(self.core, "saved_unlock_all_partition_edit", False))
+                    )
             finally:
                 self._syncing_partition_prefs = False
 
@@ -1054,6 +1133,14 @@ class SettingsPage(QWidget):
             self.core.saved_auto_align = bool(self.chk_auto_align.isChecked())
         if hasattr(self, "cb_display_unit"):
             self.core.saved_display_unit = str(self.cb_display_unit.currentText() or "Thập phân")
+        if hasattr(self, "cb_flash_read_mode"):
+            self.core.saved_flash_read_mode = self._flash_read_mode_map.get(
+                str(self.cb_flash_read_mode.currentText() or ""), "on_demand"
+            )
+        if hasattr(self, "chk_unlock_all_part_edit"):
+            self.core.saved_unlock_all_partition_edit = bool(self.chk_unlock_all_part_edit.isChecked())
+        if hasattr(self.core, "_sync_backup_selection_buttons"):
+            self.core._sync_backup_selection_buttons()
         if hasattr(self.core, "_on_display_mode_changed"):
             self.core._on_display_mode_changed()
         if hasattr(self.core, "update_tab5_led_blink_visibility"):

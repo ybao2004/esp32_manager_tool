@@ -325,19 +325,21 @@ class PartitionDataDialog(QDialog):
         on_read_from_chip: Optional[Callable[[Callable[[Optional[bytes], str], None]], None]] = None,
         on_write_to_chip: Optional[Callable[[bytes, Callable[[bool, str], None]], None]] = None,
         on_erase_on_chip: Optional[Callable[[Callable[[bool, str], None]], None]] = None,
+        regions: Optional[list[dict]] = None,
+        current_index: int = -1,
+        allow_write_system_app: bool = False,
+        get_cached_data: Optional[Callable[[dict], Optional[bytes]]] = None,
+        on_read_region: Optional[Callable[[dict, Callable[[Optional[bytes], str], None]], None]] = None,
+        on_write_region: Optional[Callable[[dict, bytes, Callable[[bool, str], None]], None]] = None,
+        on_erase_region: Optional[Callable[[dict, Callable[[bool, str], None]], None]] = None,
     ):
         if parent is not None and not isinstance(parent, QWidget):
             parent = None
         super().__init__(parent)
 
-        self._region = dict(region or {})
-        self._part_name = str(self._region.get("name", "data_part") or "data_part")
-        self._part_type = str(self._region.get("type", "data") or "data").lower()
-        self._part_subtype = str(self._region.get("subtype", "undefined") or "undefined").lower()
-        self._offset_int = int(self._region.get("offset_int", self._region.get("offset", 0)) or 0)
-        self._size_int = int(
-            self._region.get("size_int", self._region.get("size", len(raw_data) or 0x1000)) or 0x1000
-        )
+        self._regions: list[dict] = [dict(r) for r in regions] if regions else [dict(region or {})]
+        self._current_region_index = self._resolve_initial_region_index(region, current_index)
+        self._region = dict(self._regions[self._current_region_index]) if self._regions else dict(region or {})
 
         self._chip_name = str(chip_name or "ESP32")
         self._mac = str(mac or "")
@@ -345,29 +347,71 @@ class PartitionDataDialog(QDialog):
         self._on_read_from_chip = on_read_from_chip
         self._on_write_to_chip = on_write_to_chip
         self._on_erase_on_chip = on_erase_on_chip
+        self._on_read_region = on_read_region
+        self._on_write_region = on_write_region
+        self._on_erase_region = on_erase_region
+        self._get_cached_data = get_cached_data
+        self._allow_write_system_app = bool(allow_write_system_app)
+        self._draft_buffers: dict[str, bytes] = {}
 
-        _, self._access_level = is_non_firmware_data_region(self._region)
         self._is_busy = False
         self._is_dirty = False
         self._page_dirty = False
+        self._syncing_nav = False
         self._current_page = 0
-        self._total_pages = max(1, (self._size_int + HEX_PAGE_SIZE - 1) // HEX_PAGE_SIZE)
 
         self._nvs_result: Optional[NvsParseResult] = None
         self._nvs_entries: list[NvsEntry] = []
         self._nvs_editable = False
         self._filtered_indices: list[int] = []
 
+        self._load_region_fields(self._region, raw_data_len=len(raw_data))
         self._buffer = self._normalize_buffer(raw_data)
 
-        self.setWindowTitle(
-            f"Dữ liệu phân vùng: {self._part_name} ({self._part_type}/{self._part_subtype}) - {format_hex(self._offset_int)}"
-        )
-        self.resize(980, 680)
-        self.setMinimumSize(780, 520)
+        self.resize(980, 700)
+        self.setMinimumSize(780, 540)
 
         self._build_ui()
-        self.set_buffer(self._buffer, mark_dirty=False)
+        self._apply_active_region_ui(self._buffer, mark_dirty=False)
+
+    def _resolve_initial_region_index(self, region: Optional[dict], current_index: int) -> int:
+        if 0 <= current_index < len(self._regions):
+            return current_index
+        if region:
+            target_key = str(region.get("key", "") or "")
+            target_off = int(region.get("offset_int", region.get("offset", -1)) or -1)
+            for idx, r in enumerate(self._regions):
+                if target_key and str(r.get("key", "") or "") == target_key:
+                    return idx
+                if target_off >= 0 and int(r.get("offset_int", r.get("offset", -2)) or -2) == target_off:
+                    return idx
+        return 0
+
+    @staticmethod
+    def _region_cache_key(reg: dict) -> str:
+        off = int(reg.get("offset_int", reg.get("offset", 0)) or 0)
+        sz = int(reg.get("size_int", reg.get("size", 0)) or 0)
+        name = str(reg.get("name", "") or "")
+        return f"{off:X}:{sz:X}:{name}"
+
+    def _load_region_fields(self, reg: dict, raw_data_len: int = 0):
+        self._region = dict(reg or {})
+        self._part_name = str(self._region.get("name", "data_part") or "data_part")
+        self._part_type = str(self._region.get("type", "data") or "data").lower()
+        self._part_subtype = str(self._region.get("subtype", "undefined") or "undefined").lower()
+        self._offset_int = int(self._region.get("offset_int", self._region.get("offset", 0)) or 0)
+        self._size_int = int(
+            self._region.get("size_int", self._region.get("size", raw_data_len or 0x1000)) or 0x1000
+        )
+        allowed, self._access_level = is_non_firmware_data_region(self._region)
+        self._is_data_allowed = bool(allowed)
+        self._is_read_only = (not allowed) and (not self._allow_write_system_app)
+        self._total_pages = max(1, (self._size_int + HEX_PAGE_SIZE - 1) // HEX_PAGE_SIZE)
+        self._current_page = 0
+        ro_tag = " [Chỉ xem]" if self._is_read_only else ""
+        self.setWindowTitle(
+            f"Dữ liệu phân vùng: {self._part_name} ({self._part_type}/{self._part_subtype}) - {format_hex(self._offset_int)}{ro_tag}"
+        )
 
     def _normalize_buffer(self, data: bytes) -> bytes:
         raw = bytes(data or b"")
@@ -391,13 +435,7 @@ class PartitionDataDialog(QDialog):
 
         meta_row = QHBoxLayout()
         meta_row.setSpacing(12)
-        self.lbl_meta = QLabel(
-            f"Phân vùng: <b>{self._part_name}</b>  |  Loại: <b>{self._part_type}/{self._part_subtype}</b>"
-            f"  |  Offset: <b>{format_hex(self._offset_int)}</b>"
-            f"  |  Kích thước: <b>{format_bytes_human(self._size_int)}</b> ({self._size_int:,} B)"
-            f"  |  Cổng: <b>{self._port or 'Chưa kết nối'}</b>",
-            header_box,
-        )
+        self.lbl_meta = QLabel("", header_box)
         self.lbl_meta.setTextFormat(Qt.TextFormat.RichText)
         meta_row.addWidget(self.lbl_meta, 1)
 
@@ -406,15 +444,34 @@ class PartitionDataDialog(QDialog):
         meta_row.addWidget(self.lbl_dirty_badge)
         hl.addLayout(meta_row)
 
-        if self._access_level == "sensitive":
-            self.lbl_sensitivity = QLabel(
-                f"Lưu ý an toàn: Phân vùng '{self._part_name}' ({self._part_subtype}) chứa dữ liệu hệ thống nhạy cảm "
-                "(OTA/PHY/Keys). Hãy sao lưu (.bin) trước khi ghi đè hoặc xóa.",
-                header_box,
-            )
-            self.lbl_sensitivity.setProperty("role", "warning")
-            self.lbl_sensitivity.setWordWrap(True)
-            hl.addWidget(self.lbl_sensitivity)
+        # Thanh điều hướng qua lại giữa các phân vùng (chỉ hiện khi có >= 2 phân vùng)
+        self.nav_bar = QWidget(header_box)
+        nav_lay = QHBoxLayout(self.nav_bar)
+        nav_lay.setContentsMargins(0, 2, 0, 2)
+        nav_lay.setSpacing(8)
+        nav_lbl = QLabel("Phân vùng:", self.nav_bar)
+        nav_lbl.setStyleSheet("font-weight: 600;")
+        nav_lay.addWidget(nav_lbl)
+
+        self.btn_nav_prev = QPushButton("< Phân vùng trước", self.nav_bar)
+        self.btn_nav_prev.clicked.connect(lambda: self._switch_to_region_index(self._current_region_index - 1))
+        nav_lay.addWidget(self.btn_nav_prev)
+
+        self.cb_nav_partition = QComboBox(self.nav_bar)
+        self.cb_nav_partition.currentIndexChanged.connect(self._on_nav_combo_changed)
+        nav_lay.addWidget(self.cb_nav_partition, 1)
+
+        self.btn_nav_next = QPushButton("Phân vùng sau >", self.nav_bar)
+        self.btn_nav_next.clicked.connect(lambda: self._switch_to_region_index(self._current_region_index + 1))
+        nav_lay.addWidget(self.btn_nav_next)
+
+        self.nav_bar.setVisible(len(self._regions) > 1)
+        hl.addWidget(self.nav_bar)
+
+        self.lbl_sensitivity = QLabel("", header_box)
+        self.lbl_sensitivity.setWordWrap(True)
+        self.lbl_sensitivity.setVisible(False)
+        hl.addWidget(self.lbl_sensitivity)
 
         root.addWidget(header_box)
 
@@ -637,10 +694,10 @@ class PartitionDataDialog(QDialog):
         footer = QHBoxLayout()
         footer.setSpacing(8)
 
-        self.btn_read_chip = QPushButton("Đọc lại từ chip", self)
+        self.btn_read_chip = QPushButton("Đọc lại phân vùng này", self)
         bind_themed_icon(self.btn_read_chip, "refresh", size=16)
         self.btn_read_chip.clicked.connect(self._handle_read_chip)
-        self.btn_read_chip.setEnabled(self._on_read_from_chip is not None)
+        self.btn_read_chip.setEnabled(self._has_read_callback())
         footer.addWidget(self.btn_read_chip)
 
         self.btn_export_bin = QPushButton("Lấy dữ liệu (.bin)", self)
@@ -657,7 +714,7 @@ class PartitionDataDialog(QDialog):
         self.btn_erase_chip.setProperty("danger", "true")
         bind_themed_icon(self.btn_erase_chip, "delete", size=16, role="on_accent")
         self.btn_erase_chip.clicked.connect(self._handle_erase_chip)
-        self.btn_erase_chip.setEnabled(self._on_erase_on_chip is not None)
+        self.btn_erase_chip.setEnabled(self._has_erase_callback() and not self._is_read_only)
         footer.addWidget(self.btn_erase_chip)
 
         footer.addStretch(1)
@@ -666,7 +723,7 @@ class PartitionDataDialog(QDialog):
         self.btn_write_chip.setProperty("accent", "true")
         bind_themed_icon(self.btn_write_chip, "flash", size=16, role="on_accent")
         self.btn_write_chip.clicked.connect(self._handle_write_chip)
-        self.btn_write_chip.setEnabled(self._on_write_to_chip is not None)
+        self.btn_write_chip.setEnabled(self._has_write_callback() and not self._is_read_only)
         footer.addWidget(self.btn_write_chip)
 
         self.btn_close = QPushButton("Đóng", self)
@@ -694,6 +751,175 @@ class PartitionDataDialog(QDialog):
             return True
         return super().eventFilter(obj, event)
 
+    def _has_read_callback(self) -> bool:
+        return (self._on_read_region is not None) or (self._on_read_from_chip is not None)
+
+    def _has_write_callback(self) -> bool:
+        return (self._on_write_region is not None) or (self._on_write_to_chip is not None)
+
+    def _has_erase_callback(self) -> bool:
+        return (self._on_erase_region is not None) or (self._on_erase_on_chip is not None)
+
+    def _invoke_read_callback(self, reg: dict, done_cb: Callable[[Optional[bytes], str], None]):
+        if self._on_read_region is not None:
+            self._on_read_region(reg, done_cb)
+        elif self._on_read_from_chip is not None:
+            self._on_read_from_chip(done_cb)
+
+    def _invoke_write_callback(self, reg: dict, payload: bytes, done_cb: Callable[[bool, str], None]):
+        if self._on_write_region is not None:
+            self._on_write_region(reg, payload, done_cb)
+        elif self._on_write_to_chip is not None:
+            self._on_write_to_chip(payload, done_cb)
+
+    def _invoke_erase_callback(self, reg: dict, done_cb: Callable[[bool, str], None]):
+        if self._on_erase_region is not None:
+            self._on_erase_region(reg, done_cb)
+        elif self._on_erase_on_chip is not None:
+            self._on_erase_on_chip(done_cb)
+
+    def _sync_sensitivity_banner(self):
+        if self._is_read_only:
+            self.lbl_sensitivity.setText(
+                f"Chế độ Chỉ xem (Read-Only): Phân vùng '{self._part_name}' ({self._part_type}/{self._part_subtype}) "
+                "là phân vùng Hệ thống / Firmware nên đã khóa Ghi, Nạp .bin và Xóa. "
+                "Bạn vẫn có thể xem Hex/NVS, xuất .bin hoặc bật mở khóa trong Cài đặt."
+            )
+            self.lbl_sensitivity.setProperty("role", "warning")
+            self.lbl_sensitivity.setVisible(True)
+        elif not self._is_data_allowed and self._allow_write_system_app:
+            self.lbl_sensitivity.setText(
+                f"CẢNH BÁO NGUY HIỂM (Đã bật mở khóa trong Cài đặt): Bạn đang mở phân vùng '{self._part_name}' "
+                f"({self._part_type}/{self._part_subtype}). Ghi đè hoặc xóa sai có thể làm mạch không khởi động được (Brick)!"
+            )
+            self.lbl_sensitivity.setProperty("role", "warning")
+            self.lbl_sensitivity.setVisible(True)
+        elif self._access_level == "sensitive":
+            self.lbl_sensitivity.setText(
+                f"Lưu ý an toàn: Phân vùng '{self._part_name}' ({self._part_subtype}) chứa dữ liệu hệ thống nhạy cảm "
+                "(OTA/PHY/Keys). Hãy sao lưu (.bin) trước khi ghi đè hoặc xóa."
+            )
+            self.lbl_sensitivity.setProperty("role", "warning")
+            self.lbl_sensitivity.setVisible(True)
+        else:
+            self.lbl_sensitivity.setText("")
+            self.lbl_sensitivity.setVisible(False)
+        self.lbl_sensitivity.style().unpolish(self.lbl_sensitivity)
+        self.lbl_sensitivity.style().polish(self.lbl_sensitivity)
+
+    def _sync_nav_controls(self):
+        has_multi = len(self._regions) > 1
+        self.nav_bar.setVisible(has_multi)
+        if not has_multi:
+            return
+        self._syncing_nav = True
+        try:
+            self.cb_nav_partition.clear()
+            for idx, r in enumerate(self._regions):
+                r_name = str(r.get("name", f"part_{idx}") or f"part_{idx}")
+                r_off = int(r.get("offset_int", r.get("offset", 0)) or 0)
+                r_sz = int(r.get("size_int", r.get("size", 0)) or 0)
+                r_type = str(r.get("type", "") or "").lower()
+                is_sys = bool(r.get("is_system", False) or r_type == "bootloader")
+                stt_lbl = f"S{idx + 1}" if is_sys else f"#{idx + 1}"
+                if r.get("stt"):
+                    stt_lbl = str(r["stt"])
+                key = self._region_cache_key(r)
+                tags = []
+                if key in self._draft_buffers:
+                    tags.append("Nháp chưa ghi")
+                elif callable(self._get_cached_data) and self._get_cached_data(r) is not None:
+                    tags.append("Đã Cache")
+                tag_str = f" [{', '.join(tags)}]" if tags else ""
+                self.cb_nav_partition.addItem(
+                    f"{stt_lbl} · {r_name} ({format_hex(r_off)} | {format_bytes_human(r_sz, compact=True)}){tag_str}"
+                )
+            self.cb_nav_partition.setCurrentIndex(self._current_region_index)
+        finally:
+            self._syncing_nav = False
+        self.btn_nav_prev.setEnabled((not self._is_busy) and self._current_region_index > 0)
+        self.btn_nav_next.setEnabled((not self._is_busy) and self._current_region_index < (len(self._regions) - 1))
+        self.cb_nav_partition.setEnabled(not self._is_busy)
+
+    def _on_nav_combo_changed(self, target_idx: int):
+        if self._syncing_nav or target_idx < 0:
+            return
+        self._switch_to_region_index(target_idx)
+
+    def _apply_active_region_ui(self, data: bytes, mark_dirty: bool = False):
+        self.lbl_meta.setText(
+            f"Phân vùng: <b>{self._part_name}</b>  |  Loại: <b>{self._part_type}/{self._part_subtype}</b>"
+            f"  |  Offset: <b>{format_hex(self._offset_int)}</b>"
+            f"  |  Kích thước: <b>{format_bytes_human(self._size_int)}</b> ({self._size_int:,} B)"
+            f"  |  Cổng: <b>{self._port or 'Chưa kết nối'}</b>"
+        )
+        self._sync_sensitivity_banner()
+        self.hex_edit.setReadOnly(self._is_read_only)
+        self.utf8_edit.setReadOnly(self._is_read_only)
+        if self._part_subtype == "nvs":
+            self.tabs.setCurrentWidget(self.nvs_tab)
+        else:
+            self.tabs.setCurrentWidget(self.hex_tab)
+        self.set_buffer(data, mark_dirty=mark_dirty)
+        self._set_busy(False)
+        self._sync_nav_controls()
+
+    def _switch_to_region_index(self, target_idx: int):
+        if self._is_busy or target_idx < 0 or target_idx >= len(self._regions):
+            return
+        if target_idx == self._current_region_index:
+            return
+        if self._page_dirty and not self._apply_current_editor_page():
+            self._syncing_nav = True
+            try:
+                self.cb_nav_partition.setCurrentIndex(self._current_region_index)
+            finally:
+                self._syncing_nav = False
+            return
+
+        cur_key = self._region_cache_key(self._region)
+        if self._is_dirty or self._page_dirty:
+            self._draft_buffers[cur_key] = bytes(self._buffer)
+        else:
+            self._draft_buffers.pop(cur_key, None)
+
+        target_reg = dict(self._regions[target_idx])
+        target_key = self._region_cache_key(target_reg)
+
+        def _commit_switch(raw_bytes: bytes, mark_dirty: bool):
+            self._current_region_index = target_idx
+            self._load_region_fields(target_reg, raw_data_len=len(raw_bytes))
+            self._apply_active_region_ui(raw_bytes, mark_dirty=mark_dirty)
+
+        if target_key in self._draft_buffers:
+            _commit_switch(self._draft_buffers[target_key], True)
+            return
+
+        cached = self._get_cached_data(target_reg) if callable(self._get_cached_data) else None
+        if cached is not None:
+            _commit_switch(cached, False)
+            return
+
+        if not self._has_read_callback():
+            _commit_switch(b"\xFF" * int(target_reg.get("size_int", target_reg.get("size", 0x1000)) or 0x1000), False)
+            return
+
+        self._set_busy(True, f"Đang đọc phân vùng '{target_reg.get('name', '')}' lần đầu...")
+
+        def _after_read(data: Optional[bytes], err: str):
+            self._set_busy(False)
+            if data is None:
+                self._sync_nav_controls()
+                dlg.showerror(
+                    "Lỗi đọc phân vùng",
+                    err or f"Không thể đọc dữ liệu phân vùng '{target_reg.get('name', '')}' từ chip.",
+                    parent=self,
+                )
+                return
+            _commit_switch(data, False)
+
+        self._invoke_read_callback(target_reg, _after_read)
+
     def get_buffer(self) -> bytes:
         return self._buffer
 
@@ -709,6 +935,9 @@ class PartitionDataDialog(QDialog):
         if self._is_dirty or self._page_dirty:
             self.lbl_dirty_badge.setText("Có thay đổi chưa ghi chip")
             self.lbl_dirty_badge.setProperty("role", "warning")
+        elif self._is_read_only:
+            self.lbl_dirty_badge.setText("Chỉ xem Hex (System/App)")
+            self.lbl_dirty_badge.setProperty("role", "muted")
         else:
             self.lbl_dirty_badge.setText("Đã đồng bộ bộ nhớ đệm")
             self.lbl_dirty_badge.setProperty("role", "muted")
@@ -717,16 +946,20 @@ class PartitionDataDialog(QDialog):
 
     def _set_busy(self, busy: bool, message: str = ""):
         self._is_busy = busy
-        for b in (
-            self.btn_export_bin,
-            self.btn_import_bin,
-            self.btn_apply_page,
-            self.btn_close,
-        ):
+        for b in (self.btn_export_bin, self.btn_close):
             b.setEnabled(not busy)
-        self.btn_read_chip.setEnabled((not busy) and (self._on_read_from_chip is not None))
-        self.btn_write_chip.setEnabled((not busy) and (self._on_write_to_chip is not None))
-        self.btn_erase_chip.setEnabled((not busy) and (self._on_erase_on_chip is not None))
+        can_modify = (not busy) and (not self._is_read_only)
+        self.btn_import_bin.setEnabled(can_modify)
+        self.btn_apply_page.setEnabled(can_modify)
+        self.btn_read_chip.setEnabled((not busy) and self._has_read_callback())
+        self.btn_write_chip.setEnabled(can_modify and self._has_write_callback())
+        self.btn_erase_chip.setEnabled(can_modify and self._has_erase_callback())
+        if hasattr(self, "btn_nav_prev"):
+            self.btn_nav_prev.setEnabled((not busy) and self._current_region_index > 0)
+        if hasattr(self, "btn_nav_next"):
+            self.btn_nav_next.setEnabled((not busy) and self._current_region_index < (len(self._regions) - 1))
+        if hasattr(self, "cb_nav_partition"):
+            self.cb_nav_partition.setEnabled(not busy)
         self._update_nvs_buttons_state()
         if message:
             self.lbl_dirty_badge.setText(message)
@@ -779,7 +1012,7 @@ class PartitionDataDialog(QDialog):
         self._update_nvs_buttons_state()
 
     def _update_nvs_buttons_state(self):
-        can_edit = (not self._is_busy) and self._nvs_editable
+        can_edit = (not self._is_busy) and (not self._is_read_only) and self._nvs_editable
         self.btn_nvs_add.setEnabled(can_edit)
         self.btn_nvs_edit.setEnabled(can_edit and len(self._nvs_entries) > 0)
         self.btn_nvs_del.setEnabled(can_edit and len(self._nvs_entries) > 0)
@@ -850,7 +1083,7 @@ class PartitionDataDialog(QDialog):
                 self._commit_nvs_entries_to_buffer()
 
     def _on_nvs_edit(self):
-        if not self._nvs_editable:
+        if self._is_read_only or not self._nvs_editable:
             return
         real_idx = self._selected_nvs_entry_index()
         if real_idx is None:
@@ -956,6 +1189,8 @@ class PartitionDataDialog(QDialog):
         self._set_dirty(self._is_dirty)
 
     def _on_page_text_modified(self):
+        if getattr(self, "_is_read_only", False):
+            return
         self._page_dirty = True
         self._set_dirty(self._is_dirty)
 
@@ -1058,15 +1293,17 @@ class PartitionDataDialog(QDialog):
         return True
 
     def _handle_read_chip(self):
-        if self._is_busy or self._on_read_from_chip is None:
+        if self._is_busy or not self._has_read_callback():
             return
         if (self._is_dirty or self._page_dirty) and not dlg.askyesno(
-            "Đọc lại từ chip",
-            "Bộ nhớ đệm đang có sửa đổi chưa ghi xuống chip.\nĐọc lại từ chip sẽ ghi đè bản đang sửa. Tiếp tục?",
+            "Đọc lại phân vùng này",
+            f"Bộ nhớ đệm phân vùng '{self._part_name}' đang có sửa đổi chưa ghi xuống chip.\n"
+            "Đọc lại phân vùng này từ chip sẽ ghi đè bản đang sửa. Tiếp tục?",
             parent=self,
         ):
             return
-        self._set_busy(True, "Đang đọc lại dữ liệu từ chip...")
+        self._draft_buffers.pop(self._region_cache_key(self._region), None)
+        self._set_busy(True, f"Đang đọc lại phân vùng '{self._part_name}' từ chip...")
 
         def _done(data: Optional[bytes], err: str):
             self._set_busy(False)
@@ -1074,8 +1311,9 @@ class PartitionDataDialog(QDialog):
                 dlg.showerror("Lỗi đọc phân vùng", err or "Không thể đọc dữ liệu từ chip.", parent=self)
                 return
             self.set_buffer(data, mark_dirty=False)
+            self._sync_nav_controls()
 
-        self._on_read_from_chip(_done)
+        self._invoke_read_callback(self._region, _done)
 
     def _handle_export_bin(self):
         if not self._ensure_buffer_current():
@@ -1104,6 +1342,8 @@ class PartitionDataDialog(QDialog):
             dlg.showerror("Lỗi lưu tệp", str(exc), parent=self)
 
     def _handle_import_bin(self):
+        if self._is_busy or self._is_read_only:
+            return
         in_path = dlg.askopenfilename(
             parent=self,
             title=f"Chọn tệp .bin nạp vào bộ nhớ đệm vùng '{self._part_name}'",
@@ -1137,6 +1377,14 @@ class PartitionDataDialog(QDialog):
         )
 
     def _confirm_sensitive_action(self, action_verb: str) -> bool:
+        if not self._is_data_allowed and self._allow_write_system_app:
+            return dlg.askyesno(
+                "Cảnh báo NGUY HIỂM - Phân vùng Hệ thống / Firmware",
+                f"Phân vùng '{self._part_name}' ({self._part_type}/{self._part_subtype}) là thành phần khởi động/chương trình quan trọng.\n"
+                f"Thao tác {action_verb} có thể làm hỏng thiết bị (Brick) nếu dữ liệu không hợp lệ.\n\n"
+                "Bạn có chắc chắn vẫn muốn thực hiện?",
+                parent=self,
+            )
         if self._access_level == "sensitive":
             return dlg.askyesno(
                 "Cảnh báo phân vùng hệ thống nhạy cảm",
@@ -1147,7 +1395,7 @@ class PartitionDataDialog(QDialog):
         return True
 
     def _handle_erase_chip(self):
-        if self._is_busy or self._on_erase_on_chip is None:
+        if self._is_busy or self._is_read_only or not self._has_erase_callback():
             return
         if not self._confirm_sensitive_action(f"xóa trắng hoàn toàn vùng '{self._part_name}' về 0xFF"):
             return
@@ -1155,7 +1403,7 @@ class PartitionDataDialog(QDialog):
             "Xác nhận xóa dữ liệu phân vùng",
             f"Sẽ xóa toàn bộ dữ liệu trong phân vùng '{self._part_name}'\n"
             f"(Offset {format_hex(self._offset_int)}, Kích thước {format_bytes_human(self._size_int)}).\n"
-            "Hành động này không ảnh hưởng bootloader hay ứng dụng. Tiếp tục?",
+            "Tiếp tục?",
             parent=self,
         ):
             return
@@ -1165,7 +1413,9 @@ class PartitionDataDialog(QDialog):
         def _done(ok: bool, msg: str):
             self._set_busy(False)
             if ok:
+                self._draft_buffers.pop(self._region_cache_key(self._region), None)
                 self.set_buffer(b"\xFF" * self._size_int, mark_dirty=False)
+                self._sync_nav_controls()
                 dlg.showinfo(
                     "Xóa vùng thành công",
                     msg or f"Đã xóa trắng phân vùng '{self._part_name}' về 0xFF.",
@@ -1174,10 +1424,10 @@ class PartitionDataDialog(QDialog):
             else:
                 dlg.showerror("Lỗi xóa phân vùng", msg or "Không thể xóa dữ liệu phân vùng.", parent=self)
 
-        self._on_erase_on_chip(_done)
+        self._invoke_erase_callback(self._region, _done)
 
     def _handle_write_chip(self):
-        if self._is_busy or self._on_write_to_chip is None:
+        if self._is_busy or self._is_read_only or not self._has_write_callback():
             return
         if not self._ensure_buffer_current():
             return
@@ -1196,7 +1446,9 @@ class PartitionDataDialog(QDialog):
         def _done(ok: bool, msg: str):
             self._set_busy(False)
             if ok:
+                self._draft_buffers.pop(self._region_cache_key(self._region), None)
                 self._set_dirty(False)
+                self._sync_nav_controls()
                 dlg.showinfo(
                     "Ghi đè thành công",
                     msg or f"Đã ghi đè dữ liệu xuống phân vùng '{self._part_name}' thành công!",
@@ -1205,4 +1457,4 @@ class PartitionDataDialog(QDialog):
             else:
                 dlg.showerror("Lỗi ghi đè phân vùng", msg or "Không thể ghi dữ liệu xuống chip.", parent=self)
 
-        self._on_write_to_chip(self._buffer, _done)
+        self._invoke_write_callback(self._region, self._buffer, _done)

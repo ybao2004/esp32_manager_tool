@@ -352,6 +352,10 @@ class MainWindow(
         self.saved_flash_erase = False
         self.saved_auto_align = True
         self.saved_display_unit = "Thập phân"
+        self.saved_flash_read_mode = "on_demand"
+        self.saved_unlock_all_partition_edit = False
+        self.flash_partition_cache = {}
+        self._flash_cache_port = ""
 
         # Đọc cấu hình từ file
         self._report_startup_step(48, "Đang nạp cấu hình & giao diện Engineering...")
@@ -504,11 +508,13 @@ class MainWindow(
         self.port_cb = self.conn_bar.port_cb
         self.baud_cb = self.conn_bar.baud_cb
         self.serial_toggle_btn = self.conn_bar.serial_toggle_btn
+        self.btn_read_flash_top = self.conn_bar.btn_read_flash_top
         self.refresh_btn = self.conn_bar.refresh_btn
         self.chip_badge = self.conn_bar.chip_badge
 
         # Kết nối sự kiện ConnectionBar
         self.conn_bar.serial_toggle_btn.clicked.connect(self.toggle_serial_connection)
+        self.conn_bar.btn_read_flash_top.clicked.connect(self._hw_read_flash_global)
         self.conn_bar.refresh_btn.clicked.connect(self.refresh_ports_dropdown)
         self.conn_bar.port_cb.currentTextChanged.connect(self.on_port_selected)
         self.conn_bar.baud_cb.currentTextChanged.connect(self.on_baud_selected)
@@ -611,7 +617,6 @@ class MainWindow(
         self.part_mode_var = self.page_settings.cb_display_unit
         self.chk_auto_align = self.page_settings.chk_auto_align
         self.var_auto_align = self.page_settings.var_auto_align
-        self.btn_part_read_hw = self.page_partition.btn_part_read_hw
         self.btn_part_scan = self.page_partition.btn_part_scan
         self.btn_part_clear = self.page_partition.btn_part_clear
         self.btn_part_help = self.page_partition.btn_part_help
@@ -631,7 +636,6 @@ class MainWindow(
         self.cb_part_chip.activated.connect(lambda _: self._on_chip_changed())
         self.cb_part_flash.currentTextChanged.connect(lambda _: self._on_flash_size_changed())
 
-        self.btn_part_read_hw.clicked.connect(self._hw_read_partition_table)
         self.btn_part_scan.clicked.connect(self._action_scan_project)
         self.btn_part_clear.clicked.connect(self._action_clear_all_partitions)
         self.btn_part_help.clicked.connect(self._open_handbook_dialog)
@@ -650,7 +654,6 @@ class MainWindow(
         self.btn_backup_blink_led = self.page_backup.btn_backup_blink_led
         self.cb_backup_baud = self.page_backup.cb_backup_baud
         self.backup_baud_var = self.page_backup.backup_baud_var
-        self.btn_backup_read_chip = self.page_backup.btn_backup_read_chip
         self.btn_backup_sel_all = self.page_backup.btn_backup_sel_all
         self.btn_backup_unsel_all = self.page_backup.btn_backup_unsel_all
         self.btn_backup_sel_fw = self.page_backup.btn_backup_sel_fw
@@ -682,7 +685,6 @@ class MainWindow(
         if hasattr(self, "_sync_backup_source_port_ui"):
             self._sync_backup_source_port_ui()
         self._report_startup_step(84, "Đang hoàn thiện kết nối sự kiện & phím tắt...")
-        self.btn_backup_read_chip.clicked.connect(self._hw_probe_source_chip_for_backup)
         self.btn_backup_sel_all.clicked.connect(lambda: self._backup_select_all(True))
         self.btn_backup_unsel_all.clicked.connect(lambda: self._backup_select_all(False))
         self.btn_backup_sel_fw.clicked.connect(self._backup_select_firmware_only)
@@ -922,6 +924,13 @@ class MainWindow(
                         self.saved_display_unit = (
                             unit_val if unit_val in ("Thập phân", "Hệ HEX", "Song song") else "Thập phân"
                         )
+                        rm_val = str(config.get("flash_read_mode", "on_demand") or "on_demand")
+                        self.saved_flash_read_mode = (
+                            rm_val if rm_val in ("on_demand", "preload_data") else "on_demand"
+                        )
+                        self.saved_unlock_all_partition_edit = (
+                            config.get("unlock_all_partition_edit", False) is True
+                        )
 
                         loaded_labels = config.get("control_labels", {})
                         if isinstance(loaded_labels, dict):
@@ -993,6 +1002,8 @@ class MainWindow(
             "flash_erase": flash_erase_val,
             "partition_auto_align": auto_align_val,
             "display_unit_mode": display_unit_val,
+            "flash_read_mode": str(getattr(self, "saved_flash_read_mode", "on_demand") or "on_demand"),
+            "unlock_all_partition_edit": bool(getattr(self, "saved_unlock_all_partition_edit", False)),
         }
         temp_config = f"{CONFIG_FILE}.{os.getpid()}.tmp"
         try:
@@ -1031,6 +1042,8 @@ class MainWindow(
             self.saved_auto_check_updates = False
             self.saved_auto_align = True
             self.saved_display_unit = "Thập phân"
+            self.saved_flash_read_mode = "on_demand"
+            self.saved_unlock_all_partition_edit = False
             if hasattr(self, "var_hide_bt_ports"):
                 self.var_hide_bt_ports.set(True)
             if hasattr(self, "var_hide_phone_ports"):
@@ -1181,8 +1194,19 @@ class MainWindow(
         current_selection = self.port_cb.currentText().strip()
         self.update_port_list(current_selection, filtered_ports)
 
+    def _invalidate_flash_partition_cache(self, clear_port: bool = False):
+        if hasattr(self, "flash_partition_cache") and isinstance(self.flash_partition_cache, dict):
+            self.flash_partition_cache.clear()
+        else:
+            self.flash_partition_cache = {}
+        if clear_port:
+            self._flash_cache_port = ""
+
     def on_port_selected(self, text: str = ""):
         port = str(text or self.port_cb.currentText() or "").strip()
+        prev_cache_port = str(getattr(self, "_flash_cache_port", "") or "").strip()
+        if prev_cache_port and port and port.upper() != prev_cache_port.upper():
+            self._invalidate_flash_partition_cache(clear_port=True)
         if port and port != "Không có cổng COM":
             self.saved_com_port = port
             self.save_config()
@@ -1234,6 +1258,8 @@ class MainWindow(
     def set_global_busy_state(self, is_busy: bool, operation_name: str = "") -> None:
         self.detect_btn.setEnabled(not is_busy)
         self.serial_toggle_btn.setEnabled(not is_busy)
+        if getattr(self, "btn_read_flash_top", None) is not None:
+            self.btn_read_flash_top.setEnabled(not is_busy)
         self.port_cb.setEnabled(not is_busy)
         self.baud_cb.setEnabled(not is_busy)
 

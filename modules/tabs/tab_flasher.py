@@ -156,6 +156,8 @@ class FlasherTabMixin:
         try:
             res = run_esptool_command(args, progress_callback=on_stream)
             if esptool_command_succeeded(res):
+                if hasattr(self, "_invalidate_flash_partition_cache"):
+                    safe_after(self._invalidate_flash_partition_cache)
                 safe_after(lambda: self.set_status("Đã xóa sạch Flash thành công!", "success", progress=100))
                 safe_after(lambda: self.log_flash("\n>>> XÓA SẠCH FLASH THÀNH CÔNG!", 'green'))
                 safe_after(lambda: self._update_flash_progress(100))
@@ -329,6 +331,8 @@ class FlasherTabMixin:
 
             res = run_esptool_command(args, progress_callback=on_stream)
             if esptool_command_succeeded(res):
+                if hasattr(self, "_invalidate_flash_partition_cache"):
+                    safe_after(self._invalidate_flash_partition_cache)
                 safe_after(lambda: self._update_flash_progress(100))
                 safe_after(lambda: self.set_status("Nạp Firmware thành công!", "success", progress=100))
                 safe_after(lambda: self.log_flash("\n>>> NẠP FLASH THÀNH CÔNG! ESP ĐÃ SẴN SÀNG KHỞI ĐỘNG.", 'green'))

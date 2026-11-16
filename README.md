@@ -1,12 +1,26 @@
-# ESP32 Manager Tool (v1.6.3)
+# ESP32 Manager Tool (v1.7)
 
 > **Tác giả:** `@ybao04` | **Bản quyền:** GNU General Public License v3.0 (GPL-3.0) | **Kho lưu trữ:** [github.com/ybao2004/esp32_manager_tool](https://github.com/ybao2004/esp32_manager_tool)
 
-**ESP32 Manager Tool v1.6.3** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / quản trị dữ liệu phân vùng / nhân bản đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
+**ESP32 Manager Tool v1.7** là bộ công cụ desktop thuần **PyQt6** dành cho kỹ sư hệ thống nhúng và lập trình viên Espressif (ESP32, ESP32-S2, ESP32-S3, ESP32-C2, ESP32-C3, ESP32-C5, ESP32-C6, ESP32-C61, ESP32-H2, ESP32-P4). Ứng dụng thống nhất toàn bộ quy trình chẩn đoán phần cứng, theo dõi Serial, nạp Flash firmware, thiết kế bảng phân vùng (Partition Wizard) và sao lưu / quản trị dữ liệu phân vùng / nhân bản đa mạch vào một giao diện **Kỹ thuật Chuyên sâu (Engineering Sáng & Tối)**.
 
 ---
 
-## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.6.3
+## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.7
+
+- **Nút `Đọc dữ liệu flash` tập trung trên thanh điều khiển trên cùng:** Gộp thao tác đọc chip thay thế cho nút `Đọc từ chip` (Tab 4) và `Đọc chip nguồn` (Tab 5). Một lần bấm đọc sẽ nhận diện Chip/MAC/PSRAM, tự quét bảng phân vùng (`0x8000..0x20000`), đo dung lượng `Đã dùng (%)` & `Còn trống` và **đồng bộ tức thì cả Tab 4 & Tab 5** cùng Chip Badge.
+- **Bảng phân vùng 10 cột đồng bộ tại Tab 5 (`Sao lưu & Chép`):** Giữ nguyên bố cục 60/40 và nâng cấp `Danh Sách Phân Vùng Cần Sao Lưu` đủ 10 cột chuẩn Tab 4 (`Chọn`, `STT (S1/S2/#N)`, `Tên Phân Vùng (Name)`, `Kiểu (Type)`, `Phân loại (SubType)`, `Offset`, `Dung lượng (Size)`, `Cờ (Flags)`, `Đã dùng (%)`, `Còn trống`).
+- **Bộ nhớ đệm Cache RAM thông minh & 2 chế độ đọc trong Cài đặt:**
+  - Khi bấm đúp hoặc mở xem/sửa dữ liệu phân vùng ở Tab 5 hay chuyển giữa các vùng, ứng dụng đọc từ **Cache RAM theo phiên** (tránh đọc lại chip nhiều lần).
+  - Trong **Cài đặt -> Cài đặt Phân vùng & Hiển thị**, hỗ trợ chọn 2 chế độ: **Chỉ đọc từng vùng khi mở & lưu Cache** *(Mặc định)* hoặc **Đọc sẵn toàn bộ vùng `data` ngay từ đầu** (để xem/lật vùng bất kỳ tức thì 0 giây).
+  - Thêm tùy chọn **Mở khóa xem/sửa tất cả phân vùng Tab 5 (kể cả Bootloader/App)** trong Cài đặt *(mặc định tắt, có hộp thoại cảnh báo nguy hiểm khi bật)*.
+- **Nâng cấp cửa sổ Dữ liệu phân vùng (`PartitionDataDialog`):**
+  - Thêm thanh điều hướng **`< Phân vùng trước` / Dropdown chọn nhanh / `Phân vùng sau >`** để di chuyển qua lại giữa tất cả phân vùng (`S1 bootloader`, `S2 partition_table`, `#1..#N`), tự động giữ bản sửa nháp trong phiên khi lật vùng.
+  - Vùng `System/App` mặc định mở ở chế độ **Chỉ xem Hex** (khóa Ghi/Xóa/Nạp `.bin`), chỉ mở khóa chỉnh sửa khi bật tùy chọn trong Cài đặt.
+  - Bổ sung/chuẩn hóa nút **`Đọc lại phân vùng này`** để ép đọc lại riêng vùng đang mở từ chip, cập nhật lại Cache RAM và chỉ số `Đã dùng (%)` / `Còn trống` trên cả 2 tab.
+- **Phân tách rõ vai trò Tab 4 & Tab 5:** Tab 4 tập trung hoàn toàn vào thiết kế bảng phân vùng (bấm đúp để sửa cấu hình Offset/Size), còn mọi thao tác đọc/xem/sửa dữ liệu thực trên chip nằm thống nhất ở Tab 5.
+
+### Các cập nhật trước đó (v1.6.3)
 
 - **Đo sâu dung lượng `Đã dùng (%)` & `Còn trống` khi `Đọc từ chip` (Tab 4):**
   - Thực hiện đo dung lượng thực tế trong **1 phiên kết nối stub `esptool` duy nhất** (tự nâng tốc độ đọc từ `460800` bps trở lên) cho cả **2 dòng hệ thống (`S1: bootloader`, `S2: partition_table`)** và toàn bộ các phân vùng người dùng (`#1..#N`).
@@ -83,14 +97,14 @@
 - Tích hợp **Xóa Toàn Bộ Flash**, **Xóa toàn bộ trước khi nạp**, thanh tiến trình hợp nhất dưới thanh trạng thái đáy và phản chiếu log sang Tab 2 -> `Log`.
 
 ### 4. Quản lý Phân vùng - Partition Wizard (Tab 4)
-- Tương thích hệ số dòng chip Espressif (`chip_database.py`); mặc định `auto` tự nhận diện Chip, Flash, PSRAM và bảng phân vùng trên dải `0x8000..0x20000` (kể cả `0xC000`, `0xD000`...) khi bấm **Đọc từ chip**.
-- Mặc định luôn hiển thị 2 phân vùng hệ thống đầu tiên (`S1: bootloader` và `S2: partition_table`, khóa chỉnh sửa) trên cả bảng chi tiết và sơ đồ **Disk Map** (`42px`), hỗ trợ nhấp đúp bảng hoặc DiskMap để sửa phân vùng người dùng, hoàn tác (`Undo`) và làm lại (`Redo`) không giới hạn trong phiên.
-- Thanh công cụ gọn **1 hàng** cố định khung chọn Chip/Flash, nút **Đọc từ chip**, nạp **Mẫu**, **Quét Dự Án**, mở CSV/BIN và lưu toàn bảng bằng **Lưu CSV** (cấu hình **Đơn vị hiển thị** & **Tự căn 4K/64K** nằm trong *Cài đặt*).
+- Tương thích hệ số dòng chip Espressif (`chip_database.py`); tự động đồng bộ khi bấm **Đọc dữ liệu flash** trên thanh điều khiển trên cùng (tự nhận diện Chip, Flash, PSRAM, bảng phân vùng `0x8000..0x20000` và đo sâu `Đã dùng (%)` / `Còn trống`).
+- Mặc định luôn hiển thị 2 phân vùng hệ thống đầu tiên (`S1: bootloader` và `S2: partition_table`, khóa chỉnh sửa) trên cả bảng chi tiết và sơ đồ **Disk Map** (`42px`), hỗ trợ nhấp đúp bảng hoặc DiskMap để sửa cấu hình phân vùng người dùng, hoàn tác (`Undo`) và làm lại (`Redo`) không giới hạn trong phiên.
+- Thanh công cụ gọn **1 hàng** cố định khung chọn Chip/Flash, nạp **Mẫu**, **Quét Dự Án**, mở CSV/BIN và lưu toàn bảng bằng **Lưu CSV** (cấu hình **Đơn vị hiển thị**, **Tự căn 4K/64K** và **Chế độ đọc Flash** nằm trong *Cài đặt*).
 
 ### 5. Sao lưu & Nhân bản Đa Mạch (Tab 5)
-- Toàn bộ cụm nút nguồn & lọc nhanh nằm gọn trên **1 hàng ngang**; `Board Gốc` dùng chung Cổng COM ở thanh điều khiển trên cùng, trong khi **Baudrate Tab 5** giữ độc lập để đọc/chép tốc độ cao.
-- Đọc bảng phân vùng trực tiếp từ `Board Gốc` (tự động quét `0x8000..0x20000` bắt cả offset dịch như `0xC000` và hiển thị chính xác `bootloader`, `partition_table`), tích chọn từng phân vùng qua hộp kiểm cột 0 (`Chọn`) hoặc phím `Space`.
-- Quản trị dữ liệu phân vùng **Non-Firmware** (`nvs`, `spiffs`, `littlefs`, `fat`...) qua nút chức năng, nhấp đúp hoặc Menu chuột phải đồng bộ giữa bảng và sơ đồ đĩa: **Đọc / Xem & Sửa NVS Key-Value & Hex/UTF-8**, **Xuất nhanh (.bin)**, **Nạp `.bin` ghi đè vùng**, **Xóa dữ liệu vùng** (khóa an toàn Bootloader, Partition Table và App), cùng nút **Xóa toàn bộ Flash** cho Board Gốc đặt ngay bên phải nút `Xóa dữ liệu`.
+- Toàn bộ cụm nút nguồn & lọc nhanh nằm gọn trên **1 hàng ngang**; `Board Gốc` dùng chung Cổng COM và nút **Đọc dữ liệu flash** ở thanh điều khiển trên cùng, trong khi **Baudrate Tab 5** giữ độc lập để đọc/chép tốc độ cao.
+- Bảng phân vùng **10 cột đồng bộ Tab 4** (`Chọn`, `STT (S1/S2/#N)`, `Tên Phân Vùng`, `Kiểu`, `Phân loại`, `Offset`, `Dung lượng`, `Cờ`, `Đã dùng (%)`, `Còn trống`); tích chọn sao lưu qua hộp kiểm cột 0 (`Chọn`) hoặc phím `Space`.
+- Nhấp đúp dòng bảng/DiskMap hoặc bấm **Đọc/Sửa dữ liệu** (hay Menu chuột phải) để mở **Cửa sổ Dữ liệu phân vùng** với thanh điều hướng **`< Trước` / Dropdown / `Sau >`** qua mọi phân vùng và **Cache RAM 1 lần từ đầu** (bấm **`Đọc lại phân vùng này`** khi cần làm mới từ chip): phân vùng `data` cho xem & sửa NVS Key-Value / Hex 16 KB, phân vùng `System/App` mặc định **Chỉ xem Hex** (chỉ mở khóa Ghi/Xóa khi bật trong *Cài đặt* và xác nhận cảnh báo nguy hiểm). Nút **Xóa toàn bộ Flash** cho Board Gốc đặt ngay bên phải nút `Xóa dữ liệu`.
 - Đặt tên sao lưu theo chuẩn `<chip>_<MAC>_Full - <yyyymmdd_hhmmss>.bin` (Full Flash) và `<chip>_<MAC>_<tên phân vùng>_<offset> - <yyyymmdd_hhmmss>.bin` (phân vùng); cắt trống `0xFF` (`Smart Trim`) và xuất hồ sơ băm SHA-256 & MD5 (`backup_info.txt`, `backup_manifest.json`, `partitions.csv`).
 - **Nhân bản trực tiếp (Direct Multi-Board Clone):** Đọc từ `Board Gốc` hoặc thư mục sao lưu sẵn có và nạp song song ra nhiều cổng Đích (`COMxx`) cùng lúc (tự động loại trừ cổng COM trên cùng, hiển thị chính xác tiến trình `esptool` v4/v5 theo từng bước).
 - **Nháy LED nhận diện Board Gốc (tùy chọn nâng cao):** Bật trong *Cài đặt -> Tùy chọn ẩn (Tab 5)* để gửi tín hiệu nháy LED TX/RX an toàn trong 5 giây khi đổi Cổng COM ở Tab 5 hoặc bấm `Nháy LED`.
@@ -113,7 +127,7 @@ esp32_manager_tool/
 ├── modules/
 │   ├── app_core.py                 # Lớp InspectorApp, vòng đời Single-Instance & thu hồi GDI icon
 │   ├── single_instance.py          # Khóa đơn thực thể (Mutex/IPC) & dừng tiến trình con hệ điều hành
-│   ├── config.py                   # Cấu hình hệ thống, phiên bản (v1.6.3) và hằng số mặc định
+│   ├── config.py                   # Cấu hình hệ thống, phiên bản (v1.7) và hằng số mặc định
 │   ├── esptool_util.py             # Đóng gói tiến trình con esptool đa nền tảng & parse Output
 │   ├── backup_utils.py             # Tính băm SHA-256/MD5, cắt 0xFF, chuẩn hóa tên file & manifest sao lưu
 │   ├── nvs_util.py                 # Bộ giải mã & đóng gói NVS Binary v1/v2 thuần Python

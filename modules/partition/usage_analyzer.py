@@ -168,10 +168,13 @@ def measure_partition_table_usage_with_reader(
     *,
     raw_pt: bytes | None = None,
     progress_cb: Callable[[int, str], None] | None = None,
+    captured_blobs: dict[tuple[int, int], bytes] | None = None,
 ) -> None:
     """
     Đo và cập nhật mức sử dụng thực tế (used_size, usage_measured) cho Bootloader,
     Partition Table và toàn bộ phân vùng trong bảng qua hàm đọc Flash read_fn(offset, size).
+    Nếu truyền `captured_blobs`, lưu lại dữ liệu nhị phân của Bootloader, Partition Table
+    và các phân vùng `data` để phục vụ bộ nhớ đệm RAM (tránh đọc lại chip).
     """
     boot_off = int(getattr(table, "bootloader_offset", 0x1000) or 0)
     pt_off = int(getattr(table, "part_table_offset", 0x8000) or 0x8000)
@@ -188,10 +191,15 @@ def measure_partition_table_usage_with_reader(
     # 1. Bootloader
     if boot_sz > 0:
         _notify("Đang đo dung lượng Bootloader...")
+        raw_bl: bytes | None = None
         bl_used = compute_esp_image_used_bytes(boot_off, boot_sz, read_fn)
         if bl_used < 0:
             raw_bl = read_fn(boot_off, boot_sz)
             bl_used = compute_raw_non_ff_bytes(raw_bl, "bootloader")
+        elif captured_blobs is not None:
+            raw_bl = read_fn(boot_off, boot_sz)
+        if captured_blobs is not None and raw_bl is not None:
+            captured_blobs[(boot_off, boot_sz)] = bytes(raw_bl)
         table.bootloader_used_size = max(0, min(boot_sz, bl_used))
         table.bootloader_usage_measured = True
     step += 1
@@ -199,6 +207,11 @@ def measure_partition_table_usage_with_reader(
     # 2. Partition Table
     _notify("Đang đo dung lượng Partition Table...")
     pt_blob = raw_pt if (raw_pt and len(raw_pt) >= 32) else read_fn(pt_off, 0x1000)
+    if captured_blobs is not None and pt_blob:
+        pt_norm = bytes(pt_blob[:0x1000])
+        if len(pt_norm) < 0x1000:
+            pt_norm = pt_norm + (b"\xFF" * (0x1000 - len(pt_norm)))
+        captured_blobs[(pt_off, 0x1000)] = pt_norm
     table.part_table_used_size = compute_partition_table_used_bytes(pt_blob or b"")
     table.part_table_usage_measured = True
     step += 1
@@ -221,6 +234,8 @@ def measure_partition_table_usage_with_reader(
             entry.usage_measured = True
         else:
             raw_data = read_fn(entry.offset, entry.size)
+            if captured_blobs is not None and raw_data is not None:
+                captured_blobs[(entry.offset, entry.size)] = bytes(raw_data)
             entry.used_size = max(0, min(entry.size, compute_data_used_bytes(raw_data, entry.subtype_str)))
             entry.usage_measured = True
         step += 1

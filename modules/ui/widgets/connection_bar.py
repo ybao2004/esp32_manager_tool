@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QSize
 from modules.config import COMMON_BAUDS
-from modules.ui.icons import get_icon
+from modules.ui.icons import get_icon, bind_themed_icon
 from modules.ui.theme.tokens import ThemeTokens
 from modules.ui.theme.manager import ThemeManager
 
@@ -113,8 +113,8 @@ class ConnectionBar(QFrame):
 
     def _build_ui(self):
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 6, 12, 6)
-        layout.setSpacing(8)
+        layout.setContentsMargins(10, 6, 10, 6)
+        layout.setSpacing(6)
 
         # Label Cổng COM
         lbl_port = QLabel("Cổng COM:", self)
@@ -123,7 +123,7 @@ class ConnectionBar(QFrame):
 
         # Dropdown Cổng COM
         self.port_cb = _ComboCompat(self)
-        self.port_cb.setMinimumWidth(140)
+        self.port_cb.setMinimumWidth(96)
         self.port_cb.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
         layout.addWidget(self.port_cb)
 
@@ -138,7 +138,7 @@ class ConnectionBar(QFrame):
         layout.addWidget(self.refresh_btn)
 
         # Phân cách nhẹ
-        layout.addSpacing(6)
+        layout.addSpacing(4)
 
         # Label Baudrate
         lbl_baud = QLabel("Baudrate:", self)
@@ -150,11 +150,11 @@ class ConnectionBar(QFrame):
         self.baud_cb.setEditable(True)
         self.baud_cb.addItems(COMMON_BAUDS)
         self.baud_cb.setCurrentText("115200")
-        self.baud_cb.setMinimumWidth(96)
+        self.baud_cb.setMinimumWidth(78)
         layout.addWidget(self.baud_cb)
 
         # Phân cách
-        layout.addSpacing(6)
+        layout.addSpacing(4)
 
         # Nút Kết nối Serial
         self.serial_toggle_btn = _ButtonCompat(
@@ -164,15 +164,30 @@ class ConnectionBar(QFrame):
         )
         self.serial_toggle_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.serial_toggle_btn.setProperty("accent", "true")
+        self.serial_toggle_btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._sync_serial_toggle_icon("Kết nối")
         self.serial_toggle_btn.setIconSize(QSize(16, 16))
         layout.addWidget(self.serial_toggle_btn)
 
+        # Nút Đọc dữ liệu Flash toàn cục (thay thế nút đọc ở Tab 4 & Tab 5, đồng bộ 2 tab)
+        self.btn_read_flash_top = _ButtonCompat("Đọc dữ liệu flash", self)
+        self.btn_read_flash_top.setCursor(Qt.CursorShape.PointingHandCursor)
+        bind_themed_icon(self.btn_read_flash_top, "chip", size=16)
+        self.btn_read_flash_top.setIconSize(QSize(16, 16))
+        self.btn_read_flash_top.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        self.btn_read_flash_top.setToolTip(
+            "Đọc thông tin Chip/MAC, bảng phân vùng, dung lượng Đã dùng/Còn trống và đồng bộ đồng thời Tab 4 & Tab 5"
+        )
+        self.btn_read_flash_top.setStyleSheet("padding: 0 10px;")
+        layout.addWidget(self.btn_read_flash_top)
+
         # Giãn cách linh hoạt
-        layout.addSpacerItem(QSpacerItem(20, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
+        layout.addSpacerItem(QSpacerItem(10, 20, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
 
         # Chip Badge (Huy hiệu thông tin chip rút gọn)
         self.chip_badge = QLabel("Chưa kết nối chip", self)
+        self.chip_badge.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+        self.chip_badge.setMinimumWidth(80)
         self.chip_badge.setStyleSheet(f"""
             QLabel {{
                 background-color: {self._current_tokens.surface_alt};

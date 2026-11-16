@@ -38,16 +38,23 @@ from modules.esptool_util import (
     format_chip_badge_text,
     get_chip_data,
     scan_chip_partition_table,
+    probe_chip_partition_usage,
 )
 from modules.serial_util import list_com_ports_local
 from modules.partition.unit_formatter import (
-    DisplayMode, format_bytes_human, format_hex, format_value, align_up
+    DisplayMode, format_bytes_human, format_hex, format_value, format_usage_cells, align_up
 )
 from modules.partition.chip_database import (
     CHIP_FAMILY_DATABASE, get_chip_info
 )
 from modules.partition.partition_model import (
-    PartitionTable, PartitionEntry
+    PartitionTable, PartitionEntry, PARTITION_TABLE_SIZE_DEFAULT
+)
+from modules.partition.usage_analyzer import (
+    compute_data_used_bytes,
+    compute_esp_image_used_bytes,
+    compute_partition_table_used_bytes,
+    compute_raw_non_ff_bytes,
 )
 from modules.tabs.tab_partition import DiskMapCanvas
 
@@ -135,49 +142,218 @@ class BackupCloneTabMixin:
 
     def _get_all_backup_regions(self) -> list[dict]:
         """
-        Trả về danh sách toàn bộ các phân vùng có thể sao lưu trên chip gốc:
-        Bao gồm Bootloader, Partition Table và tất cả các phân vùng trong self.backup_table.entries.
+        Trả về danh sách toàn bộ các phân vùng có thể sao lưu / xem trên chip gốc:
+        Bao gồm S1 (Bootloader), S2 (Partition Table) và #1..#N phân vùng trong self.backup_table.entries.
         Trả về danh sách rỗng nếu chưa đọc từ chip và chưa có phân vùng nào.
         """
         if not getattr(self, "_backup_has_loaded_source", False) and not self.backup_table.entries:
             return []
 
-        boot_off = int(self.backup_source_info.get("bootloader_offset", 0x1000))
-        part_off = int(self.backup_source_info.get("part_table_offset", 0x8000))
+        boot_off = int(
+            self.backup_source_info.get(
+                "bootloader_offset",
+                getattr(self.backup_table, "bootloader_offset", 0x1000) or 0x1000,
+            )
+        )
+        part_off = int(
+            self.backup_source_info.get(
+                "part_table_offset",
+                getattr(self.backup_table, "part_table_offset", 0x8000) or 0x8000,
+            )
+        )
         boot_size = max(0x1000, part_off - boot_off) if part_off > boot_off else 0x7000
 
         regions = [
             {
                 "key": f"sys_bootloader_{boot_off:X}",
+                "stt": "S1",
                 "name": "bootloader",
                 "type": "system",
                 "subtype": "bootloader",
                 "offset": boot_off,
                 "size": boot_size,
+                "flags": "locked",
+                "used_size": int(getattr(self.backup_table, "bootloader_used_size", 0) or 0),
+                "usage_measured": bool(getattr(self.backup_table, "bootloader_usage_measured", False)),
                 "is_system": True,
             },
             {
                 "key": f"sys_parttable_{part_off:X}",
+                "stt": "S2",
                 "name": "partition_table",
                 "type": "system",
                 "subtype": "part_table",
                 "offset": part_off,
-                "size": 0x1000,
+                "size": PARTITION_TABLE_SIZE_DEFAULT,
+                "flags": "locked",
+                "used_size": int(getattr(self.backup_table, "part_table_used_size", 0) or 0),
+                "usage_measured": bool(getattr(self.backup_table, "part_table_usage_measured", False)),
                 "is_system": True,
             },
         ]
 
-        for entry in sorted(self.backup_table.entries, key=lambda e: e.offset):
+        for idx, entry in enumerate(sorted(self.backup_table.entries, key=lambda e: e.offset), 1):
             regions.append({
                 "key": f"part_{entry.name}_{entry.offset:X}",
+                "stt": f"#{idx}",
                 "name": entry.name,
                 "type": entry.type_str,
                 "subtype": entry.subtype_str,
                 "offset": entry.offset,
                 "size": entry.size,
+                "flags": entry.flags_str if entry.flags_str else "--",
+                "used_size": int(getattr(entry, "used_size", 0) or 0),
+                "usage_measured": bool(getattr(entry, "usage_measured", False)),
                 "is_system": False,
             })
         return regions
+
+    @staticmethod
+    def _cache_key_for_region(region: dict | None) -> tuple[int, int]:
+        if not region:
+            return (0, 0)
+        off = int(region.get("offset_int", region.get("offset", 0)) or 0)
+        sz = int(region.get("size_int", region.get("size", 0)) or 0)
+        return (off, sz)
+
+    def _get_cached_partition_bytes(self, region: dict | None) -> bytes | None:
+        cache = getattr(self, "flash_partition_cache", None)
+        if not isinstance(cache, dict) or not region:
+            return None
+        return cache.get(self._cache_key_for_region(region))
+
+    def _compute_region_used_size_from_bytes(self, region: dict, raw_data: bytes) -> int:
+        r_type = str(region.get("type", "") or "").lower()
+        r_sub = str(region.get("subtype", "") or "").lower()
+        r_sz = max(0, int(region.get("size_int", region.get("size", len(raw_data))) or len(raw_data)))
+        buf = bytes(raw_data or b"")
+        if r_sub == "part_table" or str(region.get("name", "")).lower() == "partition_table":
+            return min(r_sz, compute_partition_table_used_bytes(buf))
+        if r_type == "app" or r_sub == "bootloader":
+            def _buf_reader(addr: int, length: int) -> bytes:
+                base = int(region.get("offset_int", region.get("offset", 0)) or 0)
+                rel = addr - base
+                if rel < 0 or rel >= len(buf):
+                    return b"\xFF" * length
+                chunk = buf[rel : rel + length]
+                if len(chunk) < length:
+                    chunk = chunk + (b"\xFF" * (length - len(chunk)))
+                return chunk
+            base_off = int(region.get("offset_int", region.get("offset", 0)) or 0)
+            used_img = compute_esp_image_used_bytes(base_off, r_sz, _buf_reader)
+            if used_img >= 0:
+                return min(r_sz, used_img)
+            return min(r_sz, compute_raw_non_ff_bytes(buf, r_sub))
+        return min(r_sz, compute_data_used_bytes(buf, r_sub))
+
+    def _update_partition_cache_and_usage(self, region: dict | None, raw_data: bytes, erased: bool = False):
+        if not region:
+            return
+        r_off, r_sz = self._cache_key_for_region(region)
+        if not hasattr(self, "flash_partition_cache") or not isinstance(self.flash_partition_cache, dict):
+            self.flash_partition_cache = {}
+        payload = bytes(raw_data or b"")
+        if r_sz > 0 and len(payload) < r_sz:
+            payload = payload + (b"\xFF" * (r_sz - len(payload)))
+        elif r_sz > 0 and len(payload) > r_sz:
+            payload = payload[:r_sz]
+        self.flash_partition_cache[(r_off, r_sz)] = payload
+
+        used_bytes = 0 if erased else self._compute_region_used_size_from_bytes(region, payload)
+        r_name_low = str(region.get("name", "") or "").lower()
+        r_sub_low = str(region.get("subtype", "") or "").lower()
+
+        tables = [t for t in (getattr(self, "backup_table", None), getattr(self, "table", None)) if t is not None]
+        for tbl in tables:
+            if r_sub_low == "bootloader" or r_name_low == "bootloader":
+                tbl.bootloader_used_size = used_bytes
+                tbl.bootloader_usage_measured = True
+            elif r_sub_low == "part_table" or r_name_low == "partition_table":
+                tbl.part_table_used_size = used_bytes
+                tbl.part_table_usage_measured = True
+            else:
+                for ent in getattr(tbl, "entries", []) or []:
+                    if int(ent.offset) == r_off and int(ent.size) == r_sz:
+                        ent.used_size = used_bytes
+                        ent.usage_measured = True
+
+    def _is_partition_writable_for_tab5(self, region: dict | None) -> tuple[bool, bool, str]:
+        if region is None:
+            return False, False, "empty"
+        allowed, level = is_non_firmware_data_region(region)
+        unlocked = bool(getattr(self, "saved_unlock_all_partition_edit", False))
+        return bool(allowed or unlocked), bool(allowed), level
+
+    def _sync_backup_from_global_read(
+        self,
+        *,
+        port: str,
+        chip_key: str,
+        resolved_cid: str | None,
+        fid_parsed: dict,
+        flash_bytes: int,
+        boot_off: int,
+        part_off: int | None,
+        found_table: PartitionTable | None,
+        raw_pt: bytes = b"",
+        captured_blobs: dict[tuple[int, int], bytes] | None = None,
+    ):
+        chip_id = resolved_cid or (fid_parsed.get("chip_name_key") if fid_parsed else None) or chip_key or "ESP32"
+        chip_line = (fid_parsed.get("chip_line") if fid_parsed else None) or chip_key or chip_id
+        rev = (fid_parsed.get("revision") if fid_parsed else None) or "N/A"
+        crystal = (fid_parsed.get("crystal") if fid_parsed else None) or "N/A"
+        mac_hex = fid_parsed.get("mac") if fid_parsed else None
+        mac_fmt = ":".join(mac_hex[i:i+2] for i in range(0, 12, 2)).upper() if mac_hex and len(mac_hex) == 12 else "N/A"
+        eff_flash = int(flash_bytes or (float(fid_parsed.get("flash_mb") or 4.0) * 1024 * 1024))
+        sram_kb = fid_parsed.get("sram_kb") if fid_parsed else None
+        psram_mb = (fid_parsed.get("psram_mb") if fid_parsed else None) or 0
+        eff_pt_off = int(part_off if part_off is not None else getattr(self.backup_table, "part_table_offset", 0x8000) or 0x8000)
+
+        self.backup_source_info.update({
+            "source_port": port,
+            "chip_name": chip_id,
+            "chip_line": chip_line,
+            "revision": rev,
+            "crystal": crystal,
+            "mac": mac_fmt,
+            "flash_size": eff_flash,
+            "sram_kb": sram_kb,
+            "psram_mb": psram_mb,
+            "bootloader_offset": int(boot_off),
+            "part_table_offset": eff_pt_off,
+        })
+        self._backup_has_loaded_source = True
+
+        if found_table is not None and found_table.entries and part_off is not None:
+            self.backup_table.target_chip = found_table.target_chip or str(chip_id).lower().replace("-", "")
+            self.backup_table.flash_size = eff_flash
+            self.backup_table.bootloader_offset = int(boot_off)
+            self.backup_table.part_table_offset = eff_pt_off
+            self.backup_table.entries = [e.clone() for e in found_table.entries]
+            self.backup_table.bootloader_used_size = int(getattr(found_table, "bootloader_used_size", 0) or 0)
+            self.backup_table.bootloader_usage_measured = bool(getattr(found_table, "bootloader_usage_measured", False))
+            self.backup_table.part_table_used_size = int(getattr(found_table, "part_table_used_size", 0) or 0)
+            self.backup_table.part_table_usage_measured = bool(getattr(found_table, "part_table_usage_measured", False))
+        elif raw_pt:
+            self.backup_table.flash_size = eff_flash
+            self.backup_table.bootloader_offset = int(boot_off)
+            self.backup_table.from_binary(raw_pt)
+        else:
+            self.backup_table.clear()
+            self.backup_table.flash_size = eff_flash
+            self.backup_table.bootloader_offset = int(boot_off)
+
+        all_regs = self._get_all_backup_regions()
+        all_keys = {r["key"] for r in all_regs}
+        if not self.backup_selected_keys or not self.backup_selected_keys.issubset(all_keys):
+            self.backup_selected_keys = set(all_keys)
+        self.backup_region_hashes.clear()
+        if captured_blobs:
+            for r in all_regs:
+                blob = captured_blobs.get(self._cache_key_for_region(r))
+                if blob is not None:
+                    self.backup_region_hashes[r["key"]] = f"SHA256: {compute_bytes_hashes(blob)['sha256'][:16]}..."
+        self.refresh_backup_views()
 
     def _get_backup_src_port(self) -> str:
         """Lấy cổng COM Board Gốc đồng bộ từ thanh chọn COM trên cùng."""
@@ -501,7 +677,7 @@ class BackupCloneTabMixin:
             finally:
                 self.backup_tree.blockSignals(was_blocked)
             self.lbl_backup_chip_summary.config(
-                text="Chưa đọc dữ liệu phân vùng từ chip nguồn (Chọn cổng Board Gốc và bấm 'Đọc chip nguồn')."
+                text="Chưa đọc dữ liệu phân vùng từ chip (Chọn Cổng COM và bấm 'Đọc dữ liệu flash' ở thanh trên cùng)."
             )
             self._backup_active_key = None
             self._sync_backup_selection_buttons()
@@ -545,18 +721,27 @@ class BackupCloneTabMixin:
                     selected_bytes += reg["size"]
 
                 chk_symbol = "[x]" if is_checked else "[ ]"
+                used_str, free_str = format_usage_cells(
+                    int(reg.get("used_size", 0) or 0),
+                    int(reg.get("size", 0) or 0),
+                    bool(reg.get("usage_measured", False)),
+                    mode,
+                )
                 self.backup_tree.insert(
                     "",
                     "end",
                     iid=key,
                     values=(
                         chk_symbol,
-                        idx,
+                        reg.get("stt", f"#{idx}"),
                         reg["name"],
                         reg["type"],
                         reg["subtype"],
                         format_value(reg["offset"], mode, is_size=False),
                         format_value(reg["size"], mode, is_size=True),
+                        reg.get("flags", "--"),
+                        used_str,
+                        free_str,
                     )
                 )
             if self._backup_active_key and self.backup_tree.exists(self._backup_active_key):
@@ -604,8 +789,18 @@ class BackupCloneTabMixin:
         if entry is None or getattr(entry, "is_unallocated", False):
             return None
         if getattr(entry, "is_system", False):
-            boot_off = int(self.backup_source_info.get("bootloader_offset", 0x1000))
-            part_off = int(self.backup_source_info.get("part_table_offset", 0x8000))
+            boot_off = int(
+                self.backup_source_info.get(
+                    "bootloader_offset",
+                    getattr(self.backup_table, "bootloader_offset", 0x1000) or 0x1000,
+                )
+            )
+            part_off = int(
+                self.backup_source_info.get(
+                    "part_table_offset",
+                    getattr(self.backup_table, "part_table_offset", 0x8000) or 0x8000,
+                )
+            )
             if entry.type_str == "bootloader" or entry.name.lower() == "bootloader":
                 key = f"sys_bootloader_{boot_off:X}"
             else:
@@ -625,10 +820,14 @@ class BackupCloneTabMixin:
 
     def _sync_backup_selection_buttons(self):
         reg = self._get_active_backup_region()
-        allowed, _ = is_non_firmware_data_region(reg)
+        can_write, _allowed, _level = self._is_partition_writable_for_tab5(reg)
         busy = bool(getattr(self, "_is_backup_hw_running", False))
-        enable = bool(allowed and not busy)
-        for attr in ("btn_backup_edit_data", "btn_backup_erase_data"):
+        can_view_any = bool(reg is not None and not busy)
+        can_erase = bool(can_write and not busy)
+        for attr, enable in (
+            ("btn_backup_edit_data", can_view_any),
+            ("btn_backup_erase_data", can_erase),
+        ):
             w = getattr(self, attr, None)
             if w is None:
                 continue
@@ -788,7 +987,7 @@ class BackupCloneTabMixin:
             state = "normal" if state else "disabled"
         for attr in (
             "btn_backup_blink_led", "cb_backup_baud",
-            "btn_backup_read_chip", "btn_backup_sel_all", "btn_backup_unsel_all",
+            "btn_backup_sel_all", "btn_backup_unsel_all",
             "btn_backup_sel_fw", "chk_backup_trim", "btn_backup_to_folder",
             "btn_backup_full_chip", "btn_backup_to_flasher", "btn_direct_clone",
             "chk_clone_erase", "btn_backup_edit_data", "btn_backup_erase_data",
@@ -898,7 +1097,7 @@ class BackupCloneTabMixin:
                     )
                 )
 
-        found_off, found_table, _raw_pt, cmd_ok, _read_text = scan_chip_partition_table(
+        found_off, found_table, raw_pt, cmd_ok, _read_text = scan_chip_partition_table(
             port,
             baud,
             preferred_offset=0x8000,
@@ -915,6 +1114,25 @@ class BackupCloneTabMixin:
 
         if found_off is not None and found_table is not None and found_table.entries:
             self.backup_source_info["part_table_offset"] = found_off
+            found_table.part_table_offset = found_off
+            found_table.bootloader_offset = boot_off
+            found_table.flash_size = flash_bytes
+            preload_data = (
+                str(getattr(self, "saved_flash_read_mode", "on_demand") or "on_demand") == "preload_data"
+            )
+            captured_blobs: dict[tuple[int, int], bytes] = {}
+            probe_chip_partition_usage(
+                port,
+                max(460800, baud),
+                found_table,
+                chip_arg=chip_key.lower().replace("-", ""),
+                raw_pt=raw_pt,
+                preload_data_blobs=preload_data,
+                captured_blobs_out=captured_blobs,
+            )
+            if captured_blobs and hasattr(self, "flash_partition_cache"):
+                self.flash_partition_cache.update(captured_blobs)
+                self._flash_cache_port = port
             self.backup_table = found_table
             safe_after(lambda n=len(found_table.entries), off=found_off: self.log_backup(
                 f"  + Đã giải mã thành công {n} phân vùng từ bảng phân vùng @ 0x{off:X}.", "green"
@@ -1930,35 +2148,37 @@ class BackupCloneTabMixin:
 
         menu.addSeparator()
 
-        is_data_allowed, _ = is_non_firmware_data_region(region)
+        can_write, is_data_allowed, _ = self._is_partition_writable_for_tab5(region)
         busy = bool(getattr(self, "_is_backup_hw_running", False))
-        can_hw_data = bool(is_data_allowed and not busy)
+        can_hw_view = bool(not busy)
+        can_hw_write = bool(can_write and not busy)
 
-        if is_data_allowed:
-            act_view_edit = QAction(
-                get_icon("edit", color=tokens.text, size=15),
-                qt_text("Đọc / Sửa dữ liệu..."),
-                menu,
-            )
-            act_view_edit.setEnabled(can_hw_data)
-            act_view_edit.triggered.connect(lambda _c=False, rg=region: self._hw_open_backup_partition_data_dialog(rg))
-            menu.addAction(act_view_edit)
+        view_lbl = "Đọc / Sửa dữ liệu..." if can_write else "Xem dữ liệu Hex (Chỉ xem)..."
+        act_view_edit = QAction(
+            get_icon("edit" if can_write else "search", color=tokens.text, size=15),
+            qt_text(view_lbl),
+            menu,
+        )
+        act_view_edit.setEnabled(can_hw_view)
+        act_view_edit.triggered.connect(lambda _c=False, rg=region: self._hw_open_backup_partition_data_dialog(rg))
+        menu.addAction(act_view_edit)
 
-            act_export = QAction(
-                get_icon("save", color=tokens.text, size=15),
-                qt_text("Xuất dữ liệu (.bin)..."),
-                menu,
-            )
-            act_export.setEnabled(can_hw_data)
-            act_export.triggered.connect(lambda _c=False, rg=region: self._hw_quick_export_partition_bin(rg))
-            menu.addAction(act_export)
+        act_export = QAction(
+            get_icon("save", color=tokens.text, size=15),
+            qt_text("Xuất dữ liệu (.bin)..."),
+            menu,
+        )
+        act_export.setEnabled(can_hw_view)
+        act_export.triggered.connect(lambda _c=False, rg=region: self._hw_quick_export_partition_bin(rg))
+        menu.addAction(act_export)
 
+        if can_write:
             act_import = QAction(
                 get_icon("open", color=tokens.text, size=15),
                 qt_text("Nạp .bin ghi đè..."),
                 menu,
             )
-            act_import.setEnabled(can_hw_data)
+            act_import.setEnabled(can_hw_write)
             act_import.triggered.connect(lambda _c=False, rg=region: self._hw_quick_import_overwrite_partition_bin(rg))
             menu.addAction(act_import)
 
@@ -1967,18 +2187,19 @@ class BackupCloneTabMixin:
                 qt_text("Xóa dữ liệu vùng"),
                 menu,
             )
-            act_erase.setEnabled(can_hw_data)
+            act_erase.setEnabled(can_hw_write)
             act_erase.triggered.connect(lambda _c=False, rg=region: self._hw_erase_selected_backup_partition_data(rg))
             menu.addAction(act_erase)
         else:
             lock_info = QAction(
                 get_icon("warning", color=tokens.warning, size=15),
-                qt_text("Đã khóa sửa/xóa (Bootloader / App)"),
+                qt_text("Khóa Ghi/Xóa (Bật mở khóa trong Cài đặt nếu cần)"),
                 menu,
             )
             lock_info.setEnabled(False)
             lock_info.setToolTip(
-                "Khóa an toàn: Không hỗ trợ sửa/xóa Bootloader, Partition Table hoặc Firmware (app)."
+                "Phân vùng Bootloader / Partition Table / App mặc định ở chế độ Chỉ xem. "
+                "Vào Cài đặt để bật mở khóa nếu bạn thực sự cần sửa hoặc xóa."
             )
             menu.addAction(lock_info)
 
@@ -1992,20 +2213,22 @@ class BackupCloneTabMixin:
         if region is None:
             messagebox.showwarning(
                 "Chưa chọn phân vùng",
-                f"Vui lòng chọn một phân vùng dữ liệu (ví dụ: nvs, spiffs, littlefs, fat...) để {action_label}.",
+                f"Vui lòng chọn một phân vùng để {action_label}.",
                 parent=self.root,
             )
             return False, "empty"
-        allowed, level = is_non_firmware_data_region(region)
-        if not allowed:
+        can_write, allowed, level = self._is_partition_writable_for_tab5(region)
+        if not can_write:
             messagebox.showwarning(
                 "Khóa an toàn phân vùng",
                 f"Phân vùng '{region.get('name', '')}' ({region.get('type', '')}/{region.get('subtype', '')}) "
                 f"là thành phần Firmware / Hệ thống khởi động.\n"
-                f"Tab Sao lưu chỉ cho phép {action_label} đối với phân vùng dữ liệu (type=data).",
+                f"Mặc định chỉ mở ở chế độ Chỉ xem. Hãy bật 'Mở khóa xem/sửa tất cả phân vùng Tab 5' trong Cài đặt nếu thực sự muốn {action_label}.",
                 parent=self.root,
             )
             return False, level
+        if not allowed:
+            return True, "critical_unlocked"
         return True, level
 
     def _run_read_region_worker(self, port: str, baud: int, region: dict, done_cb):
@@ -2058,6 +2281,7 @@ class BackupCloneTabMixin:
                         raw_data = fp.read()
                     hashes = compute_bytes_hashes(raw_data)
                     self.backup_region_hashes[region["key"]] = f"SHA256: {hashes['sha256'][:16]}..."
+                    self._update_partition_cache_and_usage(region, raw_data, erased=False)
                     self._backup_safe_ui(lambda: self.set_status(
                         f"Đã đọc xong phân vùng '{r_name}' ({format_bytes_human(len(raw_data))}).",
                         "success",
@@ -2065,6 +2289,8 @@ class BackupCloneTabMixin:
                         task_label=f"Đọc xong {r_name}",
                     ))
                     self._backup_safe_ui(self.refresh_backup_views)
+                    if hasattr(self, "refresh_partition_views"):
+                        self._backup_safe_ui(self.refresh_partition_views)
                 else:
                     err_msg = res or f"Không thể đọc phân vùng '{r_name}' từ {port}."
                     self._backup_safe_ui(lambda m=err_msg: self.log_backup(f">>> [LỖI] {m}", "red"))
@@ -2144,6 +2370,7 @@ class BackupCloneTabMixin:
                     ok = True
                     hashes = compute_bytes_hashes(payload)
                     self.backup_region_hashes[region["key"]] = f"SHA256: {hashes['sha256'][:16]}..."
+                    self._update_partition_cache_and_usage(region, payload, erased=False)
                     msg = f"Đã ghi đè {format_bytes_human(len(payload))} vào vùng '{r_name}' tại {format_hex(r_off)}."
                     self._backup_safe_ui(lambda m=msg: self.log_backup(f">>> [THÀNH CÔNG] {m}", "green"))
                     self._backup_safe_ui(lambda: self.set_status(
@@ -2153,6 +2380,8 @@ class BackupCloneTabMixin:
                         task_label=f"Ghi xong {r_name}",
                     ))
                     self._backup_safe_ui(self.refresh_backup_views)
+                    if hasattr(self, "refresh_partition_views"):
+                        self._backup_safe_ui(self.refresh_partition_views)
                 else:
                     ok = False
                     msg = res or f"Ghi đè phân vùng '{r_name}' thất bại."
@@ -2210,6 +2439,7 @@ class BackupCloneTabMixin:
                 if esptool_command_succeeded(res):
                     ok = True
                     self.backup_region_hashes[region["key"]] = "Đã xóa (0xFF)"
+                    self._update_partition_cache_and_usage(region, b"\xFF" * r_sz, erased=True)
                     msg = f"Đã xóa trắng dữ liệu phân vùng '{r_name}' ({format_hex(r_off)}, {format_bytes_human(r_sz)}) về 0xFF."
                     self._backup_safe_ui(lambda m=msg: self.log_backup(f">>> [THÀNH CÔNG] {m}", "green"))
                     self._backup_safe_ui(lambda: self.set_status(
@@ -2219,6 +2449,8 @@ class BackupCloneTabMixin:
                         task_label=f"Đã xóa {r_name}",
                     ))
                     self._backup_safe_ui(self.refresh_backup_views)
+                    if hasattr(self, "refresh_partition_views"):
+                        self._backup_safe_ui(self.refresh_partition_views)
                 else:
                     ok = False
                     msg = res or f"Xóa dữ liệu phân vùng '{r_name}' thất bại."
@@ -2244,9 +2476,68 @@ class BackupCloneTabMixin:
             messagebox.showwarning("Thiết bị đang bận", "Vui lòng đợi tác vụ hiện tại hoàn tất!", parent=self.root)
             return
         reg = region or self._get_active_backup_region()
-        ok_reg, _ = self._validate_non_firmware_region(reg, "đọc và chỉnh sửa dữ liệu")
-        if not ok_reg or reg is None:
+        if reg is None:
+            messagebox.showwarning(
+                "Chưa chọn phân vùng",
+                "Vui lòng chọn một phân vùng trong danh sách để xem/sửa dữ liệu.",
+                parent=self.root,
+            )
             return
+
+        def _read_region_cb(target_reg: dict, cb):
+            prep_r = self._prepare_backup_source_port()
+            if not prep_r:
+                cb(None, "Chưa chọn cổng COM hợp lệ.")
+                return
+            p_r, b_r = prep_r
+            self._run_read_region_worker(p_r, b_r, target_reg, cb)
+
+        def _write_region_cb(target_reg: dict, data: bytes, cb):
+            prep_w = self._prepare_backup_source_port()
+            if not prep_w:
+                cb(False, "Chưa chọn cổng COM hợp lệ.")
+                return
+            p_w, b_w = prep_w
+            self._run_write_region_worker(p_w, b_w, target_reg, data, cb)
+
+        def _erase_region_cb(target_reg: dict, cb):
+            prep_e = self._prepare_backup_source_port()
+            if not prep_e:
+                cb(False, "Chưa chọn cổng COM hợp lệ.")
+                return
+            p_e, b_e = prep_e
+            self._run_erase_region_worker(p_e, b_e, target_reg, cb)
+
+        def _open_dialog(raw_bytes: bytes):
+            from modules.ui.dialogs.partition_data_dialog import PartitionDataDialog
+            all_regs = self._get_all_backup_regions()
+            port_disp = self._get_backup_src_port()
+            dialog = PartitionDataDialog(
+                parent=self.root,
+                region=reg,
+                raw_data=raw_bytes,
+                chip_name=self.backup_source_info.get("chip_name") or "ESP32",
+                mac=self.backup_source_info.get("mac") or "",
+                port=port_disp,
+                regions=all_regs,
+                allow_write_system_app=bool(getattr(self, "saved_unlock_all_partition_edit", False)),
+                get_cached_data=self._get_cached_partition_bytes,
+                on_read_region=_read_region_cb,
+                on_write_region=_write_region_cb,
+                on_erase_region=_erase_region_cb,
+            )
+            self._active_partition_data_dialog = dialog
+            dialog.exec()
+
+        cached = self._get_cached_partition_bytes(reg)
+        if cached is not None:
+            self.set_status(
+                f"Đã mở dữ liệu phân vùng '{reg.get('name', '')}' từ bộ nhớ đệm RAM (không cần đọc lại chip).",
+                "success",
+            )
+            _open_dialog(cached)
+            return
+
         prep = self._prepare_backup_source_port()
         if not prep:
             return
@@ -2260,21 +2551,7 @@ class BackupCloneTabMixin:
                     parent=self.root,
                 )
                 return
-
-            from modules.ui.dialogs.partition_data_dialog import PartitionDataDialog
-            dialog = PartitionDataDialog(
-                parent=self.root,
-                region=reg,
-                raw_data=raw_bytes,
-                chip_name=self.backup_source_info.get("chip_name") or "ESP32",
-                mac=self.backup_source_info.get("mac") or "",
-                port=port,
-                on_read_from_chip=lambda cb: self._run_read_region_worker(port, baud, reg, cb),
-                on_write_to_chip=lambda data, cb: self._run_write_region_worker(port, baud, reg, data, cb),
-                on_erase_on_chip=lambda cb: self._run_erase_region_worker(port, baud, reg, cb),
-            )
-            self._active_partition_data_dialog = dialog
-            dialog.exec()
+            _open_dialog(raw_bytes)
 
         self._run_read_region_worker(port, baud, reg, _after_read)
 
@@ -2283,13 +2560,17 @@ class BackupCloneTabMixin:
             messagebox.showwarning("Thiết bị đang bận", "Vui lòng đợi tác vụ hiện tại hoàn tất!", parent=self.root)
             return
         reg = region or self._get_active_backup_region()
-        ok_reg, _ = self._validate_non_firmware_region(reg, "xuất nhanh dữ liệu (.bin)")
-        if not ok_reg or reg is None:
+        if reg is None:
+            messagebox.showwarning(
+                "Chưa chọn phân vùng",
+                "Vui lòng chọn một phân vùng để xuất dữ liệu (.bin).",
+                parent=self.root,
+            )
             return
-        prep = self._prepare_backup_source_port()
-        if not prep:
+        cached = self._get_cached_partition_bytes(reg)
+        prep = None if cached is not None else self._prepare_backup_source_port()
+        if cached is None and not prep:
             return
-        port, baud = prep
 
         default_name = format_partition_backup_filename(
             self.backup_source_info.get("chip_name") or "ESP32",
@@ -2307,10 +2588,7 @@ class BackupCloneTabMixin:
         if not save_path:
             return
 
-        def _after_read(raw_bytes: bytes | None, err_msg: str):
-            if raw_bytes is None:
-                messagebox.showerror("Lỗi xuất phân vùng", err_msg or "Không thể đọc dữ liệu từ chip.", parent=self.root)
-                return
+        def _save_blob(raw_bytes: bytes):
             try:
                 with open(save_path, "wb") as fp:
                     fp.write(raw_bytes)
@@ -2322,6 +2600,18 @@ class BackupCloneTabMixin:
                 )
             except Exception as exc:
                 messagebox.showerror("Lỗi ghi tệp", str(exc), parent=self.root)
+
+        if cached is not None:
+            _save_blob(cached)
+            return
+
+        port, baud = prep
+
+        def _after_read(raw_bytes: bytes | None, err_msg: str):
+            if raw_bytes is None:
+                messagebox.showerror("Lỗi xuất phân vùng", err_msg or "Không thể đọc dữ liệu từ chip.", parent=self.root)
+                return
+            _save_blob(raw_bytes)
 
         self._run_read_region_worker(port, baud, reg, _after_read)
 
@@ -2364,7 +2654,15 @@ class BackupCloneTabMixin:
             )
             return
 
-        if level == "sensitive":
+        if level == "critical_unlocked":
+            if not messagebox.askyesno(
+                "Cảnh báo NGUY HIỂM - Ghi đè Hệ thống / Firmware",
+                f"Phân vùng '{r_name}' ({r_sub}) là Bootloader / Partition Table / Firmware App.\n"
+                f"Nạp đè sai tệp '{os.path.basename(in_path)}' có thể khiến mạch không khởi động được (Brick). Tiếp tục?",
+                parent=self.root,
+            ):
+                return
+        elif level == "sensitive":
             if not messagebox.askyesno(
                 "Cảnh báo phân vùng hệ thống nhạy cảm",
                 f"Phân vùng '{r_name}' ({r_sub}) chứa dữ liệu hệ thống nhạy cảm (OTA / PHY / Keys).\n"
@@ -2407,7 +2705,15 @@ class BackupCloneTabMixin:
         r_off = int(reg.get("offset", 0) or 0)
         r_sz = int(reg.get("size", 0) or 0)
 
-        if level == "sensitive":
+        if level == "critical_unlocked":
+            if not messagebox.askyesno(
+                "Cảnh báo NGUY HIỂM - Xóa Hệ thống / Firmware",
+                f"Phân vùng '{r_name}' ({r_sub}) là Bootloader / Partition Table / Firmware App.\n"
+                "Xóa phân vùng này có thể làm mạch mất khả năng khởi động (Brick)! Tiếp tục?",
+                parent=self.root,
+            ):
+                return
+        elif level == "sensitive":
             if not messagebox.askyesno(
                 "Cảnh báo phân vùng hệ thống nhạy cảm",
                 f"Phân vùng '{r_name}' ({r_sub}) chứa dữ liệu hệ thống nhạy cảm (OTA / PHY / Keys).\n"
@@ -2416,10 +2722,15 @@ class BackupCloneTabMixin:
             ):
                 return
 
+        scope_note = (
+            "Thao tác này đang thực hiện ở chế độ mở khóa Bootloader/App!"
+            if level == "critical_unlocked"
+            else "Hành động này chỉ xóa vùng dữ liệu, KHÔNG ảnh hưởng Bootloader hay Firmware App."
+        )
         if not messagebox.askyesno(
             "Xác nhận xóa dữ liệu phân vùng",
             f"Xóa trắng toàn bộ dữ liệu trong phân vùng '{r_name}' ({format_hex(r_off)}, {format_bytes_human(r_sz)}) trên {port}?\n"
-            "Hành động này chỉ xóa vùng dữ liệu, KHÔNG ảnh hưởng Bootloader hay Firmware App.",
+            f"{scope_note}",
             parent=self.root,
         ):
             return
@@ -2489,6 +2800,8 @@ class BackupCloneTabMixin:
             try:
                 res = run_esptool_command(args, progress_callback=on_stream)
                 if esptool_command_succeeded(res):
+                    if hasattr(self, "_invalidate_flash_partition_cache"):
+                        self._backup_safe_ui(self._invalidate_flash_partition_cache)
                     self._backup_safe_ui(lambda: self.log_backup(">>> XÓA SẠCH TOÀN BỘ FLASH THÀNH CÔNG!", "green"))
                     self._backup_safe_ui(
                         lambda: self.set_status("Đã xóa sạch toàn bộ Flash thành công!", "success", progress=100)

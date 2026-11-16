@@ -1190,6 +1190,8 @@ def probe_chip_partition_usage(
     raw_pt: bytes | None = None,
     progress_callback=None,
     log_callback=None,
+    preload_data_blobs: bool = False,
+    captured_blobs_out: dict[tuple[int, int], bytes] | None = None,
 ) -> bool:
     """
     Mở 1 phiên stub esptool duy nhất để đo dung lượng thực tế đã dùng (Bootloader, Partition Table,
@@ -1287,6 +1289,7 @@ def probe_chip_partition_usage(
                 _read_flash_bytes,
                 raw_pt=raw_pt,
                 progress_cb=_step_progress,
+                captured_blobs=captured_blobs_out if (preload_data_blobs and captured_blobs_out is not None) else None,
             )
             return True
         except Exception as exc:

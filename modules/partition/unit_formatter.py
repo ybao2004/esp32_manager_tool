@@ -121,6 +121,24 @@ def align_up(value: int, alignment: int) -> int:
     return value + (alignment - remainder)
 
 
+def format_usage_cells(
+    used_size: int,
+    total_size: int,
+    measured: bool,
+    mode: DisplayMode = DisplayMode.DECIMAL,
+) -> tuple[str, str]:
+    """Định dạng cặp cột (Đã dùng %, Còn trống) dùng chung cho Tab 4 và Tab 5; hiện '--' khi chưa đo."""
+    if not measured and used_size <= 0:
+        return "--", "--"
+    total = max(0, int(total_size or 0))
+    used = max(0, min(total, int(used_size or 0))) if total > 0 else max(0, int(used_size or 0))
+    pct = min(100.0, (used / total) * 100.0) if total > 0 else 0.0
+    free_bytes = max(0, total - used)
+    used_str = f"{format_bytes_human(used)} ({pct:.1f}%)"
+    free_str = format_value(free_bytes, mode, is_size=True)
+    return used_str, free_str
+
+
 def sector_count(size_bytes: int) -> int:
     """Số lượng sector 4KB mà vùng nhớ chiếm dụng"""
     if size_bytes <= 0:

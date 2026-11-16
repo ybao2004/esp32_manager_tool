@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """
-Trang Sao Lưu & Nhân Bản Đa Bo Mạch (BackupPage - v1.5).
-- Thanh trên cùng: Board Gốc, Làm mới COM, Baudrate, [Đọc chip nguồn] | [Chọn Tất Cả], [Bỏ Chọn], [Chỉ Chọn Firmware], [x] Cắt trống 0xFF
+Trang Sao Lưu & Nhân Bản Đa Bo Mạch (BackupPage - v1.7).
+- Thanh trên cùng: Board Gốc, Nháy LED, Baudrate | [Chọn Tất Cả], [Bỏ Chọn], [Chỉ Chọn Firmware], [x] Cắt trống 0xFF
+  (Nút 'Đọc dữ liệu flash' nằm cố định trên thanh điều khiển trên cùng)
 - Giữa: Sơ đồ phân vùng trên Chip gốc (DiskMapWidget 42px) + Thống kê MAC / Dung lượng
 - Dưới (Chia đôi 60% Trái / 40% Phải):
-  + Trái (60%): Bảng phân vùng tối ưu độ rộng cột + thanh nút Sao lưu & Thao tác dữ liệu Non-Firmware + Menu chuột phải
+  + Trái (60%): Bảng 10 cột đồng bộ Tab 4 (Chọn + STT, Tên, Kiểu, Phân loại, Offset, Dung lượng, Cờ, Đã dùng %, Còn trống) + thanh nút Sao lưu & Thao tác dữ liệu
   + Phải (40%): Card Sao Chép Trực Tiếp Đa Mạch (COM đích căn trái gọn gàng) + Card Nhật ký Sao lưu & Nhân bản
 """
 from PyQt6.QtWidgets import (
@@ -161,12 +162,6 @@ class BackupPage(QWidget):
         )
         row_src.addWidget(make_group(top_card, QLabel("Baud:", top_card), self.cb_backup_baud))
 
-        self.btn_backup_read_chip = _ButtonCompat("Đọc chip nguồn", top_card)
-        self.btn_backup_read_chip.setProperty("accent", "true")
-        bind_themed_icon(self.btn_backup_read_chip, "search", role="on_accent")
-        self.btn_backup_read_chip.setStyleSheet("padding: 0 10px;")
-        row_src.addWidget(self.btn_backup_read_chip)
-
         self.btn_backup_sel_all = _ButtonCompat("Chọn Tất Cả", top_card)
         self.btn_backup_sel_all.setStyleSheet("padding: 0 8px;")
         row_src.addWidget(self.btn_backup_sel_all)
@@ -218,7 +213,7 @@ class BackupPage(QWidget):
             icon_name="folder",
             parent=left_widget,
         )
-        cols = ("checked", "stt", "name", "type", "subtype", "offset", "size")
+        cols = ("checked", "stt", "name", "type", "subtype", "offset", "size", "flags", "used", "free")
         self.backup_tree = _TreeviewCompat(left_card)
         self.backup_tree.set_columns(cols)
         self.backup_tree.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
@@ -229,12 +224,15 @@ class BackupPage(QWidget):
 
         headers = [
             ("checked", "Chọn", 50),
-            ("stt", "STT", 38),
-            ("name", "Tên Vùng", 120),
-            ("type", "Kiểu", 56),
-            ("subtype", "Phân loại", 76),
-            ("offset", "Offset", 84),
-            ("size", "Dung lượng", 110),
+            ("stt", "STT", 48),
+            ("name", "Tên Phân Vùng (Name)", 145),
+            ("type", "Kiểu (Type)", 80),
+            ("subtype", "Phân loại (SubType)", 120),
+            ("offset", "Offset", 115),
+            ("size", "Dung lượng (Size)", 125),
+            ("flags", "Cờ (Flags)", 80),
+            ("used", "Đã dùng (%)", 125),
+            ("free", "Còn trống", 115),
         ]
         for col_id, col_text, col_w in headers:
             self.backup_tree.heading(col_id, col_text)
@@ -243,10 +241,10 @@ class BackupPage(QWidget):
         b_hdr = self.backup_tree.header()
         if b_hdr:
             b_hdr.setStretchLastSection(True)
-            for c_idx in (0, 1, 3, 4, 5, 6):
+            for c_idx in (0, 1, 3, 4, 5, 6, 7, 8, 9):
                 b_hdr.setSectionResizeMode(c_idx, QHeaderView.ResizeMode.ResizeToContents)
             b_hdr.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
-            b_hdr.resizeSection(2, 120)
+            b_hdr.resizeSection(2, 145)
 
         self.backup_tree.setMinimumHeight(60)
         left_card.body_layout.addWidget(self.backup_tree, 1)
@@ -272,7 +270,7 @@ class BackupPage(QWidget):
         self.btn_backup_edit_data = _ButtonCompat("Đọc/Sửa dữ liệu", left_card)
         bind_themed_icon(self.btn_backup_edit_data, "edit")
         self.btn_backup_edit_data.setToolTip(
-            "Chỉ áp dụng cho phân vùng dữ liệu (NVS, SPIFFS, LittleFS, FATFS...); khóa đối với Bootloader và Firmware App."
+            "Xem dữ liệu cho tất cả phân vùng (System/App mặc định ở chế độ Chỉ xem Hex; có thể mở khóa Ghi/Sửa trong Cài đặt)."
         )
         btn_bar.addWidget(self.btn_backup_edit_data)
 
