@@ -58,7 +58,13 @@ class MonitorTabMixin:
             self.on_serial_connect()
 
     def on_serial_connect(self):
-        if self.is_flashing.is_set() or self.is_detecting.is_set() or getattr(self, "is_connecting", False):
+        if (
+            getattr(self, "_closing", False)
+            or self.is_flashing.is_set()
+            or self.is_detecting.is_set()
+            or getattr(self, "is_connecting", False)
+            or (self.serial_connection and getattr(self.serial_connection, "is_open", False))
+        ):
             return
         self.is_connecting = True
         port = self.port_cb.get().strip()
@@ -87,10 +93,21 @@ class MonitorTabMixin:
             self.root.after(0, lambda: self.set_status(f"Đang kết nối {port} @ {baud} bps...", "info"))
             if serial is None:
                 raise RuntimeError("Thư viện 'pyserial' chưa được cài đặt.")
-            self.serial_connection = serial.Serial(port, int(baud), timeout=0.1, write_timeout=1)
+            if getattr(self, "_closing", False):
+                return
+            opened_ser = serial.Serial(port, int(baud), timeout=0.1, write_timeout=1)
             self.saved_baudrate = str(baud)
+
+            # Each connection owns its cancellation event; clear is_connecting before exposing serial_connection
+            self.stop_serial_thread = threading.Event()
+            self.serial_thread = threading.Thread(
+                target=self._serial_read_thread,
+                args=(opened_ser, self.stop_serial_thread), daemon=True)
+            self.serial_thread.start()
+            self.is_connecting = False
+            self.serial_connection = opened_ser
             self.root.after(0, self._reset_monitor_line_state)
-            
+
             def _on_conn_success(p=port, b=baud):
                 self.set_status(f"Kết nối thành công! Đang đọc trên {p} @ {b} bps", "success")
                 self.detect_btn.config(state="disabled")
@@ -108,13 +125,6 @@ class MonitorTabMixin:
                 self.save_config()
 
             self.root.after(0, _on_conn_success)
-            
-            # Each connection owns its cancellation event; never revive an old reader.
-            self.stop_serial_thread = threading.Event()
-            self.serial_thread = threading.Thread(
-                target=self._serial_read_thread,
-                args=(self.serial_connection, self.stop_serial_thread), daemon=True)
-            self.serial_thread.start()
 
         except Exception as e:
             error_message = (

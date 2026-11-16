@@ -52,21 +52,22 @@ Reset ESP gửi RESET và tạo xung DTR/RTS; khác với lệnh CMD_RESET mặc
 Chọn đúng chip, COM, baudrate và tối đa 4 file .bin với offset tương ứng. Các nút Bắt đầu nạp, Xóa toàn bộ Flash và Xóa nhật ký nằm gọn trên thanh cấu hình phía trên; tiến trình phần trăm và tên tác vụ hiển thị đồng bộ ở thanh trạng thái đáy. (Thao tác đọc/sửa/xóa phân vùng dữ liệu riêng lẻ đã được chuyển sang Tab 5: Sao lưu & Chép.)
 
 4. PHÂN VÙNG BỘ NHỚ (PARTITION WIZARD)
-- Ban đầu bảng và sơ đồ đĩa trống hoàn toàn cho tới khi bạn bấm Đọc từ chip, chọn Mẫu, Quét Dự Án, Mở CSV/BIN hoặc bấm + Thêm dòng.
+- Mặc định luôn hiển thị 2 phân vùng hệ thống đầu tiên (S1: bootloader, S2: partition_table - được khóa an toàn) trên bảng và sơ đồ đĩa cùng vùng trống Unallocated; khi bấm Đọc từ chip, ứng dụng tự động quét bảng phân vùng từ 0x8000 đến 0x20000 (hỗ trợ cả các mạch ESP-IDF v5/v6 đặt bảng tại 0xC000, 0xD000, 0x10000...).
 - Toàn bộ cấu hình Chip, Flash, Đọc từ chip, Mẫu, Quét Dự Án, Mở CSV/BIN, Lưu CSV và Hoàn tác / Làm lại nằm gọn trên 1 hàng ngang.
 - Tùy chọn "Tự căn 4K/64K" và chế độ Đơn vị hiển thị (Thập phân / Hệ HEX / Song song dùng chung cho cả Tab 4 & Tab 5) được cấu hình tập trung trong trang Cài đặt.
 - Hàng nút bên dưới tập trung vào biên tập cấu trúc bảng: + Thêm dòng, Sửa dòng, Xóa dòng và Xóa tất cả.
 
 5. SAO LƯU & NHÂN BẢN (BACKUP / DIRECT CLONE)
 - Toàn bộ nút cấu hình nguồn & lọc nhanh nằm gọn trên 1 hàng; Board Gốc dùng chung Cổng COM ở thanh trên cùng và Baudrate của Tab 5 độc lập với thanh trên cùng.
-- Danh sách phân vùng ban đầu trống cho tới khi bấm "Đọc chip nguồn"; tích hoặc bỏ tích sao lưu bằng cách bấm vào hộp kiểm ở cột Chọn (hoặc phím Space).
-- Chuột phải lên bất kỳ dòng nào trong bảng phân vùng hoặc trên sơ đồ DiskMap (hoặc dùng nút "Đọc / Sửa dữ liệu vùng", "Xóa dữ liệu vùng") để: Đọc/Xem & Sửa dữ liệu NVS Key-Value hoặc Hex/UTF-8 (tự phân trang 16KB), Xuất nhanh (.bin), Nạp file .bin ghi đè vùng hoặc Xóa dữ liệu vùng Non-Firmware (Bootloader, Partition Table và App được khóa an toàn).
+- Danh sách phân vùng ban đầu trống cho tới khi bấm "Đọc chip nguồn" (tự quét bảng phân vùng 0x8000..0x20000 và đọc eFuse PSRAM); tích hoặc bỏ tích sao lưu bằng cách bấm vào hộp kiểm ở cột Chọn (hoặc phím Space).
+- Chuột phải lên bất kỳ dòng nào trong bảng phân vùng hoặc trên sơ đồ DiskMap (hoặc dùng nút "Đọc/Sửa dữ liệu", "Xóa dữ liệu") để: Đọc/Xem & Sửa dữ liệu NVS Key-Value hoặc Hex/UTF-8 (tự phân trang 16KB), Xuất nhanh (.bin), Nạp file .bin ghi đè vùng hoặc Xóa dữ liệu vùng Non-Firmware (Bootloader, Partition Table và App được khóa an toàn). Dùng nút "Xóa toàn bộ Flash" ngay bên phải "Xóa dữ liệu" khi cần xóa sạch toàn bộ Flash trên Board Gốc.
 - Tên file sao lưu chuẩn hóa: Full Flash `<chip>_<MAC>_Full - <yyyymmdd_hhmmss>.bin`; từng phân vùng `<chip>_<MAC>_<tên phân vùng>_<offset> - <yyyymmdd_hhmmss>.bin`.
 - Nháy LED nhận diện Board Gốc (tùy chọn ẩn trong Cài đặt): khi bật và đang ở Tab 5, đổi Cổng COM trên cùng sẽ tự động nháy LED trong 5 giây (qua luồng UART TX không xung DTR/RTS) và hiện nút "Nháy LED".
 - Sao chép trực tiếp (Direct Multi-Board Clone): Cắm đồng thời 1 board gốc (chọn ở cổng COM trên cùng) và nhiều board đích (COMxx); danh sách Board Đích tự động loại trừ cổng Board Gốc.
 
 6. CÀI ĐẶT & CẬP NHẬT
-Trong trang Cài đặt:
-- Cài đặt Chung và Cổng COM: Chọn chế độ Engineering Sáng / Tối đồng bộ tức thì, lọc ẩn cổng COM Bluetooth hoặc cổng tùy chọn, cấu hình IP/Port mặc định, bật/tắt tự kiểm tra cập nhật khi mở app (mặc định tắt) và tùy chọn ẩn nháy LED 5s ở Tab 5.
+Trong trang Cài đặt (gồm 4 sub-tab):
+- Cài đặt Chung và Cổng COM: Chọn chế độ Engineering Sáng / Tối đồng bộ tức thì, lọc ẩn cổng COM Bluetooth và cổng Modem/USB điện thoại (mặc định bật) hoặc cổng tùy chọn, cấu hình IP/Port mặc định, Tự căn 4K/64K, Đơn vị hiển thị và tùy chọn ẩn nháy LED 5s ở Tab 5. Lưu cài đặt thông báo trực tiếp trên thanh trạng thái dưới cùng.
 - Phím chức năng F1 - F15: Tùy biến nhãn và lệnh cho 15 nút điều khiển.
-- Kiểm Tra Cập Nhật nội tuyến: Kiểm tra phiên bản mới từ GitHub Releases ngay trong trang Cài đặt (hiển thị dấu chấm đỏ hướng dẫn khi có bản mới), xem Release Notes, tải và tự cập nhật trực tiếp không mở cửa sổ terminal phụ tại `{GITHUB_REPO}`."""
+- Cập nhật Phần mềm: Kiểm tra phiên bản mới từ GitHub Releases ngay trong trang Cài đặt (hiển thị dấu chấm đỏ hướng dẫn khi có bản mới), xem Release Notes, tải và tự cập nhật trực tiếp không mở cửa sổ terminal phụ tại `{GITHUB_REPO}`.
+- Giới thiệu: Hiển thị trực tiếp thông tin phiên bản, tác giả, giấy phép và 6 nhóm tính năng cốt lõi ngay trong trang Cài đặt."""

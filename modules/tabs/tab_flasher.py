@@ -128,8 +128,16 @@ class FlasherTabMixin:
 
         def safe_after(fn, delay=0):
             try:
-                if getattr(self, "root", None) and self.root.winfo_exists():
-                    self.root.after(delay, fn)
+                if (
+                    not getattr(self, "_closing", False)
+                    and getattr(self, "root", None)
+                    and self.root.winfo_exists()
+                ):
+                    def _guarded():
+                        if not getattr(self, "_closing", False):
+                            fn()
+
+                    self.root.after(delay, _guarded)
             except Exception:
                 pass
 
@@ -255,8 +263,16 @@ class FlasherTabMixin:
     def _flash_write_worker(self, port, baud, chip_target, erase_all, write_pairs, was_connected=False):
         def safe_after(fn, delay=0):
             try:
-                if getattr(self, "root", None) and self.root.winfo_exists():
-                    self.root.after(delay, fn)
+                if (
+                    not getattr(self, "_closing", False)
+                    and getattr(self, "root", None)
+                    and self.root.winfo_exists()
+                ):
+                    def _guarded():
+                        if not getattr(self, "_closing", False):
+                            fn()
+
+                    self.root.after(delay, _guarded)
             except Exception:
                 pass
 

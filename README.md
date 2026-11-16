@@ -8,6 +8,10 @@
 
 ## ĐIỂM MỚI TRÊN PHIÊN BẢN v1.6.3
 
+- **Tự động dò bảng phân vùng ở các offset mở rộng (`0x8000..0x20000`) & nhận diện PSRAM trên ESP32-P4:**
+  - Cả **Tab 1 (Kiểm tra Chip)**, **Tab 4 (Phân vùng)** và **Tab 5 (Sao lưu & Chép)** đều ưu tiên đọc `0x8000` và tự động quét mở rộng `0x9000..0x20000` khi Bootloader (như ESP-IDF v6.1 trên ESP32-P4) đẩy `CONFIG_PARTITION_TABLE_OFFSET` sang `0xC000`, `0xD000`, `0x10000`..., đảm bảo giải mã đủ phân vùng và mở khóa thao tác Đọc/Sửa dữ liệu.
+  - Sửa ánh xạ eFuse `PSRAM_CAP` cho **ESP32-P4** (`2 -> 32 MB`) và đọc nhanh PSRAM từ eFuse ngay trong phiên `flash-id` của Tab 4 và Tab 5.
+- **Tab 4 mặc định luôn hiện 2 phân vùng hệ thống đầu tiên:** Khi mới mở hoặc sau khi `Xóa tất cả`, bảng chi tiết và sơ đồ `DiskMap` luôn hiển thị `S1: bootloader` và `S2: partition_table` (khóa an toàn) cùng vùng `Unallocated`.
 - **Chuyển mục "Giới thiệu" thành Sub-tab 4 trong Cài đặt:** Xóa nút `"Thông tin & Bản quyền"` khỏi sub-tab **Cập nhật Phần mềm**, nhúng trực tiếp giao diện giới thiệu, tính năng cốt lõi và thông tin bản quyền vào sub-tab thứ 4 mang tên **"Giới thiệu"** (tự động ẩn thanh nút `"Khôi phục mặc định"` / `"Lưu Cài Đặt"` khi đang xem sub-tab này) và bỏ nút `"Kiểm tra cập nhật"` khỏi giao diện Giới thiệu.
 - **Tự động lọc / ẩn cổng COM của điện thoại (Modem / USB điện thoại):** Bổ sung tùy chọn mới ngay dưới bộ lọc Bluetooth trong **Cài đặt Chung và Cổng COM** (mặc định bật), tự động nhận diện và ẩn các cổng COM thuộc điện thoại / Modem (Samsung, Apple, Xiaomi, Huawei, Oppo, Vivo, Qualcomm HS-USB, MediaTek Preloader/VCOM, Unisoc, Android...) mà không ảnh hưởng tới cổng USB-CDC/JTAG hay USB-UART của ESP32.
 - **Thêm nút `Xóa toàn bộ Flash` ở Tab 5 (Sao lưu & Chép):** Đặt ngay bên phải nút `Xóa dữ liệu`, thao tác trực tiếp trên Board Gốc với hộp thoại xác nhận nguy hiểm và ghi nhật ký vào Tab 5.
@@ -76,22 +80,22 @@
 - Tích hợp **Xóa Toàn Bộ Flash**, **Xóa toàn bộ trước khi nạp**, thanh tiến trình hợp nhất dưới thanh trạng thái đáy và phản chiếu log sang Tab 2 -> `Log`.
 
 ### 4. Quản lý Phân vùng - Partition Wizard (Tab 4)
-- Tương thích hệ số dòng chip Espressif (`chip_database.py`); mặc định `auto` tự nhận diện Chip & Flash khi bấm **Đọc từ chip**.
-- Sơ đồ **Disk Map** (chiều cao 42px căn giữa) với khung viền chọn 2 lớp độ tương phản cao, nhấp đúp bảng hoặc DiskMap để sửa phân vùng, hỗ trợ hoàn tác (`Undo`) và làm lại (`Redo`) không giới hạn trong phiên.
+- Tương thích hệ số dòng chip Espressif (`chip_database.py`); mặc định `auto` tự nhận diện Chip, Flash, PSRAM và bảng phân vùng trên dải `0x8000..0x20000` (kể cả `0xC000`, `0xD000`...) khi bấm **Đọc từ chip**.
+- Mặc định luôn hiển thị 2 phân vùng hệ thống đầu tiên (`S1: bootloader` và `S2: partition_table`, khóa chỉnh sửa) trên cả bảng chi tiết và sơ đồ **Disk Map** (`42px`), hỗ trợ nhấp đúp bảng hoặc DiskMap để sửa phân vùng người dùng, hoàn tác (`Undo`) và làm lại (`Redo`) không giới hạn trong phiên.
 - Thanh công cụ gọn **1 hàng** cố định khung chọn Chip/Flash, nút **Đọc từ chip**, nạp **Mẫu**, **Quét Dự Án**, mở CSV/BIN và lưu toàn bảng bằng **Lưu CSV** (cấu hình **Đơn vị hiển thị** & **Tự căn 4K/64K** nằm trong *Cài đặt*).
 
 ### 5. Sao lưu & Nhân bản Đa Mạch (Tab 5)
 - Toàn bộ cụm nút nguồn & lọc nhanh nằm gọn trên **1 hàng ngang**; `Board Gốc` dùng chung Cổng COM ở thanh điều khiển trên cùng, trong khi **Baudrate Tab 5** giữ độc lập để đọc/chép tốc độ cao.
-- Đọc toàn bộ bảng phân vùng trực tiếp từ `Board Gốc` (hiển thị cả `bootloader` và `partition_table`), tích chọn từng phân vùng qua hộp kiểm cột 0 (`Chọn`) hoặc phím `Space`.
-- Quản trị dữ liệu phân vùng **Non-Firmware** (`nvs`, `spiffs`, `littlefs`, `fat`...) qua nút chức năng, nhấp đúp hoặc Menu chuột phải đồng bộ giữa bảng và sơ đồ đĩa: **Đọc / Xem & Sửa NVS Key-Value & Hex/UTF-8**, **Xuất nhanh (.bin)**, **Nạp `.bin` ghi đè vùng**, **Xóa dữ liệu vùng** (khóa an toàn Bootloader, Partition Table và App).
+- Đọc bảng phân vùng trực tiếp từ `Board Gốc` (tự động quét `0x8000..0x20000` bắt cả offset dịch như `0xC000` và hiển thị chính xác `bootloader`, `partition_table`), tích chọn từng phân vùng qua hộp kiểm cột 0 (`Chọn`) hoặc phím `Space`.
+- Quản trị dữ liệu phân vùng **Non-Firmware** (`nvs`, `spiffs`, `littlefs`, `fat`...) qua nút chức năng, nhấp đúp hoặc Menu chuột phải đồng bộ giữa bảng và sơ đồ đĩa: **Đọc / Xem & Sửa NVS Key-Value & Hex/UTF-8**, **Xuất nhanh (.bin)**, **Nạp `.bin` ghi đè vùng**, **Xóa dữ liệu vùng** (khóa an toàn Bootloader, Partition Table và App), cùng nút **Xóa toàn bộ Flash** cho Board Gốc đặt ngay bên phải nút `Xóa dữ liệu`.
 - Đặt tên sao lưu theo chuẩn `<chip>_<MAC>_Full - <yyyymmdd_hhmmss>.bin` (Full Flash) và `<chip>_<MAC>_<tên phân vùng>_<offset> - <yyyymmdd_hhmmss>.bin` (phân vùng); cắt trống `0xFF` (`Smart Trim`) và xuất hồ sơ băm SHA-256 & MD5 (`backup_info.txt`, `backup_manifest.json`, `partitions.csv`).
 - **Nhân bản trực tiếp (Direct Multi-Board Clone):** Đọc từ `Board Gốc` hoặc thư mục sao lưu sẵn có và nạp song song ra nhiều cổng Đích (`COMxx`) cùng lúc (tự động loại trừ cổng COM trên cùng, hiển thị chính xác tiến trình `esptool` v4/v5 theo từng bước).
 - **Nháy LED nhận diện Board Gốc (tùy chọn nâng cao):** Bật trong *Cài đặt -> Tùy chọn ẩn (Tab 5)* để gửi tín hiệu nháy LED TX/RX an toàn trong 5 giây khi đổi Cổng COM ở Tab 5 hoặc bấm `Nháy LED`.
 
 ### 6. Cài đặt & Cập nhật (Tab 6)
-- Chuyển đổi giao diện Kỹ thuật **Sáng / Tối** trực tiếp không cần khởi động lại.
-- Quản lý bộ lọc cổng COM (tự động quét định kỳ, lọc Bluetooth, ẩn danh sách cổng tùy chọn), tùy chọn **Tự căn 4K/64K** & **Đơn vị hiển thị** dùng chung cho Tab 4 & Tab 5.
-- Quản lý bảng phím chức năng F1 - F15 và kiểm tra/tải/cài đặt cập nhật nội tuyến ngay trong trang Cài đặt qua GitHub Releases API (`ybao2004/esp32_manager_tool`), kèm tùy chọn tự kiểm tra khi khởi động, nút `Thông tin & Bản quyền` và chấm đỏ thông báo.
+- Tổ chức thành **4 sub-tab**: *Cài đặt Chung và Cổng COM*, *Phím chức năng F1 - F15*, *Cập nhật Phần mềm* và *Giới thiệu* (hiển thị trực tiếp thông tin ứng dụng, tính năng cốt lõi & bản quyền, tự ẩn thanh nút `Khôi phục mặc định` / `Lưu Cài Đặt` khi xem sub-tab *Giới thiệu*).
+- Chuyển đổi giao diện Kỹ thuật **Sáng / Tối** trực tiếp không cần khởi động lại; quản lý bộ lọc cổng COM (tự động quét, lọc Bluetooth, tự động lọc cổng Modem/USB điện thoại mặc định bật, ẩn danh sách cổng tùy chọn), tùy chọn **Tự căn 4K/64K** & **Đơn vị hiển thị** dùng chung cho Tab 4 & Tab 5; lưu cài đặt thông báo gọn qua thanh trạng thái đáy.
+- Kiểm tra/tải/cài đặt cập nhật nội tuyến qua GitHub Releases API (`ybao2004/esp32_manager_tool`), kèm tùy chọn tự kiểm tra khi khởi động và chấm đỏ thông báo.
 
 ---
 
@@ -106,7 +110,7 @@ esp32_manager_tool/
 ├── modules/
 │   ├── app_core.py                 # Lớp InspectorApp, vòng đời Single-Instance & thu hồi GDI icon
 │   ├── single_instance.py          # Khóa đơn thực thể (Mutex/IPC) & dừng tiến trình con hệ điều hành
-│   ├── config.py                   # Cấu hình hệ thống, phiên bản (v1.5) và hằng số mặc định
+│   ├── config.py                   # Cấu hình hệ thống, phiên bản (v1.6.3) và hằng số mặc định
 │   ├── esptool_util.py             # Đóng gói tiến trình con esptool đa nền tảng & parse Output
 │   ├── backup_utils.py             # Tính băm SHA-256/MD5, cắt 0xFF, chuẩn hóa tên file & manifest sao lưu
 │   ├── nvs_util.py                 # Bộ giải mã & đóng gói NVS Binary v1/v2 thuần Python
