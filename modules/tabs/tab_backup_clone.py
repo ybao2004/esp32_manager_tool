@@ -32,10 +32,12 @@ from modules.config import (
 from modules.esptool_util import (
     run_esptool_command,
     esptool_command_succeeded,
+    esptool_efuse_psram_context,
     parse_esptool_output,
     parse_esptool_progress_percent,
     format_chip_badge_text,
     get_chip_data,
+    scan_chip_partition_table,
 )
 from modules.serial_util import list_com_ports_local
 from modules.partition.unit_formatter import (
@@ -829,7 +831,8 @@ class BackupCloneTabMixin:
         safe_after(lambda: self.log_backup(f"\nĐỌC THÔNG TIN CHIP & BẢNG PHÂN VÙNG TỪ BOARD GỐC ({port})", "header"))
         safe_after(lambda: self.set_status(f"Đang nhận diện chip và đọc MAC gốc trên {port}...", "info", progress=15))
 
-        fid_out = run_esptool_command(["--port", port, "--baud", str(baud), "flash-id"])
+        with esptool_efuse_psram_context():
+            fid_out = run_esptool_command(["--port", port, "--baud", str(baud), "flash-id"])
         if not esptool_command_succeeded(fid_out):
             safe_after(lambda: self.log_backup(">>> [LỖI] Không thể kết nối với chip trên cổng " + port, "red"))
             return False
@@ -875,59 +878,53 @@ class BackupCloneTabMixin:
         ))
         safe_after(
             lambda: self.set_status(
-                f"Đang đọc bảng phân vùng (0x8000) từ {chip_key}...",
+                f"Đang đọc & dò tìm bảng phân vùng từ {chip_key}...",
                 "info",
                 progress=45,
                 task_label=f"Đọc bảng phân vùng ({port})",
             )
         )
 
-        with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
-            tmp_path = tmp.name
-
-        try:
-            def on_pt_stream(line):
-                pct_val = parse_esptool_progress_percent(line)
-                if pct_val is not None:
-                    prog = 45.0 + (pct_val / 100.0) * 45.0
-                    safe_after(
-                        lambda p=prog, pt=port: self.set_status(
-                            f"Đang đọc bảng phân vùng ({int(round(pct_val))}%)...",
-                            "info",
-                            progress=p,
-                            task_label=f"Đọc bảng phân vùng ({pt})",
-                        )
+        def on_pt_stream(line):
+            pct_val = parse_esptool_progress_percent(line)
+            if pct_val is not None:
+                prog = 45.0 + (pct_val / 100.0) * 45.0
+                safe_after(
+                    lambda p=prog, pt=port, pv=pct_val: self.set_status(
+                        f"Đang đọc bảng phân vùng ({int(round(pv))}%)...",
+                        "info",
+                        progress=p,
+                        task_label=f"Đọc bảng phân vùng ({pt})",
                     )
+                )
 
-            read_out = run_esptool_command(
-                ["--port", port, "--baud", str(baud), "read-flash", "0x8000", "0x1000", tmp_path],
-                progress_callback=on_pt_stream,
-            )
-            if esptool_command_succeeded(read_out) and os.path.isfile(tmp_path) and os.path.getsize(tmp_path) > 0:
-                with open(tmp_path, "rb") as f:
-                    pt_bytes = f.read()
-                new_table = PartitionTable(flash_size=flash_bytes, target_chip=chip_key.lower().replace("-", ""))
-                new_table.bootloader_offset = boot_off
-                new_table.from_binary(pt_bytes)
-                if new_table.entries:
-                    self.backup_table = new_table
-                    safe_after(lambda n=len(new_table.entries): self.log_backup(
-                        f"  + Đã giải mã thành công {n} phân vùng từ bảng phân vùng trên chip.", "green"
-                    ))
-                else:
-                    self.backup_table.flash_size = flash_bytes
-                    self.backup_table.bootloader_offset = boot_off
-                    safe_after(lambda: self.log_backup(
-                        "  ! Không tìm thấy cấu trúc phân vùng chuẩn tại 0x8000, giữ danh sách phân vùng hiện tại."
-                    ))
-            else:
-                return False
-        finally:
-            if os.path.isfile(tmp_path):
-                try:
-                    os.remove(tmp_path)
-                except OSError:
-                    pass
+        found_off, found_table, _raw_pt, cmd_ok, _read_text = scan_chip_partition_table(
+            port,
+            baud,
+            preferred_offset=0x8000,
+            flash_size=flash_bytes,
+            bootloader_offset=boot_off,
+            target_chip=chip_key.lower().replace("-", ""),
+            read_cmd="read-flash",
+            progress_callback=on_pt_stream,
+            command_runner=run_esptool_command,
+            success_checker=esptool_command_succeeded,
+        )
+        if not cmd_ok:
+            return False
+
+        if found_off is not None and found_table is not None and found_table.entries:
+            self.backup_source_info["part_table_offset"] = found_off
+            self.backup_table = found_table
+            safe_after(lambda n=len(found_table.entries), off=found_off: self.log_backup(
+                f"  + Đã giải mã thành công {n} phân vùng từ bảng phân vùng @ 0x{off:X}.", "green"
+            ))
+        else:
+            self.backup_table.flash_size = flash_bytes
+            self.backup_table.bootloader_offset = boot_off
+            safe_after(lambda: self.log_backup(
+                "  ! Không tìm thấy cấu trúc phân vùng chuẩn trong vùng 0x8000..0x20000, giữ danh sách phân vùng hiện tại."
+            ))
 
         self._backup_has_loaded_source = True
         return True

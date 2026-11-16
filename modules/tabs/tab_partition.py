@@ -21,9 +21,11 @@ from modules.config import DARK_PALETTE, LIGHT_PALETTE, FLASH_BAUDS, FLASH_CHIP_
 from modules.esptool_util import (
     run_esptool_command,
     esptool_command_succeeded,
+    esptool_efuse_psram_context,
     parse_esptool_output,
     parse_esptool_progress_percent,
     format_chip_badge_text,
+    scan_chip_partition_table,
 )
 from modules.partition.unit_formatter import (
     DisplayMode, parse_size_or_offset, format_bytes_human, format_hex,
@@ -1827,13 +1829,11 @@ class PartitionTabMixin:
             self._is_partition_hw_running = True
             if hasattr(self, "set_global_busy_state"):
                 safe_after(lambda: self.set_global_busy_state(True, "đọc bảng phân vùng từ chip"))
-            with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tmp:
-                tmp_path = tmp.name
 
             try:
                 safe_after(lambda: self._log_partition_hw(f"BẮT ĐẦU DÒ CHIP & ĐỌC BẢNG PHÂN VÙNG QUA {port}", level="header"))
 
-                # Bước 1: Dò Chip (nếu để auto) và dung lượng Flash thật qua flash-id
+                # Bước 1: Dò Chip (nếu để auto), eFuse PSRAM & dung lượng Flash thật qua flash-id
                 fid_args = ['--port', port, '--baud', str(baud)]
                 if chip and chip != "auto":
                     fid_args.extend(['--chip', chip])
@@ -1845,7 +1845,8 @@ class PartitionTabMixin:
                     fid_stream_lines.append(str(line))
                     safe_after(lambda l=line: self._log_partition_hw(f"  {l}"))
 
-                fid_res = run_esptool_command(fid_args, progress_callback=on_fid_stream)
+                with esptool_efuse_psram_context():
+                    fid_res = run_esptool_command(fid_args, progress_callback=on_fid_stream)
                 fid_text = "\n".join(
                     p for p in (fid_res if isinstance(fid_res, str) else "", "\n".join(fid_stream_lines)) if p
                 )
@@ -1856,23 +1857,36 @@ class PartitionTabMixin:
                 detected_psram_mb = fid_parsed.get("psram_mb")
                 resolved_cid = _resolve_chip_id_from_esptool(detected_chip)
 
-                # Bước 2: Đọc 4KB bảng phân vùng ở offset cấu hình
+                # Bước 2: Đọc & tự dò bảng phân vùng (ưu tiên part_offset, quét mở rộng 0x8000..0x20000 nếu cần)
                 effective_chip = chip if (chip and chip != "auto") else (resolved_cid or "")
-                args = ['--port', port, '--baud', str(baud)]
-                if effective_chip:
-                    args.extend(['--chip', effective_chip])
-                args.extend(['read_flash', part_offset, '0x1000', tmp_path])
-
-                read_stream_lines: list[str] = []
+                pref_pt_off = int(part_offset, 16)
+                init_boot_off = (
+                    CHIP_FAMILY_DATABASE[resolved_cid].bootloader_offset
+                    if resolved_cid and resolved_cid in CHIP_FAMILY_DATABASE
+                    else int(getattr(self.table, "bootloader_offset", 0x1000) or 0x1000)
+                )
+                init_flash_sz = (
+                    int(round(detected_flash_mb * 1024 * 1024))
+                    if detected_flash_mb > 0
+                    else int(getattr(self.table, "flash_size", 4 * 1024 * 1024) or (4 * 1024 * 1024))
+                )
 
                 def on_stream(line):
-                    read_stream_lines.append(str(line))
                     safe_after(lambda l=line: self._log_partition_hw(f"  {l}"))
                     safe_after(lambda l=line: self._update_partition_hw_progress(l))
 
-                res = run_esptool_command(args, progress_callback=on_stream)
-                read_text = "\n".join(
-                    p for p in (res if isinstance(res, str) else "", "\n".join(read_stream_lines)) if p
+                found_off, found_table, raw_pt, cmd_ok, read_text = scan_chip_partition_table(
+                    port,
+                    baud,
+                    preferred_offset=pref_pt_off,
+                    flash_size=init_flash_sz,
+                    bootloader_offset=init_boot_off,
+                    target_chip=(effective_chip or getattr(self.table, "target_chip", "esp32")),
+                    chip_arg=effective_chip,
+                    read_cmd="read_flash",
+                    progress_callback=on_stream,
+                    command_runner=run_esptool_command,
+                    success_checker=esptool_command_succeeded,
                 )
                 if read_text:
                     read_parsed = parse_esptool_output({"read_flash": read_text})
@@ -1886,13 +1900,18 @@ class PartitionTabMixin:
                     int(round(detected_flash_mb * 1024 * 1024)) if detected_flash_mb > 0 else 0
                 )
 
-                if esptool_command_succeeded(res) and os.path.isfile(tmp_path) and os.path.getsize(tmp_path) > 0:
-                    with open(tmp_path, "rb") as f:
-                        data = f.read()
-
+                if cmd_ok:
                     def update_ui():
                         self._push_partition_undo_state()
-                        self.table.from_binary(data)
+                        if found_table is not None and found_table.entries and found_off is not None:
+                            self.table.part_table_offset = found_off
+                            self.table.entries = list(found_table.entries)
+                        elif raw_pt:
+                            self.table.from_binary(raw_pt)
+                        else:
+                            self.table.clear()
+
+                        target_flash = 0
                         if chip == "auto":
                             if resolved_cid and resolved_cid in CHIP_FAMILY_DATABASE:
                                 info = CHIP_FAMILY_DATABASE[resolved_cid]
@@ -1901,28 +1920,41 @@ class PartitionTabMixin:
                                 target_flash = detected_flash_bytes if detected_flash_bytes > 0 else info.default_flash_size
                                 self._sync_chip_and_flash_combos(resolved_cid, flash_size=target_flash)
                             elif detected_flash_bytes > 0:
+                                target_flash = detected_flash_bytes
                                 self._sync_chip_and_flash_combos("auto", flash_size=detected_flash_bytes)
                         else:
                             if detected_flash_bytes > 0:
+                                target_flash = detected_flash_bytes
                                 self._sync_chip_and_flash_combos(chip, flash_size=detected_flash_bytes)
                         self.refresh_partition_views()
                         if detected_chip and getattr(self, "conn_bar", None) is not None:
                             badge_str = format_chip_badge_text(
                                 detected_chip,
-                                flash_mb=detected_flash_mb or (target_flash / (1024 * 1024) if "target_flash" in locals() else None),
+                                flash_mb=detected_flash_mb or (target_flash / (1024 * 1024) if target_flash > 0 else None),
                                 sram_kb=detected_sram_kb,
                                 psram_mb=detected_psram_mb,
                             )
                             self.conn_bar.set_chip_badge_info(badge_str, is_active=True)
                         part_count = len(self.table.entries)
-                        self.set_status(
-                            f"Đã đọc và giải mã bảng phân vùng ({part_count} phân vùng) từ ESP32 thành công!",
-                            "success",
-                            progress=100,
-                        )
-                        self._log_partition_hw(
-                            f">>> ĐỌC VÀ NẠP THÀNH CÔNG {part_count} PHÂN VÙNG TỪ CHIP!"
-                        )
+                        if part_count > 0:
+                            pt_hex = f"0x{int(self.table.part_table_offset):X}"
+                            self.set_status(
+                                f"Đã đọc và giải mã bảng phân vùng ({part_count} phân vùng @ {pt_hex}) từ ESP32 thành công!",
+                                "success",
+                                progress=100,
+                            )
+                            self._log_partition_hw(
+                                f">>> ĐỌC VÀ NẠP THÀNH CÔNG {part_count} PHÂN VÙNG TỪ CHIP (@ {pt_hex})!"
+                            )
+                        else:
+                            self.set_status(
+                                "Không tìm thấy bảng phân vùng hợp lệ (0x8000..0x20000) trên chip!",
+                                "warning",
+                                progress=100,
+                            )
+                            self._log_partition_hw(
+                                ">>> [CẢNH BÁO] Đã đọc Flash nhưng không thấy cấu trúc bảng phân vùng hợp lệ."
+                            )
 
                     safe_after(update_ui)
                 else:
@@ -1946,11 +1978,6 @@ class PartitionTabMixin:
                 safe_after(lambda: self.set_status("Lỗi đọc bảng phân vùng từ chip!", "error", progress=0))
                 safe_after(lambda msg=err_msg: self._log_partition_hw(f">>> [NGOẠI LỆ] {msg}"))
             finally:
-                if os.path.isfile(tmp_path):
-                    try:
-                        os.remove(tmp_path)
-                    except OSError:
-                        pass
                 self._is_partition_hw_running = False
                 if hasattr(self, "set_global_busy_state"):
                     safe_after(lambda: self.set_global_busy_state(False))

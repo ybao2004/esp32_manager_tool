@@ -392,10 +392,12 @@ def esptool_deep_inspection_context(capture_boot_log=True, boot_log_duration=2.2
     prev_boot = getattr(_deep_inspection_state, "capture_boot_log", True)
     prev_dur = getattr(_deep_inspection_state, "boot_log_duration", 2.2)
     prev_cb = getattr(_deep_inspection_state, "progress_callback", None)
+    prev_efuse_only = getattr(_deep_inspection_state, "efuse_only", False)
     _deep_inspection_state.enabled = True
     _deep_inspection_state.capture_boot_log = capture_boot_log
     _deep_inspection_state.boot_log_duration = boot_log_duration
     _deep_inspection_state.progress_callback = progress_callback
+    _deep_inspection_state.efuse_only = False
     try:
         yield
     finally:
@@ -403,6 +405,21 @@ def esptool_deep_inspection_context(capture_boot_log=True, boot_log_duration=2.2
         _deep_inspection_state.capture_boot_log = prev_boot
         _deep_inspection_state.boot_log_duration = prev_dur
         _deep_inspection_state.progress_callback = prev_cb
+        _deep_inspection_state.efuse_only = prev_efuse_only
+
+
+@contextmanager
+def esptool_efuse_psram_context():
+    """Bật chế độ đọc nhanh dung lượng PSRAM từ eFuse trong phiên flash-id (không đọc Flash, không reset)."""
+    prev_enabled = getattr(_deep_inspection_state, "enabled", False)
+    prev_efuse_only = getattr(_deep_inspection_state, "efuse_only", False)
+    _deep_inspection_state.enabled = True
+    _deep_inspection_state.efuse_only = True
+    try:
+        yield
+    finally:
+        _deep_inspection_state.enabled = prev_enabled
+        _deep_inspection_state.efuse_only = prev_efuse_only
 
 
 def _esptool_major_version():
@@ -684,7 +701,7 @@ def _probe_efuse_details(esp) -> dict:
             temp_map = {0: "Chuẩn (-40°C ~ 85°C)", 1: "Mở rộng (-40°C ~ 105°C)", 2: "Cao (-40°C ~ 125°C)"}
             details["efuse_temp_rating"] = temp_map.get(temp_code, f"Code {temp_code}")
             if psram_cap > 0:
-                p_cap_map = {1: 8, 2: 2, 3: 16, 4: 4, 5: 32, 6: 64}
+                p_cap_map = {1: 16, 2: 32, 3: 8, 4: 4, 5: 32, 6: 64}
                 details["efuse_psram_mb"] = p_cap_map.get(psram_cap, psram_cap)
                 details["efuse_psram_vendor"] = f"0x{psram_vendor:02X}"
             if rd_base:
@@ -879,37 +896,41 @@ def _probe_esp_deep_details(esp):
         except Exception:
             pass
 
-        # 5. Partition Table (@ 0x8000, fallback 0x9000 / 0xD000)
-        app_offset = 0x10000
-        for candidate_part_off in (0x8000, 0x9000, 0xD000):
+        # 5. Partition Table (ưu tiên 0x8000; nếu không có thì quét mở rộng 0x9000..0x20000 để bắt 0xC000/0xD000...)
+        from modules.partition.partition_model import find_partition_table_in_blob
+        found_pt_off = None
+        temp_table = None
+        for scan_off, scan_len in ((0x8000, 0x1000), (0x9000, 0x17000)):
             try:
-                part_data = esp_cmds.read_flash(
-                    esp, candidate_part_off, 0xC00, output=None, flash_size="keep", no_progress=True
+                blob = esp_cmds.read_flash(
+                    esp, scan_off, scan_len, output=None, flash_size="keep", no_progress=True
                 )
-                if part_data and len(part_data) >= 32 and part_data[0:2] == b"\xaa\x50":
-                    temp_table = PartitionTable()
-                    temp_table.from_binary(part_data)
-                    if temp_table.entries:
-                        log.print(f"\nPartition Table (@ 0x{candidate_part_off:X}):")
-                        log.print("===============================")
-                        for entry in temp_table.entries:
-                            size_kb = entry.size / 1024.0
-                            size_disp = f"{size_kb / 1024.0:.2f} MB" if size_kb >= 1024 else f"{size_kb:.0f} KB"
-                            log.print(
-                                f"PARTITION_ENTRY: {entry.name} | {entry.type_str} | {entry.subtype_str} "
-                                f"| 0x{entry.offset:X} | 0x{entry.size:X} ({size_disp})"
-                            )
-                            if entry.type_str == "app" and app_offset == 0x10000:
-                                app_offset = entry.offset
-                        break
+                found_pt_off, temp_table = find_partition_table_in_blob(blob, base_offset=scan_off)
+                if found_pt_off is not None and temp_table and temp_table.entries:
+                    break
             except Exception:
                 continue
 
+        app_offset = None
+        if found_pt_off is not None and temp_table and temp_table.entries:
+            log.print(f"\nPartition Table (@ 0x{found_pt_off:X}):")
+            log.print("===============================")
+            for entry in temp_table.entries:
+                size_kb = entry.size / 1024.0
+                size_disp = f"{size_kb / 1024.0:.2f} MB" if size_kb >= 1024 else f"{size_kb:.0f} KB"
+                log.print(
+                    f"PARTITION_ENTRY: {entry.name} | {entry.type_str} | {entry.subtype_str} "
+                    f"| 0x{entry.offset:X} | 0x{entry.size:X} ({size_disp})"
+                )
+                if entry.type_str == "app":
+                    if entry.subtype_str == "factory" or app_offset is None:
+                        app_offset = entry.offset
+
         # 6. Application Firmware Header & esp_app_desc_t
-        candidate_app_offsets = [app_offset]
-        for extra_off in (0x10000, 0x20000):
-            if extra_off not in candidate_app_offsets:
-                candidate_app_offsets.append(extra_off)
+        if app_offset is not None:
+            candidate_app_offsets = [app_offset]
+        else:
+            candidate_app_offsets = [0x10000, 0x20000]
 
         for cand_app_off in candidate_app_offsets:
             try:
@@ -1014,9 +1035,10 @@ def run_esptool_command(args, progress_callback=None):
     is_deep = getattr(_deep_inspection_state, "enabled", False) and (
         "flash-id" in normalized_args or "flash_id" in normalized_args
     )
+    efuse_only = bool(getattr(_deep_inspection_state, "efuse_only", False))
 
     with esptool_lock:
-        eff_cb = progress_callback or (getattr(_deep_inspection_state, "progress_callback", None) if is_deep else None)
+        eff_cb = progress_callback or (getattr(_deep_inspection_state, "progress_callback", None) if is_deep and not efuse_only else None)
         interceptor = StreamInterceptor(eff_cb) if eff_cb else None
         output_capture = io.StringIO() if not interceptor else None
         target = interceptor if interceptor else output_capture
@@ -1043,7 +1065,14 @@ def run_esptool_command(args, progress_callback=None):
                 captured_esp.append(esp_obj)
                 res_fid = orig_esptool_flash_id(esp_obj, *f_args, **f_kwargs)
                 try:
-                    _probe_esp_deep_details(esp_obj)
+                    if efuse_only:
+                        from esptool.logger import log
+                        efuse_info = _probe_efuse_details(esp_obj)
+                        if efuse_info:
+                            for ek, ev in efuse_info.items():
+                                log.print(f"EFUSE_{ek.upper()}: {ev}")
+                    else:
+                        _probe_esp_deep_details(esp_obj)
                 except Exception:
                     pass
                 return res_fid
@@ -1072,6 +1101,84 @@ def run_esptool_command(args, progress_callback=None):
                 esptool.flash_id = orig_esptool_flash_id
                 if esp_cmds_mod and callable(orig_cmds_flash_id):
                     esp_cmds_mod.flash_id = orig_cmds_flash_id
+
+
+def scan_chip_partition_table(
+    port: str,
+    baud: int | str,
+    *,
+    preferred_offset: int = 0x8000,
+    flash_size: int = 16 * 1024 * 1024,
+    bootloader_offset: int = 0x1000,
+    target_chip: str = "esp32",
+    chip_arg: str = "",
+    read_cmd: str = "read-flash",
+    progress_callback=None,
+    command_runner=None,
+    success_checker=None,
+):
+    """
+    Đọc và tự động dò tìm bảng phân vùng ESP-IDF từ chip qua esptool.
+    Ưu tiên đọc 4KB tại preferred_offset (mặc định 0x8000); nếu không thấy cấu trúc hợp lệ
+    sẽ quét mở rộng vùng 0x8000..0x20000 (bắt được 0x9000, 0xC000, 0xD000, 0x10000...).
+    Trả về: (found_offset, decoded_table, raw_pt_slice, cmd_ok, combined_output_text).
+    """
+    import os
+    import tempfile
+    from modules.partition.partition_model import find_partition_table_in_blob
+
+    runner = command_runner or run_esptool_command
+    checker = success_checker or esptool_command_succeeded
+    scan_steps = [(int(preferred_offset), 0x1000)]
+    if int(preferred_offset) == 0x8000:
+        scan_steps.append((0x9000, 0x17000))
+    else:
+        scan_steps.append((0x8000, 0x18000))
+
+    last_text = ""
+    last_blob = b""
+    for scan_off, scan_len in scan_steps:
+        with tempfile.NamedTemporaryFile(suffix=".bin", delete=False) as tf:
+            tmp_path = tf.name
+        stream_lines: list[str] = []
+
+        def _on_stream(line, _lines=stream_lines):
+            _lines.append(str(line))
+            if progress_callback is not None:
+                progress_callback(line)
+
+        try:
+            args = ["--port", port, "--baud", str(baud)]
+            if chip_arg and chip_arg != "auto":
+                args.extend(["--chip", chip_arg])
+            args.extend([read_cmd, hex(scan_off), hex(scan_len), tmp_path])
+            res = runner(args, progress_callback=_on_stream)
+            last_text = "\n".join(
+                p for p in (res if isinstance(res, str) else "", "\n".join(stream_lines)) if p
+            )
+            if not (checker(res) and os.path.isfile(tmp_path) and os.path.getsize(tmp_path) > 0):
+                return None, None, None, False, last_text
+            with open(tmp_path, "rb") as fp:
+                blob = fp.read()
+            last_blob = blob
+            found_off, found_table = find_partition_table_in_blob(
+                blob,
+                base_offset=scan_off,
+                flash_size=flash_size,
+                bootloader_offset=bootloader_offset,
+                target_chip=target_chip,
+            )
+            if found_off is not None and found_table is not None and found_table.entries:
+                rel = found_off - scan_off
+                return found_off, found_table, blob[rel:rel + 0x1000], True, last_text
+        finally:
+            if os.path.isfile(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
+
+    return None, None, (last_blob[:0x1000] if last_blob else b""), True, last_text
 
 
 def parse_boot_log_output(text: str) -> dict:

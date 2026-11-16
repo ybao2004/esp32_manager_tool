@@ -457,3 +457,76 @@ class PartitionTable:
                 flags_str=flags_str
             )
             self.add_entry(entry)
+
+
+def _is_valid_scanned_table(table: "PartitionTable", slice_bytes: bytes, pt_off: int, flash_size: int) -> bool:
+    """Xác thực nhanh bảng phân vùng quét được từ Flash để tránh khớp nhầm mã máy chứa 0xAA 0x50."""
+    if not table.entries:
+        return False
+
+    # Kiểm tra dòng MD5 checksum chuẩn ESP-IDF nếu có ở cuối bảng
+    md5 = hashlib.md5()
+    has_md5_row = False
+    md5_ok = False
+    for i in range(0, min(len(slice_bytes), 0xC00), 32):
+        chunk = slice_bytes[i:i + 32]
+        if len(chunk) < 32 or chunk == b'\xff' * 32:
+            break
+        if chunk[:2] == MD5_PARTITION_BEGIN[:2]:
+            has_md5_row = True
+            md5_ok = (chunk[16:32] == md5.digest())
+            break
+        if chunk[:2] == MAGIC_BYTES:
+            md5.update(chunk)
+    if has_md5_row:
+        return md5_ok
+
+    # Fallback kiểm tra cấu trúc hợp lệ cho các bảng không kèm dòng MD5
+    pt_end = pt_off + PARTITION_TABLE_SIZE_DEFAULT
+    for e in table.entries:
+        if e.type_str not in ("app", "data"):
+            return False
+        if not e.name or any(ord(ch) < 0x20 or ord(ch) > 0x7E for ch in e.name):
+            return False
+        if e.size <= 0 or (e.size % 0x1000) != 0:
+            return False
+        if e.offset < pt_end or (e.offset % 0x1000) != 0:
+            return False
+        if flash_size > 0 and e.offset + e.size > flash_size:
+            return False
+    return True
+
+
+def find_partition_table_in_blob(
+    blob: bytes,
+    base_offset: int = PARTITION_TABLE_OFFSET_DEFAULT,
+    flash_size: int = 16 * 1024 * 1024,
+    bootloader_offset: int = 0x1000,
+    target_chip: str = "esp32",
+) -> tuple[int, PartitionTable] | tuple[None, None]:
+    """
+    Quét vùng nhị phân theo bội số sector 4KB (0x1000) để tìm và giải mã bảng phân vùng ESP-IDF
+    kể cả khi CONFIG_PARTITION_TABLE_OFFSET được dịch khỏi 0x8000 (vd: 0x9000, 0xC000, 0xD000, 0x10000).
+    """
+    if not blob or len(blob) < 32:
+        return None, None
+    step = PARTITION_TABLE_SIZE_DEFAULT
+    max_start = len(blob) - 32
+    for rel_off in range(0, max_start + 1, step):
+        if blob[rel_off:rel_off + 2] != MAGIC_BYTES:
+            continue
+        pt_off = base_offset + rel_off
+        slice_bytes = blob[rel_off:rel_off + step]
+        candidate = PartitionTable(
+            flash_size=flash_size,
+            part_table_offset=pt_off,
+            bootloader_offset=bootloader_offset,
+            target_chip=target_chip,
+        )
+        try:
+            candidate.from_binary(slice_bytes)
+        except Exception:
+            continue
+        if _is_valid_scanned_table(candidate, slice_bytes, pt_off, flash_size):
+            return pt_off, candidate
+    return None, None
